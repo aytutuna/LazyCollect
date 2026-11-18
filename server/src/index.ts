@@ -5,6 +5,7 @@ import { clients } from "./clients";
 import { files } from "./files";
 import { firm, loadFirm } from "./firm";
 import { requests } from "./requests";
+import { sweepFiles } from "./sweep";
 import { templates } from "./templates";
 import { uploads } from "./upload";
 import { csrf } from "./csrf";
@@ -55,5 +56,6 @@ export default {
       env.CONTROL.prepare("DELETE FROM login_codes WHERE created_at < ?").bind(now - DAY),
       env.CONTROL.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
     ]);
+    await sweepFiles(env, now);
   },
 };

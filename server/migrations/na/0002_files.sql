@@ -12,11 +12,13 @@ CREATE TABLE files (
   upload_id TEXT NOT NULL,
   uploaded_by TEXT NOT NULL CHECK (uploaded_by IN ('client', 'user')),
   uploaded_at INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'live' CHECK (state IN ('pending', 'live')),
   deleted_at INTEGER,
   UNIQUE (firm_id, id),
   UNIQUE (firm_id, item_id, upload_id),
   FOREIGN KEY (firm_id, request_id) REFERENCES requests (firm_id, id),
-  FOREIGN KEY (firm_id, request_id, item_id) REFERENCES items (firm_id, request_id, id) ON DELETE CASCADE
+  FOREIGN KEY (firm_id, request_id, item_id) REFERENCES items (firm_id, request_id, id)
 );
 CREATE INDEX idx_files_item ON files (firm_id, item_id, uploaded_at);
 CREATE INDEX idx_files_request ON files (firm_id, request_id);
+CREATE INDEX idx_files_sweep ON files (state, uploaded_at) WHERE state = 'pending' OR deleted_at IS NOT NULL;

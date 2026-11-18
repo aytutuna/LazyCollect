@@ -2,7 +2,7 @@ import { regionOf, type Region } from "./regions";
 
 const encoder = new TextEncoder();
 
-// "gcm1" is the wrapping scheme; a new master key or scheme gets a new tag and old DEKs are rewrapped lazily
+// the tag names the wrapping scheme and master key, so a rotation can tell old wraps from new ones
 const WRAP_TAG = "gcm1:";
 
 const b64 = (b: Uint8Array) => btoa(String.fromCharCode(...b));

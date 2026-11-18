@@ -48,7 +48,7 @@ client.get("/c/:token", async (c) => {
     .bind(req.firm_id, req.id)
     .all<{ id: string; required: number }>();
   const { results: files } = await db
-    .prepare("SELECT id, item_id, name, size, uploaded_at FROM files WHERE firm_id = ? AND request_id = ? AND deleted_at IS NULL ORDER BY uploaded_at, rowid")
+    .prepare("SELECT id, item_id, name, size, uploaded_at FROM files WHERE firm_id = ? AND request_id = ? AND state = 'live' AND deleted_at IS NULL ORDER BY uploaded_at, rowid")
     .bind(req.firm_id, req.id)
     .all<{ item_id: string }>();
   const meta = JSON.stringify({ link: hash });

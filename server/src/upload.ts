@@ -41,17 +41,33 @@ export function sniff(b: Uint8Array): string | null {
   return null;
 }
 
-// a display name only: it never becomes a path, and the download sets its own header from it
+const NAME_EXT: Record<string, string[]> = {
+  "application/pdf": ["pdf"],
+  "image/jpeg": ["jpg", "jpeg"],
+  "image/png": ["png"],
+  "image/webp": ["webp"],
+  "image/heic": ["heic", "heif"],
+  "image/heif": ["heif", "heic"],
+};
+
+// a display name only: it never becomes a path, and its extension always matches the sniffed type
 function cleanName(raw: string, mime: string): string {
-  const name = raw
+  let name = raw
     .normalize("NFC")
     .replace(/[\p{C}]/gu, "")
     .replace(/[\\/:*?"<>|]/g, "_")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^\.+/, "");
-  const cut = Array.from(name).slice(0, 200).join("").trim();
-  return cut || `file.${EXT[mime]}`;
+  const fitting = (n: string) => n.lastIndexOf(".") > 0 && NAME_EXT[mime].includes(n.slice(n.lastIndexOf(".") + 1).toLowerCase());
+  // "T4.pdf.html" sniffed as a pdf loses ".html"; a name still without a fitting extension gets one
+  if (!fitting(name)) name = name.replace(/\.[A-Za-z0-9]{1,5}$/, "");
+  const fits = fitting(name);
+  const dot = name.lastIndexOf(".");
+  const ext = fits ? name.slice(dot) : `.${EXT[mime]}`;
+  const stem = fits ? name.slice(0, dot) : name;
+  const base = Array.from(stem).slice(0, 200 - ext.length).join("").trim();
+  return base ? `${base}${ext}` : `file.${EXT[mime]}`;
 }
 
 type FileRow = { id: string; name: string; size: number; uploaded_at: number };
@@ -86,13 +102,14 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
   if (!item) return notFound(c);
   const findUpload = () =>
     db
-      .prepare("SELECT id, name, size, uploaded_at, deleted_at FROM files WHERE firm_id = ? AND item_id = ? AND upload_id = ?")
+      .prepare("SELECT id, name, size, uploaded_at, deleted_at, state FROM files WHERE firm_id = ? AND item_id = ? AND upload_id = ?")
       .bind(req.firm_id, itemId, uploadId)
-      .first<FileRow & { deleted_at: number | null }>();
+      .first<FileRow & { deleted_at: number | null; state: string }>();
   const replay = async () => {
     const f = await findUpload();
     if (!f) return null;
     if (f.deleted_at !== null) return c.json({ error: "upload_id_used" }, 409);
+    if (f.state === "pending") return c.json({ error: "busy" }, 409);
     return c.json({ id: f.id, name: f.name, size: f.size, uploaded_at: f.uploaded_at });
   };
   const earlier = await replay();
@@ -119,71 +136,95 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
   const key = await fileKey(await firmDek(c.env, region, req.firm_id, true), fileId);
   const bucket = regionOf(c.env, region).bucket;
   const r2Key = `f/${req.firm_id}/${req.id}/${fileId}`;
-  const drop = () => bucket.delete(r2Key).catch(() => {});
-  try {
-    await bucket.put(r2Key, encryptStream(key, source, first, length).pipeThrough(new FixedLengthStream(cipherLength(length))));
-  } catch (e) {
-    await drop();
-    throw e;
-  }
-
   const now = Date.now();
   const name = cleanName(rawName, mime);
   const ipHash = await hmac(c.env.HASH_KEY, ipPrefix(ip ?? "unknown"));
   const here = [req.firm_id, fileId];
-  let res: D1Result[];
-  try {
-    res = await db.batch([
-      db
-        .prepare(
-          `INSERT INTO files (id, firm_id, request_id, item_id, r2_key, name, mime, size, upload_id, uploaded_by, uploaded_at)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'client', ?
-           WHERE EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)
-           AND EXISTS (SELECT 1 FROM links WHERE token_hash = ? AND revoked_at IS NULL)
-           AND EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status != 'approved')
-           AND (SELECT COUNT(*) FROM files WHERE firm_id = ? AND item_id = ? AND deleted_at IS NULL) < ${MAX_PER_ITEM}
-           AND (SELECT COUNT(*) FROM files WHERE firm_id = ? AND request_id = ? AND deleted_at IS NULL) < ${MAX_PER_REQUEST}
-           ON CONFLICT (firm_id, item_id, upload_id) DO NOTHING`,
-        )
-        .bind(
-          fileId, req.firm_id, req.id, itemId, r2Key, name, mime, length, uploadId, now,
-          req.firm_id, req.id,
-          link.hash,
-          req.firm_id, req.id, itemId,
-          req.firm_id, itemId,
-          req.firm_id, req.id,
-        ),
-      db
-        .prepare(
-          `UPDATE items SET status = 'submitted' WHERE firm_id = ? AND request_id = ? AND id = ? AND status IN ('empty', 'rejected')
-           AND EXISTS (SELECT 1 FROM files WHERE firm_id = ? AND id = ?)`,
-        )
-        .bind(req.firm_id, req.id, itemId, ...here),
-      syncStatus(db, req.firm_id, req.id),
-      auditClient(db, req.firm_id, ipHash, "file.upload", "file", fileId, { request: req.id, item: itemId, size: length, mime }, {
-        sql: "EXISTS (SELECT 1 FROM files WHERE firm_id = ? AND id = ?)",
-        binds: here,
-      }),
-    ]);
-  } catch (e) {
-    await drop();
-    throw e;
-  }
 
-  if (!res[0].meta.changes) {
-    await drop();
+  // the row exists before the object does, so a crash between the two leaves something the sweep can find
+  const reserved = await db
+    .prepare(
+      `INSERT INTO files (id, firm_id, request_id, item_id, r2_key, name, mime, size, upload_id, uploaded_by, uploaded_at, state)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'client', ?, 'pending'
+       WHERE EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)
+       AND EXISTS (SELECT 1 FROM links WHERE token_hash = ? AND revoked_at IS NULL)
+       AND EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status != 'approved')
+       AND (SELECT COUNT(*) FROM files WHERE firm_id = ? AND item_id = ? AND deleted_at IS NULL) < ${MAX_PER_ITEM}
+       AND (SELECT COUNT(*) FROM files WHERE firm_id = ? AND request_id = ? AND deleted_at IS NULL) < ${MAX_PER_REQUEST}
+       ON CONFLICT (firm_id, item_id, upload_id) DO NOTHING`,
+    )
+    .bind(
+      fileId, req.firm_id, req.id, itemId, r2Key, name, mime, length, uploadId, now,
+      req.firm_id, req.id,
+      link.hash,
+      req.firm_id, req.id, itemId,
+      req.firm_id, itemId,
+      req.firm_id, req.id,
+    )
+    .run();
+
+  const refusal = async () => {
     const again = await replay();
     if (again) return again;
-    const now = await findLink(c.env, c.req.param("token"));
-    if (!now || (now.req.status !== "open" && now.req.status !== "complete")) return notFound(c);
+    const open = await findLink(c.env, c.req.param("token"));
+    if (!open || (open.req.status !== "open" && open.req.status !== "complete")) return notFound(c);
     const state = await db
       .prepare("SELECT status FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
       .bind(req.firm_id, req.id, itemId)
       .first<{ status: string }>();
     if (!state) return notFound(c);
     return c.json({ error: state.status === "approved" ? "approved" : "limit" }, 409);
+  };
+  if (!reserved.meta.changes) return refusal();
+
+  const forget = async () => {
+    await bucket.delete(r2Key).catch(() => {});
+    await db.prepare("DELETE FROM files WHERE firm_id = ? AND id = ? AND state = 'pending'").bind(...here).run().catch(() => {});
+  };
+  try {
+    await bucket.put(r2Key, encryptStream(key, source, first, length).pipeThrough(new FixedLengthStream(cipherLength(length))));
+  } catch (e) {
+    await forget();
+    throw e;
   }
-  return c.json({ id: fileId, name, size: length, uploaded_at: now }, 201);
+
+  let done: D1Result | undefined;
+  try {
+    [done] = await db.batch([
+      db
+        .prepare(
+          `UPDATE files SET state = 'live', uploaded_at = ? WHERE firm_id = ? AND id = ? AND state = 'pending'
+           AND EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)
+           AND EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status != 'approved')`,
+        )
+        .bind(Date.now(), ...here, req.firm_id, req.id, req.firm_id, req.id, itemId),
+      db
+        .prepare(
+          `UPDATE items SET status = 'submitted' WHERE firm_id = ? AND request_id = ? AND id = ? AND status IN ('empty', 'rejected')
+           AND EXISTS (SELECT 1 FROM files WHERE firm_id = ? AND id = ? AND state = 'live')`,
+        )
+        .bind(req.firm_id, req.id, itemId, ...here),
+      syncStatus(db, req.firm_id, req.id),
+      auditClient(db, req.firm_id, ipHash, "file.upload", "file", fileId, { request: req.id, item: itemId, size: length, mime }, {
+        sql: "EXISTS (SELECT 1 FROM files WHERE firm_id = ? AND id = ? AND state = 'live')",
+        binds: here,
+      }),
+    ]);
+  } catch (e) {
+    // the batch may have committed before the error reached us; only drop what is still pending
+    const row = await db.prepare("SELECT state FROM files WHERE firm_id = ? AND id = ?").bind(...here).first<{ state: string }>();
+    if (row?.state !== "live") {
+      await forget();
+      throw e;
+    }
+  }
+
+  if (done && !done.meta.changes) {
+    await forget();
+    return refusal();
+  }
+  const stored = await db.prepare("SELECT uploaded_at FROM files WHERE firm_id = ? AND id = ?").bind(...here).first<{ uploaded_at: number }>();
+  return c.json({ id: fileId, name, size: length, uploaded_at: stored!.uploaded_at }, 201);
 });
 
 uploads.delete("/c/:token/files/:fileId", async (c) => {
@@ -195,7 +236,7 @@ uploads.delete("/c/:token/files/:fileId", async (c) => {
   const file = await db
     .prepare(
       `SELECT f.r2_key, f.item_id, i.status FROM files f JOIN items i ON i.firm_id = f.firm_id AND i.request_id = f.request_id AND i.id = f.item_id
-       WHERE f.firm_id = ? AND f.request_id = ? AND f.id = ? AND f.uploaded_by = 'client' AND f.deleted_at IS NULL`,
+       WHERE f.firm_id = ? AND f.request_id = ? AND f.id = ? AND f.uploaded_by = 'client' AND f.state = 'live' AND f.deleted_at IS NULL`,
     )
     .bind(req.firm_id, req.id, fileId)
     .first<{ r2_key: string; item_id: string; status: string }>();
@@ -203,7 +244,7 @@ uploads.delete("/c/:token/files/:fileId", async (c) => {
   if (file.status === "approved") return c.json({ error: "approved" }, 409);
 
   const now = Date.now();
-  const live = "firm_id = ? AND id = ? AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM items WHERE firm_id = files.firm_id AND id = files.item_id AND status != 'approved')";
+  const live = "firm_id = ? AND id = ? AND state = 'live' AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM items WHERE firm_id = files.firm_id AND id = files.item_id AND status != 'approved')";
   const binds = [req.firm_id, fileId];
   const ipHash = await hmac(c.env.HASH_KEY, ipPrefix(c.req.header("CF-Connecting-IP") ?? "unknown"));
   // the audit row goes first: its condition reads the file the next statement marks deleted

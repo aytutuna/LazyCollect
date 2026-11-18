@@ -10,3 +10,5 @@ export function regionOf(env: Env, id: Region): { db: D1Database; bucket: R2Buck
   const r = regions[id];
   return { db: env[r.db], bucket: env[r.bucket], key: env[r.key] };
 }
+
+export const regionIds = Object.keys(regions) as Region[];
