@@ -280,6 +280,23 @@ requests.post("/requests/:id/close", async (c) => {
   return c.json({ ok: true });
 });
 
+requests.delete("/requests/:id", async (c) => {
+  const req = await findRequest(c);
+  if (!req) return notFound(c);
+  const db = c.get("db");
+  const firmId = c.get("firm").id;
+  const now = Date.now();
+  await db.batch([
+    audit(c, "request.delete", "request", req.id, undefined, {
+      sql: "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NULL)",
+      binds: [firmId, req.id],
+    }),
+    db.prepare("UPDATE requests SET deleted_at = ? WHERE firm_id = ? AND id = ? AND deleted_at IS NULL").bind(now, firmId, req.id),
+    db.prepare("UPDATE links SET revoked_at = ? WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL").bind(now, firmId, req.id),
+  ]);
+  return c.json({ ok: true });
+});
+
 requests.post("/requests/:id/link", async (c) => {
   const req = await findRequest(c);
   if (!req) return notFound(c);

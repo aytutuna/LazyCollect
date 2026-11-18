@@ -256,6 +256,23 @@ describe("request rules", () => {
   });
 });
 
+describe("request delete", () => {
+  it("hides the request, revokes its link and writes an audit row", async () => {
+    const { cookie, client } = await setup();
+    const { id } = await (await make(cookie, { client_id: client.id, title: "A", deadline: inDays(7), items: [item] })).json<any>();
+    const { url } = await (await api(`/api/requests/${id}/link`, { method: "POST", cookie })).json<any>();
+    expect((await api(`/api/requests/${id}`, { method: "DELETE", cookie })).status).toBe(200);
+    expect((await api(`/api/requests/${id}`, { cookie })).status).toBe(404);
+    expect(await (await api("/api/requests", { cookie })).json()).toEqual([]);
+    expect((await api(`/api/c/${url.split("/c/")[1]}`)).status).toBe(404);
+    const link = await env.DB_NA.prepare("SELECT revoked_at FROM links").first<any>();
+    expect(link.revoked_at).toBeGreaterThan(0);
+    const rows = await env.DB_NA.prepare("SELECT action, object_id FROM audit WHERE action = 'request.delete'").all<any>();
+    expect(rows.results).toEqual([{ action: "request.delete", object_id: id }]);
+    expect((await api(`/api/requests/${id}`, { method: "DELETE", cookie })).status).toBe(404);
+  });
+});
+
 describe("item cap", () => {
   it("refuses a 101st item", async () => {
     const { cookie, client } = await setup();

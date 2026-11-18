@@ -24,6 +24,7 @@ describe("tenant isolation", () => {
       ["POST", `/api/requests/${req.id}/items`, { label: "x" }],
       ["PATCH", `/api/requests/${req.id}/items/${itemId}`, { label: "x" }],
       ["DELETE", `/api/requests/${req.id}/items/${itemId}`],
+      ["DELETE", `/api/requests/${req.id}`],
       ["POST", `/api/requests/${req.id}/close`],
       ["POST", `/api/requests/${req.id}/link`],
       ["POST", "/api/requests", { client_id: a.client.id, title: "A", deadline: inDays(7) }],
