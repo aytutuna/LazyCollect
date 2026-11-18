@@ -16,6 +16,9 @@ run_worker_first = ["/api/*", "/c/*"]
 [observability]
 enabled = true
 
+[observability.logs]
+invocation_logs = false
+
 [[d1_databases]]
 binding = "CONTROL"
 database_name = "lazycollect-control"
