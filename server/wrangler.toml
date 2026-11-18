@@ -1,3 +1,6 @@
+# Secrets (wrangler secret put): RESEND_API_KEY, TURNSTILE_SECRET, RATE_SALT
+# For wrangler dev put the same names in .dev.vars (gitignored).
+
 name = "lazycollect"
 main = "src/index.ts"
 compatibility_date = "2026-11-01"
@@ -21,3 +24,12 @@ migrations_dir = "migrations/na"
 [[r2_buckets]]
 binding = "FILES_NA"
 bucket_name = "lazycollect-na"
+
+[vars]
+APP_URL = "https://collect.alazy.app"
+EMAIL_FROM = "Lazy Collect <noreply@alazy.app>"
+
+[[ratelimits]]
+name = "LOGIN"
+namespace_id = "2001"
+simple = { limit = 10, period = 60 }
