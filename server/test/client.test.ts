@@ -65,7 +65,10 @@ describe("client link", () => {
 
     await api(`/api/requests/${req.id}/close`, { method: "POST", cookie });
     await expect404(path);
-    await env.DB_NA.prepare("UPDATE requests SET status = 'open', closed_at = NULL").run();
+    await env.DB_NA.batch([
+      env.DB_NA.prepare("UPDATE requests SET status = 'open', closed_at = NULL"),
+      env.DB_NA.prepare("UPDATE links SET revoked_at = NULL"),
+    ]);
     expect((await api(path)).status).toBe(200);
     await env.DB_NA.prepare("UPDATE requests SET deleted_at = 1").run();
     await expect404(path);

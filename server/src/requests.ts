@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { usable } from "./firm";
 import type { AppEnv } from "./session";
 import { builtinTemplates, parseItem, parseItems, type Item } from "./templates";
 import { DAY, hmac, randomId, randomToken } from "./util";
@@ -9,6 +10,7 @@ export const requests = new Hono<AppEnv>();
 const COLS = "id, client_id, title, note, deadline, firm_name, status, sent_at, closed_at, created_at";
 const ITEM_COLS = "id, position, label, help, required, status, reject_note, reviewed_at";
 const LINK_GRACE = 30 * DAY;
+const MAX_AHEAD = 2 * 365 * DAY;
 
 type Req = { id: string; status: string; deadline: number };
 
@@ -19,7 +21,8 @@ const findRequest = (c: Context<AppEnv>) =>
     .first<Req>();
 
 function deadline(v: unknown): number | undefined {
-  return Number.isInteger(v) && (v as number) > Date.now() ? (v as number) : undefined;
+  const now = Date.now();
+  return Number.isInteger(v) && (v as number) > now && (v as number) <= now + MAX_AHEAD ? (v as number) : undefined;
 }
 
 requests.post("/requests", async (c) => {
@@ -132,6 +135,10 @@ requests.patch("/requests/:id", async (c) => {
   if (!Object.keys(fields).length) return invalid(c);
   const req = await findRequest(c);
   if (!req) return notFound(c);
+  if (req.status === "closed") return c.json({ error: "locked" }, 409);
+  if (typeof fields.deadline === "number" && req.status === "open" && !usable(c.get("firm"), Date.now())) {
+    return c.json({ error: "plan" }, 402);
+  }
   const db = c.get("db");
   const firmId = c.get("firm").id;
   const set = setClause(fields);
@@ -220,10 +227,13 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
 requests.post("/requests/:id/close", async (c) => {
   const req = await findRequest(c);
   if (!req) return notFound(c);
-  await c.get("db")
-    .prepare("UPDATE requests SET status = 'closed', closed_at = ? WHERE firm_id = ? AND id = ? AND status != 'closed'")
-    .bind(Date.now(), c.get("firm").id, req.id)
-    .run();
+  const db = c.get("db");
+  const firmId = c.get("firm").id;
+  const now = Date.now();
+  await db.batch([
+    db.prepare("UPDATE requests SET status = 'closed', closed_at = ? WHERE firm_id = ? AND id = ? AND status != 'closed'").bind(now, firmId, req.id),
+    db.prepare("UPDATE links SET revoked_at = ? WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL").bind(now, firmId, req.id),
+  ]);
   return c.json({ ok: true });
 });
 
@@ -233,9 +243,9 @@ requests.post("/requests/:id/link", async (c) => {
   const firm = c.get("firm");
   if (!firm.name) return c.json({ error: "firm_profile" }, 400);
   const now = Date.now();
-  const usable = firm.plan_status === "active" || (firm.plan_status === "trialing" && firm.trial_ends_at !== null && firm.trial_ends_at > now);
-  if (!usable) return c.json({ error: "plan" }, 402);
+  if (!usable(firm, now)) return c.json({ error: "plan" }, 402);
   if (!editable(req)) return c.json({ error: "locked" }, 409);
+  if (req.deadline <= now) return c.json({ error: "deadline_passed" }, 409);
 
   const db = c.get("db");
   const userId = c.get("session")!.userId;

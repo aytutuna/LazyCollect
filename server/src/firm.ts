@@ -7,6 +7,10 @@ export const firm = new Hono<AppEnv>();
 
 const PROVINCES = ["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"];
 
+export function usable(f: Firm, now: number): boolean {
+  return f.plan_status === "active" || (f.plan_status === "trialing" && f.trial_ends_at !== null && f.trial_ends_at > now);
+}
+
 export const loadFirm: MiddlewareHandler<AppEnv> = async (c, next) => {
   const session = c.get("session");
   if (!session) return c.json({ error: "unauthorized" }, 401);

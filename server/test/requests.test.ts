@@ -205,3 +205,53 @@ describe("request link", () => {
     expect(row.expires_at).toBe(due + 30 * DAY);
   });
 });
+
+describe("request rules", () => {
+  const mk = async (cookie: string, clientId: string) =>
+    (await (await make(cookie, { client_id: clientId, title: "A", deadline: inDays(7), items: [item] })).json<any>()).id as string;
+
+  it("limits the deadline to two years ahead", async () => {
+    const { cookie, client } = await setup();
+    const ok = { client_id: client.id, title: "A" };
+    expect((await make(cookie, { ...ok, deadline: inDays(731) })).status).toBe(400);
+    expect((await make(cookie, { ...ok, deadline: inDays(729) })).status).toBe(201);
+    const id = await mk(cookie, client.id);
+    expect((await api(`/api/requests/${id}`, { method: "PATCH", cookie, body: { deadline: inDays(731) } })).status).toBe(400);
+  });
+
+  it("refuses a link once the deadline has passed", async () => {
+    const { cookie, client } = await setup();
+    const id = await mk(cookie, client.id);
+    await env.DB_NA.prepare("UPDATE requests SET deadline = ?").bind(Date.now() - 1000).run();
+    const res = await api(`/api/requests/${id}/link`, { method: "POST", cookie });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "deadline_passed" });
+  });
+
+  it("revokes the live link when the request is closed", async () => {
+    const { cookie, client } = await setup();
+    const id = await mk(cookie, client.id);
+    await api(`/api/requests/${id}/link`, { method: "POST", cookie });
+    await api(`/api/requests/${id}/close`, { method: "POST", cookie });
+    const row = await env.DB_NA.prepare("SELECT revoked_at FROM links").first<any>();
+    expect(row.revoked_at).toBeGreaterThan(0);
+  });
+
+  it("locks a closed request against edits", async () => {
+    const { cookie, client } = await setup();
+    const id = await mk(cookie, client.id);
+    await api(`/api/requests/${id}/close`, { method: "POST", cookie });
+    expect((await api(`/api/requests/${id}`, { method: "PATCH", cookie, body: { title: "B" } })).status).toBe(409);
+  });
+
+  it("gates a deadline change on an open request behind the plan", async () => {
+    const { cookie, client } = await setup();
+    const id = await mk(cookie, client.id);
+    const patch = (body: unknown) => api(`/api/requests/${id}`, { method: "PATCH", cookie, body });
+    expect((await patch({ deadline: inDays(8) })).status).toBe(200);
+    await api(`/api/requests/${id}/link`, { method: "POST", cookie });
+    await env.CONTROL.prepare("UPDATE firms SET trial_ends_at = ?").bind(Date.now() - 1000).run();
+    expect((await patch({ deadline: inDays(9) })).status).toBe(402);
+    expect((await patch({ title: "B" })).status).toBe(200);
+  });
+});
