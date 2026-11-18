@@ -1,5 +1,6 @@
 import { exports } from "cloudflare:workers";
 import { vi } from "vitest";
+import { DAY } from "../src/util";
 
 export type Sent = { to: string[]; subject: string; text: string; html: string };
 
@@ -61,4 +62,13 @@ export async function login(email = "owner@firm.test"): Promise<string> {
   await start(email);
   const res = await api("/api/auth/verify", { method: "POST", body: { email, code: codeFrom(sent[0]) } });
   return cookieFrom(res);
+}
+
+export const inDays = (n: number) => Date.now() + n * DAY;
+
+export async function setup(email = "owner@firm.test", name: string | null = "Tuna Tax") {
+  const cookie = await login(email);
+  if (name) await api("/api/firm", { method: "PATCH", cookie, body: { name } });
+  const client = await (await api("/api/clients", { method: "POST", cookie, body: { name: "Amy", email: "amy@mail.test", contact_ok: true } })).json<any>();
+  return { cookie, client };
 }

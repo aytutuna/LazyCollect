@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { auth } from "./auth";
 import { clients } from "./clients";
 import { firm, loadFirm } from "./firm";
+import { requests } from "./requests";
 import { templates } from "./templates";
 import { csrf } from "./csrf";
 import { DAY } from "./util";
@@ -20,9 +21,11 @@ app.route("/api", auth);
 app.use("/api/firm", loadFirm);
 app.use("/api/clients/*", loadFirm);
 app.use("/api/templates/*", loadFirm);
+app.use("/api/requests/*", loadFirm);
 app.route("/api", firm);
 app.route("/api", clients);
 app.route("/api", templates);
+app.route("/api", requests);
 
 export default {
   fetch: app.fetch,
