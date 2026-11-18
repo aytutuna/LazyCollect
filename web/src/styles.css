@@ -393,6 +393,12 @@ td.end {
   white-space: nowrap;
 }
 
+.optional {
+  margin-top: 1.5rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
 .spaced {
   margin-top: 2rem;
 }
