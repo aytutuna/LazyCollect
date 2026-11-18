@@ -8,9 +8,6 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: server
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
@@ -19,6 +16,16 @@ jobs:
         with:
           node-version: 24
       - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+        env:
+          VITE_TURNSTILE_SITEKEY: ${{ vars.TURNSTILE_SITEKEY }}
+      - run: npm ci
+        working-directory: server
       - run: npx wrangler d1 migrations apply lazycollect-control --remote
+        working-directory: server
       - run: npx wrangler d1 migrations apply lazycollect-na --remote
+        working-directory: server
       - run: npx wrangler deploy
+        working-directory: server
