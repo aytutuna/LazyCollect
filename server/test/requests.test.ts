@@ -270,3 +270,22 @@ describe("item cap", () => {
     expect((await api(`/api/requests/${r.id}/items`, { method: "POST", cookie, body: item })).status).toBe(201);
   });
 });
+
+describe("request audit", () => {
+  it("logs request and item changes once each", async () => {
+    const { cookie, client } = await setup();
+    await env.DB_NA.prepare("DELETE FROM audit").run();
+    const r = await (await make(cookie, { client_id: client.id, title: "A", deadline: inDays(7), items: [item] })).json<any>();
+    await api(`/api/requests/${r.id}`, { method: "PATCH", cookie, body: { title: "B" } });
+    const added = await (await api(`/api/requests/${r.id}/items`, { method: "POST", cookie, body: item })).json<any>();
+    await api(`/api/requests/${r.id}/items/${added.id}`, { method: "PATCH", cookie, body: { label: "x" } });
+    await api(`/api/requests/${r.id}/items/${added.id}`, { method: "DELETE", cookie });
+    await api(`/api/requests/${r.id}/items/${added.id}`, { method: "DELETE", cookie });
+    await api(`/api/requests/${r.id}/close`, { method: "POST", cookie });
+    await api(`/api/requests/${r.id}/close`, { method: "POST", cookie });
+    const rows = (await env.DB_NA.prepare("SELECT action, object_type, object_id FROM audit ORDER BY at, rowid").all<any>()).results;
+    expect(rows.map((x) => x.action)).toEqual(["request.create", "request.update", "item.add", "item.edit", "item.delete", "request.close"]);
+    expect(rows.filter((x) => x.action.startsWith("request")).every((x) => x.object_type === "request" && x.object_id === r.id)).toBe(true);
+    expect(rows[2]).toMatchObject({ object_type: "item", object_id: added.id });
+  });
+});

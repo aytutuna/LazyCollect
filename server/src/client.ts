@@ -33,13 +33,14 @@ client.get("/c/:token", async (c) => {
     .prepare("SELECT id, label, help, required, status, reject_note FROM items WHERE firm_id = ? AND request_id = ? ORDER BY position")
     .bind(req.firm_id, req.id)
     .all<{ required: number }>();
+  const meta = JSON.stringify({ link: hash });
   await db
     .prepare(
-      `INSERT INTO audit (id, firm_id, at, actor_type, action, object_type, object_id, ip_hash)
-       SELECT ?, ?, ?, 'client', 'link.open', 'link', ?, ?
-       WHERE NOT EXISTS (SELECT 1 FROM audit WHERE firm_id = ? AND object_type = 'link' AND object_id = ? AND action = 'link.open' AND at > ?)`,
+      `INSERT INTO audit (id, firm_id, at, actor_type, action, object_type, object_id, ip_hash, meta)
+       SELECT ?, ?, ?, 'client', 'link.open', 'request', ?, ?, ?
+       WHERE NOT EXISTS (SELECT 1 FROM audit WHERE firm_id = ? AND object_type = 'request' AND object_id = ? AND action = 'link.open' AND meta = ? AND at > ?)`,
     )
-    .bind(randomId(), req.firm_id, now, hash, await hmac(c.env.HASH_KEY, ipPrefix(ip ?? "unknown")), req.firm_id, hash, now - HOUR)
+    .bind(randomId(), req.firm_id, now, req.id, await hmac(c.env.HASH_KEY, ipPrefix(ip ?? "unknown")), meta, req.firm_id, req.id, meta, now - HOUR)
     .run();
   return c.json({
     firm_name: req.firm_name,

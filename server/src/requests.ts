@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { audit } from "./audit";
 import { usable } from "./firm";
 import type { AppEnv } from "./session";
 import { builtinTemplates, parseItem, parseItems, type Item } from "./templates";
@@ -76,6 +77,7 @@ requests.post("/requests", async (c) => {
          FROM json_each(?)`,
       )
       .bind(firmId, id, JSON.stringify(items)),
+    audit(c, "request.create", "request", id),
   ]);
   return c.json(await loadRequest(c, id), 201);
 });
@@ -152,6 +154,7 @@ requests.patch("/requests/:id", async (c) => {
       db.prepare("UPDATE links SET expires_at = ? WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL").bind(fields.deadline + LINK_GRACE, firmId, req.id),
     );
   }
+  stmts.push(audit(c, "request.update", "request", req.id, { fields: Object.keys(fields) }));
   await db.batch(stmts);
   return c.json(await loadRequest(c, req.id));
 });
@@ -175,19 +178,22 @@ requests.post("/requests/:id/items", async (c) => {
   if (!editable(req)) return c.json({ error: "locked" }, 409);
   const id = randomId();
   const firmId = c.get("firm").id;
-  const res = await c.get("db")
-    .prepare(
-      `INSERT INTO items (id, firm_id, request_id, position, label, help, required)
-       SELECT ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM items WHERE firm_id = ? AND request_id = ?), ?, ?, ?
-       WHERE ${LIVE} AND (SELECT COUNT(*) FROM items WHERE firm_id = ? AND request_id = ?) < ${MAX_ITEMS}`,
-    )
-    .bind(id, firmId, req.id, firmId, req.id, item.label, item.help ?? null, item.required ? 1 : 0, firmId, req.id, firmId, req.id)
-    .run();
+  const db = c.get("db");
+  const [res] = await db.batch([
+    db
+      .prepare(
+        `INSERT INTO items (id, firm_id, request_id, position, label, help, required)
+         SELECT ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM items WHERE firm_id = ? AND request_id = ?), ?, ?, ?
+         WHERE ${LIVE} AND (SELECT COUNT(*) FROM items WHERE firm_id = ? AND request_id = ?) < ${MAX_ITEMS}`,
+      )
+      .bind(id, firmId, req.id, firmId, req.id, item.label, item.help ?? null, item.required ? 1 : 0, firmId, req.id, firmId, req.id),
+    audit(c, "item.add", "item", id, { request: req.id }, { sql: "EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND id = ?)", binds: [firmId, id] }),
+  ]);
   if (!res.meta.changes) {
     const now = await findRequest(c);
     return now && editable(now) ? c.json({ error: "too_many_items" }, 409) : refused(c);
   }
-  const row = await c.get("db").prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(id).first<{ required: number }>();
+  const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(id).first<{ required: number }>();
   return c.json({ ...row, required: row!.required === 1 }, 201);
 });
 
@@ -215,10 +221,17 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
   if (!editable(req)) return c.json({ error: "locked" }, 409);
   const set = setClause(fields);
   const db = c.get("db");
-  const res = await db
-    .prepare(`UPDATE items SET ${set.sql} WHERE firm_id = ? AND request_id = ? AND id = ? AND ${LIVE}`)
-    .bind(...set.values, c.get("firm").id, req.id, c.req.param("itemId"), c.get("firm").id, req.id)
-    .run();
+  const firmId = c.get("firm").id;
+  const itemId = c.req.param("itemId");
+  const [res] = await db.batch([
+    db
+      .prepare(`UPDATE items SET ${set.sql} WHERE firm_id = ? AND request_id = ? AND id = ? AND ${LIVE}`)
+      .bind(...set.values, firmId, req.id, itemId, firmId, req.id),
+    audit(c, "item.edit", "item", itemId, { request: req.id, fields: Object.keys(fields) }, {
+      sql: `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ?) AND ${LIVE}`,
+      binds: [firmId, req.id, itemId, firmId, req.id],
+    }),
+  ]);
   if (!res.meta.changes) return refused(c);
   const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(c.req.param("itemId")).first<{ required: number }>();
   return c.json({ ...row, required: row!.required === 1 });
@@ -235,10 +248,18 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
     .first<{ status: string }>();
   if (!item) return notFound(c);
   if (item.status !== "empty") return c.json({ error: "has_upload" }, 409);
-  const res = await db
-    .prepare(`DELETE FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status = 'empty' AND ${LIVE}`)
-    .bind(c.get("firm").id, req.id, c.req.param("itemId"), c.get("firm").id, req.id)
-    .run();
+  const firmId = c.get("firm").id;
+  const itemId = c.req.param("itemId");
+  // the audit row goes first: its condition reads the item the delete removes
+  const [, res] = await db.batch([
+    audit(c, "item.delete", "item", itemId, { request: req.id }, {
+      sql: `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status = 'empty') AND ${LIVE}`,
+      binds: [firmId, req.id, itemId, firmId, req.id],
+    }),
+    db
+      .prepare(`DELETE FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status = 'empty' AND ${LIVE}`)
+      .bind(firmId, req.id, itemId, firmId, req.id),
+  ]);
   return res.meta.changes ? c.json({ ok: true }) : refused(c);
 });
 
@@ -249,6 +270,10 @@ requests.post("/requests/:id/close", async (c) => {
   const firmId = c.get("firm").id;
   const now = Date.now();
   await db.batch([
+    audit(c, "request.close", "request", req.id, undefined, {
+      sql: "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status != 'closed')",
+      binds: [firmId, req.id],
+    }),
     db.prepare("UPDATE requests SET status = 'closed', closed_at = ? WHERE firm_id = ? AND id = ? AND status != 'closed'").bind(now, firmId, req.id),
     db.prepare("UPDATE links SET revoked_at = ? WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL").bind(now, firmId, req.id),
   ]);

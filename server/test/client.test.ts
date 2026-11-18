@@ -31,7 +31,7 @@ describe("client link", () => {
   });
 
   it("logs a view at most once an hour per link", async () => {
-    const { path } = await openRequest();
+    const { path, req } = await openRequest();
     await api(path);
     await api(path);
     const count = () => env.DB_NA.prepare("SELECT COUNT(*) AS n FROM audit WHERE action = 'link.open'").first<{ n: number }>();
@@ -39,8 +39,9 @@ describe("client link", () => {
     await env.DB_NA.prepare("UPDATE audit SET at = ? WHERE action = 'link.open'").bind(Date.now() - 2 * 3_600_000).run();
     await api(path);
     expect((await count())!.n).toBe(2);
-    const row = await env.DB_NA.prepare("SELECT actor_type, object_type, ip_hash FROM audit WHERE action = 'link.open'").first<any>();
+    const row = await env.DB_NA.prepare("SELECT actor_type, object_type, object_id, ip_hash FROM audit WHERE action = 'link.open'").first<any>();
     expect(row.actor_type).toBe("client");
+    expect([row.object_type, row.object_id]).toEqual(["request", req.id]);
     expect(row.ip_hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
