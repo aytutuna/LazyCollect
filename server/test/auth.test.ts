@@ -151,3 +151,32 @@ describe("logout", () => {
     expect((await api("/api/me", { cookie })).status).toBe(401);
   });
 });
+
+describe("csrf", () => {
+  it("rejects a POST without X-Collect", async () => {
+    mockOutbound();
+    const res = await api("/api/auth/start", { method: "POST", body: { email: EMAIL, turnstile: "tok" }, headers: { "X-Collect": "0" } });
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects a POST from another origin", async () => {
+    const sent = mockOutbound();
+    const res = await api("/api/auth/start", {
+      method: "POST",
+      body: { email: EMAIL, turnstile: "tok" },
+      headers: { Origin: "https://evil.test" },
+    });
+    expect(res.status).toBe(403);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("accepts the app's own origin", async () => {
+    mockOutbound();
+    const res = await api("/api/auth/start", {
+      method: "POST",
+      body: { email: EMAIL, turnstile: "tok" },
+      headers: { Origin: "https://collect.alazy.app" },
+    });
+    expect(res.status).toBe(200);
+  });
+});

@@ -27,7 +27,7 @@ export function api(path: string, init: Init = {}) {
     "CF-Connecting-IP": `192.0.2.${++ipCounter % 250}`,
     ...init.headers,
   };
-  if (init.method && init.method !== "GET") headers["X-Collect"] = "1";
+  if (init.method && init.method !== "GET") headers["X-Collect"] ??= "1";
   if (init.body !== undefined) headers["content-type"] = "application/json";
   if (init.cookie) headers.cookie = init.cookie;
   return exports.default.fetch(`https://collect.alazy.app${path}`, {
