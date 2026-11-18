@@ -1,0 +1,228 @@
+import { Hono } from "hono";
+import { keyLimited, rateLimited } from "./auth";
+import { auditClient } from "./audit";
+import { findLink } from "./client";
+import { ByteSource, CHUNK, cipherLength, encryptStream, fileKey } from "./crypt";
+import { firmDek } from "./keys";
+import { regionOf } from "./regions";
+import type { AppEnv } from "./session";
+import { syncStatus } from "./status";
+import { hmac, ipPrefix, randomId } from "./util";
+import { invalid, notFound } from "./validate";
+
+export const uploads = new Hono<AppEnv>();
+
+const MAX_SIZE = 25 * 1024 * 1024;
+const MAX_PER_ITEM = 20;
+const MAX_PER_REQUEST = 300;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const HEIC_BRANDS = ["heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs"];
+
+const EXT: Record<string, string> = {
+  "application/pdf": "pdf",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/heic": "heic",
+  "image/heif": "heif",
+};
+
+export function sniff(b: Uint8Array): string | null {
+  const at = (from: number, to: number) => String.fromCharCode(...b.subarray(from, to));
+  if (at(0, 5) === "%PDF-") return "application/pdf";
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  if (at(0, 8) === "\x89PNG\r\n\x1a\n") return "image/png";
+  if (at(0, 4) === "RIFF" && at(8, 12) === "WEBP") return "image/webp";
+  if (at(4, 8) === "ftyp") {
+    const brand = at(8, 12);
+    if (HEIC_BRANDS.includes(brand)) return "image/heic";
+    if (brand === "mif1" || brand === "msf1") return "image/heif";
+  }
+  return null;
+}
+
+// a display name only: it never becomes a path, and the download sets its own header from it
+function cleanName(raw: string, mime: string): string {
+  const name = raw
+    .normalize("NFC")
+    .replace(/[\p{C}]/gu, "")
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\.+/, "");
+  const cut = Array.from(name).slice(0, 200).join("").trim();
+  return cut || `file.${EXT[mime]}`;
+}
+
+type FileRow = { id: string; name: string; size: number; uploaded_at: number };
+
+uploads.put("/c/:token/items/:itemId/files", async (c) => {
+  const ip = c.req.header("CF-Connecting-IP");
+  if (await rateLimited(c.env, c.env.CLIENT, ip)) return c.json({ error: "rate_limited" }, 429);
+  const link = await findLink(c.env, c.req.param("token"));
+  if (!link || (link.req.status !== "open" && link.req.status !== "complete")) return notFound(c);
+  if (await keyLimited(c.env.UPLOAD, link.hash)) return c.json({ error: "rate_limited" }, 429);
+  const { db, region, req } = link;
+
+  const lengthHeader = c.req.header("Content-Length");
+  if (lengthHeader === undefined) return c.json({ error: "length_required" }, 411);
+  const length = /^\d{1,12}$/.test(lengthHeader) ? Number(lengthHeader) : NaN;
+  if (Number.isNaN(length)) return invalid(c);
+  if (length > MAX_SIZE) return c.json({ error: "too_big" }, 413);
+  const uploadId = c.req.header("Upload-Id")?.toLowerCase();
+  if (!uploadId || !UUID_RE.test(uploadId)) return invalid(c);
+  let rawName = "";
+  try {
+    rawName = decodeURIComponent(c.req.header("X-File-Name") ?? "");
+  } catch {
+    return invalid(c);
+  }
+
+  const itemId = c.req.param("itemId");
+  const item = await db
+    .prepare("SELECT status FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
+    .bind(req.firm_id, req.id, itemId)
+    .first<{ status: string }>();
+  if (!item) return notFound(c);
+  const findUpload = () =>
+    db
+      .prepare("SELECT id, name, size, uploaded_at, deleted_at FROM files WHERE firm_id = ? AND item_id = ? AND upload_id = ?")
+      .bind(req.firm_id, itemId, uploadId)
+      .first<FileRow & { deleted_at: number | null }>();
+  const replay = async () => {
+    const f = await findUpload();
+    if (!f) return null;
+    if (f.deleted_at !== null) return c.json({ error: "upload_id_used" }, 409);
+    return c.json({ id: f.id, name: f.name, size: f.size, uploaded_at: f.uploaded_at });
+  };
+  const earlier = await replay();
+  if (earlier) return earlier;
+  if (item.status === "approved") return c.json({ error: "approved" }, 409);
+  const counts = await db
+    .prepare(
+      `SELECT (SELECT COUNT(*) FROM files WHERE firm_id = ?1 AND item_id = ?2 AND deleted_at IS NULL) AS item,
+              (SELECT COUNT(*) FROM files WHERE firm_id = ?1 AND request_id = ?3 AND deleted_at IS NULL) AS req`,
+    )
+    .bind(req.firm_id, itemId, req.id)
+    .first<{ item: number; req: number }>();
+  if (counts!.item >= MAX_PER_ITEM || counts!.req >= MAX_PER_REQUEST) return c.json({ error: "limit" }, 409);
+
+  // nothing is written until the first bytes have been looked at
+  const body = c.req.raw.body;
+  if (!body) return c.json({ error: "unsupported_type" }, 415);
+  const source = new ByteSource(body);
+  const first = await source.read(Math.min(CHUNK, length));
+  const mime = sniff(first);
+  if (!mime) return c.json({ error: "unsupported_type" }, 415);
+
+  const fileId = randomId();
+  const key = await fileKey(await firmDek(c.env, region, req.firm_id, true), fileId);
+  const bucket = regionOf(c.env, region).bucket;
+  const r2Key = `f/${req.firm_id}/${req.id}/${fileId}`;
+  const drop = () => bucket.delete(r2Key).catch(() => {});
+  try {
+    await bucket.put(r2Key, encryptStream(key, source, first, length).pipeThrough(new FixedLengthStream(cipherLength(length))));
+  } catch (e) {
+    await drop();
+    throw e;
+  }
+
+  const now = Date.now();
+  const name = cleanName(rawName, mime);
+  const ipHash = await hmac(c.env.HASH_KEY, ipPrefix(ip ?? "unknown"));
+  const here = [req.firm_id, fileId];
+  let res: D1Result[];
+  try {
+    res = await db.batch([
+      db
+        .prepare(
+          `INSERT INTO files (id, firm_id, request_id, item_id, r2_key, name, mime, size, upload_id, uploaded_by, uploaded_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'client', ?
+           WHERE EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)
+           AND EXISTS (SELECT 1 FROM links WHERE token_hash = ? AND revoked_at IS NULL)
+           AND EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status != 'approved')
+           AND (SELECT COUNT(*) FROM files WHERE firm_id = ? AND item_id = ? AND deleted_at IS NULL) < ${MAX_PER_ITEM}
+           AND (SELECT COUNT(*) FROM files WHERE firm_id = ? AND request_id = ? AND deleted_at IS NULL) < ${MAX_PER_REQUEST}
+           ON CONFLICT (firm_id, item_id, upload_id) DO NOTHING`,
+        )
+        .bind(
+          fileId, req.firm_id, req.id, itemId, r2Key, name, mime, length, uploadId, now,
+          req.firm_id, req.id,
+          link.hash,
+          req.firm_id, req.id, itemId,
+          req.firm_id, itemId,
+          req.firm_id, req.id,
+        ),
+      db
+        .prepare(
+          `UPDATE items SET status = 'submitted' WHERE firm_id = ? AND request_id = ? AND id = ? AND status IN ('empty', 'rejected')
+           AND EXISTS (SELECT 1 FROM files WHERE firm_id = ? AND id = ?)`,
+        )
+        .bind(req.firm_id, req.id, itemId, ...here),
+      syncStatus(db, req.firm_id, req.id),
+      auditClient(db, req.firm_id, ipHash, "file.upload", "file", fileId, { request: req.id, item: itemId, size: length, mime }, {
+        sql: "EXISTS (SELECT 1 FROM files WHERE firm_id = ? AND id = ?)",
+        binds: here,
+      }),
+    ]);
+  } catch (e) {
+    await drop();
+    throw e;
+  }
+
+  if (!res[0].meta.changes) {
+    await drop();
+    const again = await replay();
+    if (again) return again;
+    const now = await findLink(c.env, c.req.param("token"));
+    if (!now || (now.req.status !== "open" && now.req.status !== "complete")) return notFound(c);
+    const state = await db
+      .prepare("SELECT status FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
+      .bind(req.firm_id, req.id, itemId)
+      .first<{ status: string }>();
+    if (!state) return notFound(c);
+    return c.json({ error: state.status === "approved" ? "approved" : "limit" }, 409);
+  }
+  return c.json({ id: fileId, name, size: length, uploaded_at: now }, 201);
+});
+
+uploads.delete("/c/:token/files/:fileId", async (c) => {
+  if (await rateLimited(c.env, c.env.CLIENT, c.req.header("CF-Connecting-IP"))) return c.json({ error: "rate_limited" }, 429);
+  const link = await findLink(c.env, c.req.param("token"));
+  if (!link || (link.req.status !== "open" && link.req.status !== "complete")) return notFound(c);
+  const { db, region, req } = link;
+  const fileId = c.req.param("fileId");
+  const file = await db
+    .prepare(
+      `SELECT f.r2_key, f.item_id, i.status FROM files f JOIN items i ON i.firm_id = f.firm_id AND i.request_id = f.request_id AND i.id = f.item_id
+       WHERE f.firm_id = ? AND f.request_id = ? AND f.id = ? AND f.uploaded_by = 'client' AND f.deleted_at IS NULL`,
+    )
+    .bind(req.firm_id, req.id, fileId)
+    .first<{ r2_key: string; item_id: string; status: string }>();
+  if (!file) return notFound(c);
+  if (file.status === "approved") return c.json({ error: "approved" }, 409);
+
+  const now = Date.now();
+  const live = "firm_id = ? AND id = ? AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM items WHERE firm_id = files.firm_id AND id = files.item_id AND status != 'approved')";
+  const binds = [req.firm_id, fileId];
+  const ipHash = await hmac(c.env.HASH_KEY, ipPrefix(c.req.header("CF-Connecting-IP") ?? "unknown"));
+  // the audit row goes first: its condition reads the file the next statement marks deleted
+  const [, marked] = await db.batch([
+    auditClient(db, req.firm_id, ipHash, "file.delete", "file", fileId, { request: req.id, item: file.item_id }, {
+      sql: `EXISTS (SELECT 1 FROM files WHERE ${live})`,
+      binds,
+    }),
+    db.prepare(`UPDATE files SET deleted_at = ? WHERE ${live}`).bind(now, ...binds),
+    db
+      .prepare(
+        `UPDATE items SET status = 'empty' WHERE firm_id = ? AND request_id = ? AND id = ? AND status IN ('submitted', 'rejected')
+         AND NOT EXISTS (SELECT 1 FROM files WHERE firm_id = ? AND item_id = ? AND deleted_at IS NULL)`,
+      )
+      .bind(req.firm_id, req.id, file.item_id, req.firm_id, file.item_id),
+    syncStatus(db, req.firm_id, req.id),
+  ]);
+  if (!marked.meta.changes) return c.json({ error: "approved" }, 409);
+  // a failed object delete leaves ciphertext behind; the retention sweep removes objects of deleted rows
+  await regionOf(c.env, region).bucket.delete(file.r2_key).catch((e) => console.error(e instanceof Error ? e.message : "error"));
+  return c.json({ ok: true });
+});

@@ -10,7 +10,9 @@ beforeEach(async () => {
   await env.CONTROL.batch(
     ["sessions", "login_codes", "users", "firms"].map((t) => env.CONTROL.prepare(`DELETE FROM ${t}`)),
   );
+  const { objects } = await env.FILES_NA.list();
+  await env.FILES_NA.delete(objects.map((o) => o.key));
   await env.DB_NA.batch(
-    ["audit", "links", "items", "requests", "templates", "clients"].map((t) => env.DB_NA.prepare(`DELETE FROM ${t}`)),
+    ["audit", "files", "links", "items", "requests", "templates", "clients"].map((t) => env.DB_NA.prepare(`DELETE FROM ${t}`)),
   );
 });

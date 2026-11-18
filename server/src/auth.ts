@@ -36,10 +36,14 @@ async function turnstileOk(env: Env, token: unknown, ip: string | undefined): Pr
   return body.success === true;
 }
 
-export async function rateLimited(env: Env, limiter: RateLimit | undefined, ip: string | undefined): Promise<boolean> {
+export async function keyLimited(limiter: RateLimit | undefined, key: string): Promise<boolean> {
   if (!limiter) throw new Error("rate limit binding is missing");
-  const { success } = await limiter.limit({ key: await hmac(env.HASH_KEY, ipPrefix(ip ?? "unknown")) });
+  const { success } = await limiter.limit({ key });
   return !success;
+}
+
+export async function rateLimited(env: Env, limiter: RateLimit | undefined, ip: string | undefined): Promise<boolean> {
+  return keyLimited(limiter, await hmac(env.HASH_KEY, ipPrefix(ip ?? "unknown")));
 }
 
 auth.post("/auth/start", async (c) => {

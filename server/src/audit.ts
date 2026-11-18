@@ -21,3 +21,13 @@ export function audit(c: Context<AppEnv>, action: string, objectType: string, ob
       ...(when?.binds ?? []),
     );
 }
+
+// client actions write into the region database straight from a link, with no firm user
+export function auditClient(db: D1Database, firmId: string, ipHash: string, action: string, objectType: string, objectId: string, meta: object, when: { sql: string; binds: unknown[] }) {
+  return db
+    .prepare(
+      `INSERT INTO audit (id, firm_id, at, actor_type, action, object_type, object_id, ip_hash, meta)
+       SELECT ?, ?, ?, 'client', ?, ?, ?, ?, ? WHERE ${when.sql}`,
+    )
+    .bind(randomId(), firmId, Date.now(), action, objectType, objectId, ipHash, JSON.stringify(meta), ...when.binds);
+}

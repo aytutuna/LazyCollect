@@ -1,20 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { DAY } from "../src/util";
-import { api, inDays, setup } from "./helpers";
-
-async function openRequest(email = "owner@firm.test") {
-  const { cookie, client } = await setup(email);
-  const req = await (
-    await api("/api/requests", {
-      method: "POST",
-      cookie,
-      body: { client_id: client.id, title: "2025 taxes", note: "Hurry", deadline: inDays(7), items: [{ label: "Passport", help: "All pages", required: true }, { label: "Visa", required: false }] },
-    })
-  ).json<any>();
-  const { url } = await (await api(`/api/requests/${req.id}/link`, { method: "POST", cookie })).json<any>();
-  return { cookie, req, path: `/api/c/${url.split("/c/")[1]}` };
-}
+import { api, openRequest } from "./helpers";
 
 describe("client link", () => {
   it("shows the request for a fresh link", async () => {
@@ -27,7 +14,7 @@ describe("client link", () => {
       ["Passport", "All pages", true, "empty", null],
       ["Visa", null, false, "empty", null],
     ]);
-    expect(Object.keys(body.items[0]).sort()).toEqual(["help", "id", "label", "reject_note", "required", "status"]);
+    expect(Object.keys(body.items[0]).sort()).toEqual(["files", "help", "id", "label", "reject_note", "required", "status"]);
   });
 
   it("logs a view at most once an hour per link", async () => {
