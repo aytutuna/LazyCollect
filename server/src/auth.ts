@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { createSession, endSession, type AppEnv } from "./session";
 import { sendLoginEmail } from "./email";
+import { htmlHeaders } from "./headers";
 import { DAY, MINUTE, hmac, randomCode, randomId, randomToken, sha256, ipPrefix, FETCH_TIMEOUT_MS } from "./util";
 
 export const auth = new Hono<AppEnv>();
@@ -169,21 +170,14 @@ auth.get("/auth/link", async (c) => {
         .first<{ email: string }>()
     : null;
   const page = (body: string) =>
-    c.html(`<!doctype html><html lang="en"><meta name="viewport" content="width=device-width"><title>Lazy Collect</title><body style="font-family:Arial,sans-serif;max-width:420px;margin:48px auto;padding:0 16px">${body}</body></html>`, row ? 200 : 400, {
+    c.html(`<!doctype html><html lang="en"><meta name="viewport" content="width=device-width"><title>Lazy Collect</title><link rel="stylesheet" href="/link.css"><body>${body}</body>`, row ? 200 : 400, {
+      ...htmlHeaders,
       "Cache-Control": "no-store",
-      "Referrer-Policy": "no-referrer",
     });
   if (!row) return page("<p>This link is invalid or has expired.</p>");
   return page(`<p>Sign in to Lazy Collect as <b>${escapeHtml(row.email)}</b>?</p>
-<button id="go" style="font-size:16px;padding:10px 20px">Sign in</button>
-<script>
-document.getElementById("go").onclick = async () => {
-  const t = new URLSearchParams(location.search).get("t");
-  const res = await fetch("/api/auth/link", { method: "POST", headers: { "X-Collect": "1", "content-type": "application/json" }, body: JSON.stringify({ t }) });
-  if (res.ok) location = "/";
-  else document.body.textContent = "This link is invalid or has expired.";
-};
-</script>`);
+<button id="go">Sign in</button>
+<script src="/link.js"></script>`);
 });
 
 auth.post("/auth/link", async (c) => {

@@ -6,6 +6,7 @@ import { firm, loadFirm } from "./firm";
 import { requests } from "./requests";
 import { templates } from "./templates";
 import { csrf } from "./csrf";
+import { htmlHeaders } from "./headers";
 import { DAY } from "./util";
 import { loadSession, type AppEnv } from "./session";
 
@@ -28,6 +29,11 @@ app.route("/api", firm);
 app.route("/api", clients);
 app.route("/api", templates);
 app.route("/api", requests);
+
+app.get("/c/*", async (c) => {
+  const page = await c.env.ASSETS.fetch(new URL("/c.html", c.req.url));
+  return new Response(page.body, { status: page.status, headers: { ...Object.fromEntries(page.headers), ...htmlHeaders, "Cache-Control": "no-store" } });
+});
 
 export default {
   fetch: app.fetch,
