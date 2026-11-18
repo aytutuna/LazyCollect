@@ -31,3 +31,9 @@ export function fromInput(s: string): number {
 }
 
 export const inDays = (n: number) => Date.now() + n * 86_400_000;
+
+export function fmtSize(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} kB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}

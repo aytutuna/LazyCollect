@@ -50,6 +50,10 @@ export type Item = {
   reject_note: string | null;
 };
 
+export type FileRow = { id: string; name: string; size: number; mime: string; uploaded_at: number };
+
+export type ItemWithFiles = Item & { files: FileRow[] };
+
 export type RequestDetail = {
   id: string;
   client_id: string;
@@ -58,8 +62,10 @@ export type RequestDetail = {
   deadline: number;
   status: string;
   sent_at: number | null;
-  items: Item[];
+  items: ItemWithFiles[];
 };
+
+export type ClientItem = Omit<Item, "position"> & { files: Omit<FileRow, "mime">[] };
 
 export type ClientView = {
   firm_name: string;
@@ -67,5 +73,5 @@ export type ClientView = {
   note: string | null;
   deadline: number;
   status: string;
-  items: Item[];
+  items: ClientItem[];
 };

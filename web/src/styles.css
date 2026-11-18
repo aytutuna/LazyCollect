@@ -594,3 +594,47 @@ details summary {
     grid-template-columns: 1fr;
   }
 }
+
+.uploads {
+  margin-top: 0.5rem;
+}
+
+.files {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+}
+
+.files li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+.job {
+  margin-bottom: 0.5rem;
+}
+
+.job label {
+  display: block;
+}
+
+.job progress {
+  display: block;
+  width: 100%;
+}
+
+.callout {
+  border: 1px solid var(--danger);
+  background: var(--danger-soft);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.callout p {
+  margin: 0.25rem 0 0;
+  white-space: pre-wrap;
+}

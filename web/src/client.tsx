@@ -1,14 +1,137 @@
 import { render } from "preact";
-import { ApiError, get, useLoad } from "./api";
-import { fmtDate, isLate, relative } from "./format";
+import { useRef, useState } from "preact/hooks";
+import { ApiError, del, get, useAction, useLoad } from "./api";
+import { fmtDate, fmtSize, isLate, relative } from "./format";
 import { t } from "./i18n";
-import type { ClientView } from "./types";
-import { Badge, Loading } from "./ui";
+import type { ClientItem, ClientView } from "./types";
+import { Badge, Check, ErrorNote, Loading } from "./ui";
+import { MAX_SIZE, combineToPdf, prepareImage, sendFile, type Prepared } from "./upload";
 import "./styles.css";
 
 const TONES = { empty: "grey", submitted: "teal", approved: "green", rejected: "red" };
 
-function ItemList({ items }: { items: ClientView["items"] }) {
+type Job = { key: string; file: Prepared; uploadId: string; progress: number; failed: boolean; error?: unknown };
+
+function Uploads({ token, item, onChange }: { token: string; item: ClientItem; onChange: () => void }) {
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [preparing, setPreparing] = useState(false);
+  const [combine, setCombine] = useState(true);
+  const camera = useRef<HTMLInputElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const chain = useRef<Promise<unknown>>(Promise.resolve());
+  const removal = useAction();
+  const open = item.status !== "approved";
+
+  const update = (key: string, patch: Partial<Job>) => setJobs((all) => all.map((j) => (j.key === key ? { ...j, ...patch } : j)));
+
+  // one at a time keeps a phone's memory and the per-link rate limit comfortable
+  function send(job: Job) {
+    chain.current = chain.current.then(async () => {
+      update(job.key, { failed: false, error: undefined, progress: 0 });
+      try {
+        if (job.file.blob.size > MAX_SIZE) throw new ApiError(413, "too_big");
+        await sendFile(`/api/c/${encodeURIComponent(token)}/items/${item.id}/files`, job.file, job.uploadId, (progress) => update(job.key, { progress }));
+        setJobs((all) => all.filter((j) => j.key !== job.key));
+        onChange();
+      } catch (error) {
+        update(job.key, { failed: true, error });
+      }
+    });
+  }
+
+  async function pick(input: HTMLInputElement) {
+    const picked = [...(input.files ?? [])];
+    input.value = "";
+    if (!picked.length) return;
+    setPreparing(true);
+    let ready: Prepared[] = [];
+    for (const file of picked) {
+      ready.push(file.type.startsWith("image/") ? await prepareImage(file) : { blob: file, name: file.name, jpeg: false });
+    }
+    const photos = ready.filter((r) => r.jpeg);
+    if (combine && photos.length > 1) {
+      try {
+        const pdf = await combineToPdf(photos.map((p) => p.blob), item.label);
+        ready = [...ready.filter((r) => !r.jpeg), pdf];
+      } catch {
+        // the photos go up one by one instead
+      }
+    }
+    setPreparing(false);
+    for (const file of ready) {
+      const job = { key: crypto.randomUUID(), file, uploadId: crypto.randomUUID(), progress: 0, failed: false };
+      setJobs((all) => [...all, job]);
+      send(job);
+    }
+  }
+
+  async function remove(id: string) {
+    if (await removal.run(() => del(`/c/${encodeURIComponent(token)}/files/${id}`))) onChange();
+  }
+
+  return (
+    <div class="uploads">
+      {item.files.length > 0 && (
+        <ul class="files">
+          {item.files.map((f) => (
+            <li key={f.id}>
+              <span class="name">
+                {f.name} <span class="muted">({fmtSize(f.size)})</span>
+              </span>
+              {open && (
+                <button class="small quiet" disabled={removal.busy} onClick={() => remove(f.id)}>
+                  {t("client.remove")}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {jobs.map((job) => (
+        <div class="job" key={job.key}>
+          {job.failed ? (
+            <>
+              <p class="muted">{job.file.name}</p>
+              <ErrorNote error={job.error} />
+              <div class="row-actions">
+                <button class="small" onClick={() => send(job)}>
+                  {t("retry")}
+                </button>
+                <button class="small" onClick={() => setJobs((all) => all.filter((j) => j.key !== job.key))}>
+                  {t("dismiss")}
+                </button>
+              </div>
+            </>
+          ) : (
+            <label>
+              <span class="muted">{t("client.uploading", { name: job.file.name })}</span>
+              <progress max={1} value={job.progress} />
+            </label>
+          )}
+        </div>
+      ))}
+      {preparing && <p class="muted">{t("client.preparing")}</p>}
+      <ErrorNote error={removal.error} />
+      {open && (
+        <>
+          <div class="row-actions">
+            <button class="small" disabled={preparing} onClick={() => camera.current?.click()}>
+              {t("client.take_photo")}
+            </button>
+            <button class="small" disabled={preparing} onClick={() => picker.current?.click()}>
+              {t("client.choose_file")}
+            </button>
+          </div>
+          <Check label={t("client.combine")} checked={combine} onChange={setCombine} />
+          <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={(e) => pick(e.currentTarget)} />
+          <input ref={picker} type="file" accept="image/*,application/pdf" multiple hidden onChange={(e) => pick(e.currentTarget)} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function ItemList({ items, token, onChange }: { items: ClientItem[]; token: string; onChange: () => void }) {
   return (
     <ul class="items">
       {items.map((item) => (
@@ -19,7 +142,14 @@ function ItemList({ items }: { items: ClientView["items"] }) {
               <Badge tone={TONES[item.status]}>{t(`client.${item.status}`)}</Badge>
             </div>
             {item.help && <div class="muted">{item.help}</div>}
-            {item.status === "rejected" && item.reject_note && <p class="reject">{item.reject_note}</p>}
+            {item.status === "rejected" && item.reject_note && (
+              <div class="callout" role="alert">
+                <strong>{t("client.rejected_title")}</strong>
+                <p>{item.reject_note}</p>
+              </div>
+            )}
+            {item.status === "submitted" && item.reject_note && <p class="muted">{t("client.earlier_note", { note: item.reject_note })}</p>}
+            <Uploads token={token} item={item} onChange={onChange} />
           </div>
         </li>
       ))}
@@ -29,7 +159,7 @@ function ItemList({ items }: { items: ClientView["items"] }) {
 
 function Page() {
   const token = location.pathname.split("/")[2] ?? "";
-  const { data, error } = useLoad(() => get<ClientView>(`/c/${encodeURIComponent(token)}`));
+  const { data, error, reload } = useLoad(() => get<ClientView>(`/c/${encodeURIComponent(token)}`));
 
   if (error) {
     const gone = error instanceof ApiError && error.status === 404;
@@ -52,14 +182,15 @@ function Page() {
       <p>
         {t("client.due")}: <strong class={isLate(data.deadline) ? "late" : ""}>{fmtDate(data.deadline)}</strong> ({relative(data.deadline)})
       </p>
+      <p class="muted">{t("client.privacy", { firm: data.firm_name })}</p>
       <section>
         <h2>{t("client.checklist")}</h2>
         <p class="muted">{t("progress", { done: received, total: data.items.length })}</p>
-        <ItemList items={data.items.filter((i) => i.required)} />
+        <ItemList items={data.items.filter((i) => i.required)} token={token} onChange={reload} />
         {optional.length > 0 && (
           <>
             <h3 class="optional">{t("client.optional")}</h3>
-            <ItemList items={optional} />
+            <ItemList items={optional} token={token} onChange={reload} />
           </>
         )}
       </section>
