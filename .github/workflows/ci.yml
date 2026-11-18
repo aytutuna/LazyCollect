@@ -23,6 +23,13 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+        env:
+          VITE_TURNSTILE_SITEKEY: ci
+      - run: test -f ../web/dist/c.html
+      - run: npm ci
       - run: npm run typecheck
       - run: npm test
   web:
@@ -40,3 +47,5 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+        env:
+          VITE_TURNSTILE_SITEKEY: ci
