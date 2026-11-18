@@ -30,7 +30,7 @@ function loadScript() {
 
 const SITEKEY = import.meta.env.VITE_TURNSTILE_SITEKEY || (import.meta.env.DEV ? "1x00000000000000000000AA" : "");
 
-export function Turnstile({ onToken }: { onToken: (token: string) => void }) {
+export function Turnstile({ onToken, onError }: { onToken: (token: string) => void; onError: () => void }) {
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let id: string | undefined;
@@ -42,10 +42,13 @@ export function Turnstile({ onToken }: { onToken: (token: string) => void }) {
           sitekey: SITEKEY,
           callback: onToken,
           "expired-callback": () => onToken(""),
-          "error-callback": () => onToken(""),
+          "error-callback": () => {
+            onToken("");
+            onError();
+          },
         });
       },
-      () => {},
+      onError,
     );
     return () => {
       gone = true;

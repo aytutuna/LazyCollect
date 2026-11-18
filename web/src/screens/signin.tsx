@@ -1,19 +1,21 @@
 import { useState } from "preact/hooks";
-import { post, useAction } from "../api";
+import { ApiError, post, useAction } from "../api";
 import { t } from "../i18n";
 import { Turnstile } from "../turnstile";
 import { ErrorNote, Field } from "../ui";
 
-export function SignIn({ onDone }: { onDone: () => void }) {
+export function SignIn({ onDone }: { onDone: () => Promise<unknown> }) {
   const [step, setStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [token, setToken] = useState("");
   const [widget, setWidget] = useState(0);
+  const [widgetFailed, setWidgetFailed] = useState(false);
   const { busy, error, run } = useAction();
 
   async function start(e: Event) {
     e.preventDefault();
+    setWidgetFailed(false);
     const ok = await run(() => post("/auth/start", { email, turnstile: token }));
     if (ok) setStep("code");
     else {
@@ -24,13 +26,17 @@ export function SignIn({ onDone }: { onDone: () => void }) {
 
   async function verify(e: Event) {
     e.preventDefault();
-    if (await run(() => post("/auth/verify", { email, code: code.trim() }))) onDone();
+    await run(async () => {
+      await post("/auth/verify", { email, code: code.trim() });
+      await onDone();
+    });
   }
 
   function back() {
     setStep("email");
     setCode("");
     setToken("");
+    setWidgetFailed(false);
     setWidget(widget + 1);
   }
 
@@ -44,8 +50,8 @@ export function SignIn({ onDone }: { onDone: () => void }) {
           <Field label={t("signin.email")}>
             <input type="email" required autoComplete="email" value={email} onInput={(e) => setEmail(e.currentTarget.value)} />
           </Field>
-          <Turnstile key={widget} onToken={setToken} />
-          <ErrorNote error={error} />
+          <Turnstile key={widget} onToken={setToken} onError={() => setWidgetFailed(true)} />
+          <ErrorNote error={error ?? (widgetFailed ? new ApiError(400, "turnstile") : null)} />
           <button class="primary" disabled={busy || !token}>
             {t("signin.send")}
           </button>
