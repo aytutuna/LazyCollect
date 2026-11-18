@@ -25,7 +25,7 @@ export function RequestPage({ id }: { id: string }) {
 
   if (!req) return error ? <ErrorNote error={error} /> : <Loading />;
 
-  const editable = req.status === "draft" || req.status === "open";
+  const editable = req.status === "draft" || req.status === "open" || req.status === "complete";
   const clientName = clients.data?.find((c) => c.id === req.client_id)?.name ?? "";
   const received = req.items.filter((i) => i.status === "submitted" || i.status === "approved").length;
   const late = isLate(req.deadline) && editable;
@@ -79,6 +79,14 @@ export function RequestPage({ id }: { id: string }) {
       </div>
 
       {!ask && <ErrorNote error={act.error} />}
+      {error && (
+        <p class="error" role="alert">
+          {t("detail.refresh_failed")}{" "}
+          <button class="link" onClick={reload}>
+            {t("retry")}
+          </button>
+        </p>
+      )}
 
       <section>
         {editing ? (
@@ -213,7 +221,7 @@ function Review({ requestId, item, onDone }: { requestId: string; item: ItemWith
   const { busy, error, run } = useAction((e) => e instanceof ApiError && e.status === 409 && onDone());
 
   async function decide(decision: "approve" | "reject") {
-    if (await run(() => post(`/requests/${requestId}/items/${item.id}/review`, { decision, note }))) onDone();
+    if (await run(() => post(`/requests/${requestId}/items/${item.id}/review`, { decision, note, files: item.files.map((f) => f.id) }))) onDone();
   }
 
   if (!rejecting) {

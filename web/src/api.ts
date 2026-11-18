@@ -47,7 +47,7 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[] = []) {
     setState((s) => ({ data: s.data, loading: true }));
     load().then(
       (data) => live && setState({ data, loading: false }),
-      (error) => live && setState({ error, loading: false }),
+      (error) => live && setState((s) => ({ data: s.data, error, loading: false })),
     );
     return () => {
       live = false;

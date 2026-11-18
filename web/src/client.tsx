@@ -10,6 +10,9 @@ import "./styles.css";
 
 const TONES = { empty: "grey", submitted: "teal", approved: "green", rejected: "red" };
 
+// one queue for the whole page keeps a phone's memory and the per-link rate limit comfortable
+let queue: Promise<unknown> = Promise.resolve();
+
 type Job = { key: string; file: Prepared; uploadId: string; progress: number; failed: boolean; error?: unknown };
 
 function Uploads({ token, item, onChange }: { token: string; item: ClientItem; onChange: () => void }) {
@@ -18,15 +21,13 @@ function Uploads({ token, item, onChange }: { token: string; item: ClientItem; o
   const [combine, setCombine] = useState(true);
   const camera = useRef<HTMLInputElement>(null);
   const picker = useRef<HTMLInputElement>(null);
-  const chain = useRef<Promise<unknown>>(Promise.resolve());
   const removal = useAction();
   const open = item.status !== "approved";
 
   const update = (key: string, patch: Partial<Job>) => setJobs((all) => all.map((j) => (j.key === key ? { ...j, ...patch } : j)));
 
-  // one at a time keeps a phone's memory and the per-link rate limit comfortable
   function send(job: Job) {
-    chain.current = chain.current.then(async () => {
+    queue = queue.then(async () => {
       update(job.key, { failed: false, error: undefined, progress: 0 });
       try {
         if (job.file.blob.size > MAX_SIZE) throw new ApiError(413, "too_big");
@@ -49,10 +50,12 @@ function Uploads({ token, item, onChange }: { token: string; item: ClientItem; o
       ready.push(file.type.startsWith("image/") ? await prepareImage(file) : { blob: file, name: file.name, jpeg: false });
     }
     const photos = ready.filter((r) => r.jpeg);
-    if (combine && photos.length > 1) {
+    // a few kB per page covers the PDF structure; past the cap the photos go up separately
+    const estimate = photos.reduce((sum, p) => sum + p.blob.size + 2048, 0);
+    if (combine && photos.length > 1 && estimate <= MAX_SIZE) {
       try {
         const pdf = await combineToPdf(photos.map((p) => p.blob), item.label);
-        ready = [...ready.filter((r) => !r.jpeg), pdf];
+        if (pdf.blob.size <= MAX_SIZE) ready = [...ready.filter((r) => !r.jpeg), pdf];
       } catch {
         // the photos go up one by one instead
       }
@@ -161,7 +164,7 @@ function Page() {
   const token = location.pathname.split("/")[2] ?? "";
   const { data, error, reload } = useLoad(() => get<ClientView>(`/c/${encodeURIComponent(token)}`));
 
-  if (error) {
+  if (error && !data) {
     const gone = error instanceof ApiError && error.status === 404;
     return (
       <main class="client-page">
@@ -182,6 +185,14 @@ function Page() {
       <p>
         {t("client.due")}: <strong class={isLate(data.deadline) ? "late" : ""}>{fmtDate(data.deadline)}</strong> ({relative(data.deadline)})
       </p>
+      {error && (
+        <p class="error" role="alert">
+          {t("client.refresh_failed")}{" "}
+          <button class="link" onClick={reload}>
+            {t("retry")}
+          </button>
+        </p>
+      )}
       <p class="muted">{t("client.privacy", { firm: data.firm_name })}</p>
       <section>
         <h2>{t("client.checklist")}</h2>

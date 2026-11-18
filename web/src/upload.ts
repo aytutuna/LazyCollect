@@ -11,7 +11,7 @@ const withExt = (name: string, ext: string) => `${name.replace(/\.[^./\\]*$/, ""
 // A format the browser can't decode (some HEIC) goes up unchanged.
 export async function prepareImage(file: File): Promise<Prepared> {
   try {
-    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const bitmap = await createImageBitmap(file);
     const scale = Math.min(1, LONG_EDGE / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(bitmap.width * scale));
