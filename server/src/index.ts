@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { auth } from "./auth";
 import { client } from "./client";
 import { clients } from "./clients";
+import { files } from "./files";
 import { firm, loadFirm } from "./firm";
 import { requests } from "./requests";
 import { templates } from "./templates";
@@ -32,10 +33,12 @@ app.use("/api/firm", loadFirm);
 app.use("/api/clients/*", loadFirm);
 app.use("/api/templates/*", loadFirm);
 app.use("/api/requests/*", loadFirm);
+app.use("/api/files/*", loadFirm);
 app.route("/api", firm);
 app.route("/api", clients);
 app.route("/api", templates);
 app.route("/api", requests);
+app.route("/api", files);
 
 app.get("/c/*", async (c) => {
   const page = await c.env.ASSETS.fetch(new URL("/c", c.req.url));

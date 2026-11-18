@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { usable } from "./firm";
+import { syncStatus } from "./status";
 import type { AppEnv } from "./session";
 import { builtinTemplates, parseItem, parseItems, type Item } from "./templates";
 import { DAY, hmac, randomId, randomToken } from "./util";
@@ -89,8 +90,19 @@ async function loadRequest(c: Context<AppEnv>, id: string) {
   const { results } = await db
     .prepare(`SELECT ${ITEM_COLS} FROM items WHERE firm_id = ? AND request_id = ? ORDER BY position`)
     .bind(firmId, id)
-    .all<{ required: number }>();
-  return { ...row, items: results.map((i) => ({ ...i, required: i.required === 1 })) };
+    .all<{ id: string; required: number }>();
+  const { results: files } = await db
+    .prepare("SELECT id, item_id, name, size, mime, uploaded_at FROM files WHERE firm_id = ? AND request_id = ? AND deleted_at IS NULL ORDER BY uploaded_at, rowid")
+    .bind(firmId, id)
+    .all<{ item_id: string }>();
+  return {
+    ...row,
+    items: results.map((i) => ({
+      ...i,
+      required: i.required === 1,
+      files: files.filter((f) => f.item_id === i.id).map(({ item_id: _item, ...f }) => f),
+    })),
+  };
 }
 
 requests.get("/requests", async (c) => {
@@ -261,6 +273,37 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
       .bind(firmId, req.id, itemId, firmId, req.id),
   ]);
   return res.meta.changes ? c.json({ ok: true }) : refused(c);
+});
+
+requests.post("/requests/:id/items/:itemId/review", async (c) => {
+  const body = await readBody(c);
+  if (!body || (body.decision !== "approve" && body.decision !== "reject")) return invalid(c);
+  const approve = body.decision === "approve";
+  const note = approve ? null : text(body.note, 500);
+  if (!approve && !note) return invalid(c);
+  const req = await findRequest(c);
+  if (!req) return notFound(c);
+  const db = c.get("db");
+  const firmId = c.get("firm").id;
+  const itemId = c.req.param("itemId");
+  const status = approve ? "approved" : "rejected";
+  const ready = `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status IN ('submitted', 'approved'))
+    AND EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)`;
+  const binds = [firmId, req.id, itemId, firmId, req.id];
+  // the audit row goes first: its condition reads the status the update changes
+  const [, res] = await db.batch([
+    audit(c, "item.review", "item", itemId, { request: req.id, decision: body.decision }, { sql: ready, binds }),
+    db
+      .prepare(`UPDATE items SET status = ?, reject_note = ?, reviewed_by = ?, reviewed_at = ? WHERE firm_id = ? AND request_id = ? AND id = ? AND ${ready}`)
+      .bind(status, note, c.get("session")!.userId, Date.now(), firmId, req.id, itemId, ...binds),
+    syncStatus(db, firmId, req.id),
+  ]);
+  if (!res.meta.changes) {
+    const item = await db.prepare("SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ?").bind(firmId, req.id, itemId).first();
+    return item ? c.json({ error: "locked" }, 409) : notFound(c);
+  }
+  const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(itemId).first<{ required: number }>();
+  return c.json({ ...row, required: row!.required === 1 });
 });
 
 requests.post("/requests/:id/close", async (c) => {
