@@ -10,7 +10,8 @@ CREATE TABLE clients (
   consent_by TEXT,
   created_by TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  deleted_at INTEGER
+  deleted_at INTEGER,
+  UNIQUE (firm_id, id)
 );
 CREATE INDEX idx_clients_firm ON clients (firm_id, name);
 
@@ -28,7 +29,7 @@ CREATE INDEX idx_templates_firm ON templates (firm_id, name);
 CREATE TABLE requests (
   id TEXT PRIMARY KEY CHECK (length(id) = 32),
   firm_id TEXT NOT NULL,
-  client_id TEXT NOT NULL REFERENCES clients (id),
+  client_id TEXT NOT NULL,
   title TEXT NOT NULL,
   note TEXT,
   deadline INTEGER NOT NULL,
@@ -38,7 +39,9 @@ CREATE TABLE requests (
   closed_at INTEGER,
   created_by TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  deleted_at INTEGER
+  deleted_at INTEGER,
+  UNIQUE (firm_id, id),
+  FOREIGN KEY (firm_id, client_id) REFERENCES clients (firm_id, id)
 );
 CREATE INDEX idx_requests_firm ON requests (firm_id, created_at);
 CREATE INDEX idx_requests_client ON requests (firm_id, client_id);
@@ -46,7 +49,7 @@ CREATE INDEX idx_requests_client ON requests (firm_id, client_id);
 CREATE TABLE items (
   id TEXT PRIMARY KEY CHECK (length(id) = 32),
   firm_id TEXT NOT NULL,
-  request_id TEXT NOT NULL REFERENCES requests (id),
+  request_id TEXT NOT NULL,
   position INTEGER NOT NULL,
   label TEXT NOT NULL,
   help TEXT,
@@ -54,18 +57,20 @@ CREATE TABLE items (
   status TEXT NOT NULL DEFAULT 'empty' CHECK (status IN ('empty', 'submitted', 'approved', 'rejected')),
   reject_note TEXT,
   reviewed_by TEXT,
-  reviewed_at INTEGER
+  reviewed_at INTEGER,
+  FOREIGN KEY (firm_id, request_id) REFERENCES requests (firm_id, id)
 );
 CREATE INDEX idx_items_request ON items (firm_id, request_id, position);
 
 CREATE TABLE links (
   token_hash TEXT PRIMARY KEY,
   firm_id TEXT NOT NULL,
-  request_id TEXT NOT NULL REFERENCES requests (id),
+  request_id TEXT NOT NULL,
   expires_at INTEGER NOT NULL,
   revoked_at INTEGER,
   created_by TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (firm_id, request_id) REFERENCES requests (firm_id, id)
 );
 CREATE INDEX idx_links_request ON links (firm_id, request_id);
 
@@ -78,6 +83,7 @@ CREATE TABLE audit (
   action TEXT NOT NULL,
   object_type TEXT NOT NULL,
   object_id TEXT NOT NULL,
-  ip_hash TEXT
+  ip_hash TEXT,
+  meta TEXT
 );
 CREATE INDEX idx_audit_object ON audit (firm_id, object_type, object_id, at);
