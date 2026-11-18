@@ -124,17 +124,48 @@ auth.post("/auth/verify", async (c) => {
   return c.json({ ok: true });
 });
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// Mail scanners fetch links with GET or HEAD, so this only looks the token up;
+// signing in happens on the POST below.
 auth.get("/auth/link", async (c) => {
   const t = c.req.query("t");
-  if (!t) return c.text("Invalid or expired link", 400);
-  const db = c.env.CONTROL;
-  const row = await db
-    .prepare("SELECT id, email FROM login_codes WHERE link_hash = ? AND used_at IS NULL AND expires_at > ?")
-    .bind(await sha256(t), Date.now())
-    .first<{ id: string; email: string }>();
-  if (!row || !(await useCode(db, row.id))) return c.text("Invalid or expired link", 400);
-  if (!(await signIn(c, row.email))) return c.text("This account is disabled", 403);
-  return c.redirect("/", 302);
+  const row = t
+    ? await c.env.CONTROL.prepare("SELECT email FROM login_codes WHERE link_hash = ? AND link_used_at IS NULL AND expires_at > ?")
+        .bind(await sha256(t), Date.now())
+        .first<{ email: string }>()
+    : null;
+  const page = (body: string) =>
+    c.html(`<!doctype html><html lang="en"><meta name="viewport" content="width=device-width"><title>Lazy Collect</title><body style="font-family:Arial,sans-serif;max-width:420px;margin:48px auto;padding:0 16px">${body}</body></html>`, row ? 200 : 400, {
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
+    });
+  if (!row) return page("<p>This link is invalid or has expired.</p>");
+  return page(`<p>Sign in to Lazy Collect as <b>${escapeHtml(row.email)}</b>?</p>
+<button id="go" style="font-size:16px;padding:10px 20px">Sign in</button>
+<script>
+document.getElementById("go").onclick = async () => {
+  const t = new URLSearchParams(location.search).get("t");
+  const res = await fetch("/api/auth/link", { method: "POST", headers: { "X-Collect": "1", "content-type": "application/json" }, body: JSON.stringify({ t }) });
+  if (res.ok) location = "/";
+  else document.body.textContent = "This link is invalid or has expired.";
+};
+</script>`);
+});
+
+auth.post("/auth/link", async (c) => {
+  const body = await c.req.json<{ t?: unknown }>().catch(() => null);
+  if (typeof body?.t !== "string") return c.json({ error: "invalid" }, 400);
+  const row = await c.env.CONTROL.prepare(
+    "UPDATE login_codes SET link_used_at = ? WHERE link_hash = ? AND link_used_at IS NULL AND expires_at > ? RETURNING email",
+  )
+    .bind(Date.now(), await sha256(body.t), Date.now())
+    .first<{ email: string }>();
+  if (!row) return c.json({ error: "invalid" }, 400);
+  if (!(await signIn(c, row.email))) return c.json({ error: "disabled" }, 403);
+  return c.json({ ok: true });
 });
 
 auth.post("/auth/logout", async (c) => {

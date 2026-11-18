@@ -128,16 +128,41 @@ describe("verify", () => {
 });
 
 describe("link", () => {
-  it("signs in once and redirects to /", async () => {
+  const tokenOf = (link: string) => link.split("t=")[1];
+
+  it("is not consumed by HEAD or GET, and POST signs in once", async () => {
     const sent = mockOutbound();
     await start(EMAIL);
     const link = linkFrom(sent[0]);
-    const res = await api(link);
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/");
-    const me = await api("/api/me", { cookie: cookieFrom(res) });
-    expect(me.status).toBe(200);
+    expect((await api(link, { method: "HEAD" })).status).toBe(200);
+    const page = await api(link);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain(EMAIL);
+    const row = await env.CONTROL.prepare("SELECT link_used_at FROM login_codes").first<{ link_used_at: number | null }>();
+    expect(row!.link_used_at).toBeNull();
+
+    const res = await api("/api/auth/link", { method: "POST", body: { t: tokenOf(link) } });
+    expect(res.status).toBe(200);
+    expect((await api("/api/me", { cookie: cookieFrom(res) })).status).toBe(200);
+    expect((await api("/api/auth/link", { method: "POST", body: { t: tokenOf(link) } })).status).toBe(400);
     expect((await api(link)).status).toBe(400);
+  });
+
+  it("leaves the code usable after the link page was fetched", async () => {
+    const sent = mockOutbound();
+    await start(EMAIL);
+    await api(linkFrom(sent[0]));
+    const res = await api("/api/auth/verify", { method: "POST", body: { email: EMAIL, code: codeFrom(sent[0]) } });
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects an expired link", async () => {
+    const sent = mockOutbound();
+    await start(EMAIL);
+    await env.CONTROL.prepare("UPDATE login_codes SET expires_at = ?").bind(Date.now() - 1).run();
+    const link = linkFrom(sent[0]);
+    expect((await api(link)).status).toBe(400);
+    expect((await api("/api/auth/link", { method: "POST", body: { t: tokenOf(link) } })).status).toBe(400);
   });
 });
 

@@ -29,6 +29,7 @@ CREATE TABLE login_codes (
   attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   expires_at INTEGER NOT NULL,
   used_at INTEGER,
+  link_used_at INTEGER,
   created_at INTEGER NOT NULL
 );
 CREATE INDEX idx_login_codes_email ON login_codes (email_hash, created_at);
