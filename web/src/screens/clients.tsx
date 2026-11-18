@@ -95,8 +95,8 @@ export function Clients() {
             <thead>
               <tr>
                 <th>{t("clients.name")}</th>
-                <th>{t("clients.email")}</th>
-                <th>{t("clients.phone")}</th>
+                <th class="wide">{t("clients.email")}</th>
+                <th class="wide">{t("clients.phone")}</th>
                 <th />
               </tr>
             </thead>
@@ -104,15 +104,16 @@ export function Clients() {
               {data.map((c) =>
                 editing === c.id ? (
                   <tr>
-                    <td colSpan={4}>
+                    <td colSpan={5}>
                       <ClientForm client={c} onSaved={done} onCancel={() => setEditing(null)} />
                     </td>
                   </tr>
                 ) : (
                   <tr>
-                    <td data-label={t("clients.name")}>{c.name}</td>
-                    <td data-label={t("clients.email")}>{c.email ?? "-"}</td>
-                    <td data-label={t("clients.phone")}>{c.phone ?? "-"}</td>
+                    <td class="name">{c.name}</td>
+                    <td class="wide">{c.email ?? "-"}</td>
+                    <td class="wide">{c.phone ?? "-"}</td>
+                    <td class="narrow muted">{[c.email, c.phone].filter(Boolean).join(" · ")}</td>
                     <td class="end">
                       <div class="row-actions">
                         <button class="small" onClick={() => setEditing(c.id)}>

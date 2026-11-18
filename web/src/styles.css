@@ -384,9 +384,17 @@ td .sub {
   font-size: 0.875rem;
 }
 
+td.narrow {
+  display: none;
+}
+
 td.end {
   text-align: right;
   white-space: nowrap;
+}
+
+.spaced {
+  margin-top: 2rem;
 }
 
 .empty {
@@ -559,11 +567,17 @@ details summary {
     padding: 0.25rem 1rem;
   }
 
-  table.stack td[data-label]::before {
-    content: attr(data-label);
+  table.stack td.wide {
+    display: none;
+  }
+
+  table.stack td.narrow {
     display: block;
-    font-size: 0.8125rem;
-    color: var(--muted);
+    font-size: 0.875rem;
+  }
+
+  table.stack td.name {
+    font-weight: 600;
   }
 
   table.stack td.end {

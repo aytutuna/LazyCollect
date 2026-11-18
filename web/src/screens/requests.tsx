@@ -58,9 +58,9 @@ export function Requests() {
                 <tr>
                   <th>{t("requests.client")}</th>
                   <th>{t("requests.request")}</th>
-                  <th>{t("requests.deadline")}</th>
-                  <th>{t("requests.status")}</th>
-                  <th>{t("requests.progress")}</th>
+                  <th class="wide">{t("requests.deadline")}</th>
+                  <th class="wide">{t("requests.status")}</th>
+                  <th class="wide">{t("requests.progress")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -78,21 +78,26 @@ export function Requests() {
 
 function Row({ r }: { r: RequestRow }) {
   const total = r.empty + r.submitted + r.approved + r.rejected;
-  const late = isLate(r.deadline) && (r.status === "draft" || r.status === "open");
+  const open = r.status === "draft" || r.status === "open";
+  const late = isLate(r.deadline) && open;
+  const when = late ? relative(r.deadline) : t("requests.due", { when: relative(r.deadline).toLowerCase() });
   return (
     <tr>
-      <td data-label={t("requests.client")}>{r.client_name}</td>
-      <td data-label={t("requests.request")}>
+      <td class="name">{r.client_name}</td>
+      <td>
         <Link href={`/requests/${r.id}`}>{r.title}</Link>
       </td>
-      <td data-label={t("requests.deadline")}>
+      <td class="wide">
         <span class={late ? "late" : ""}>{relative(r.deadline)}</span>
         <span class="sub">{fmtDate(r.deadline)}</span>
       </td>
-      <td data-label={t("requests.status")}>
+      <td class="wide">
         <Badge tone={statusTone(r.status)}>{statusLabel(r.status)}</Badge>
       </td>
-      <td data-label={t("requests.progress")}>{t("progress", { done: r.submitted + r.approved, total })}</td>
+      <td class="wide">{t("progress", { done: r.submitted + r.approved, total })}</td>
+      <td class="narrow muted">
+        <span class={late ? "late" : ""}>{when}</span> · {statusLabel(r.status)} · {t("progress", { done: r.submitted + r.approved, total })}
+      </td>
     </tr>
   );
 }
