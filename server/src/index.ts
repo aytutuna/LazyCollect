@@ -17,6 +17,11 @@ app.onError((e, c) => {
   return c.json({ error: "server_error" }, 500);
 });
 
+app.use("/api/*", async (c, next) => {
+  await next();
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("Cache-Control", "no-store");
+});
 app.use("/api/*", csrf, loadSession);
 app.get("/api/health", (c) => c.json({ ok: true }));
 app.route("/api", auth);

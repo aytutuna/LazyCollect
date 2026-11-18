@@ -16,4 +16,10 @@ it("serves the client page shell with the same headers", async () => {
   const res = await exports.default.fetch("https://collect.alazy.app/c/abc");
   expect(res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
   expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+  expect(res.headers.get("strict-transport-security")).toContain("max-age=31536000");
+  // the body only exists when web/ has been built
+  if (res.status === 200) {
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toContain('id="app"');
+  }
 });
