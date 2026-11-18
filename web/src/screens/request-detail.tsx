@@ -1,9 +1,9 @@
 import { useState } from "preact/hooks";
 import { useLocation } from "wouter-preact";
 import { ApiError, del, get, patch, post, useAction, useLoad } from "../api";
-import { fmtDate, fromInput, inDays, isLate, relative, toInput } from "../format";
+import { fmtDate, fmtSize, fromInput, inDays, isLate, relative, toInput } from "../format";
 import { t } from "../i18n";
-import type { Client, Item, RequestDetail } from "../types";
+import type { Client, Item, ItemWithFiles, RequestDetail } from "../types";
 import { Badge, Check, Confirm, ErrorNote, Field, Loading, statusLabel, statusTone } from "../ui";
 
 const ITEM_TONES = { empty: "grey", submitted: "teal", approved: "green", rejected: "red" };
@@ -154,6 +154,18 @@ export function RequestPage({ id }: { id: string }) {
                     </div>
                     {item.help && <div class="muted">{item.help}</div>}
                     {item.status === "rejected" && item.reject_note && <p class="reject">{item.reject_note}</p>}
+                    {item.files.length > 0 && (
+                      <ul class="files">
+                        {item.files.map((f) => (
+                          <li key={f.id}>
+                            <span class="name">
+                              <a href={`/api/files/${f.id}`}>{f.name}</a> <span class="muted">({fmtSize(f.size)})</span>
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {item.status === "submitted" && (req.status === "open" || req.status === "complete") && <Review requestId={id} item={item} onDone={reload} />}
                     {manage && (
                       <div class="row-actions">
                         <button class="small" onClick={() => setEditingItem(item.id)}>
@@ -192,6 +204,54 @@ export function RequestPage({ id }: { id: string }) {
         <Confirm title={t("detail.delete")} body={t("detail.delete_body")} confirm={t("detail.delete")} danger busy={act.busy} error={act.error} onConfirm={remove} onCancel={closeAsk} />
       )}
     </>
+  );
+}
+
+function Review({ requestId, item, onDone }: { requestId: string; item: ItemWithFiles; onDone: () => void }) {
+  const [rejecting, setRejecting] = useState(false);
+  const [note, setNote] = useState("");
+  const { busy, error, run } = useAction((e) => e instanceof ApiError && e.status === 409 && onDone());
+
+  async function decide(decision: "approve" | "reject") {
+    if (await run(() => post(`/requests/${requestId}/items/${item.id}/review`, { decision, note }))) onDone();
+  }
+
+  if (!rejecting) {
+    return (
+      <>
+        <ErrorNote error={error} />
+        <div class="row-actions">
+          <button class="primary small" disabled={busy} onClick={() => decide("approve")}>
+            {t("detail.approve")}
+          </button>
+          <button class="small" disabled={busy} onClick={() => setRejecting(true)}>
+            {t("detail.reject")}
+          </button>
+        </div>
+      </>
+    );
+  }
+  return (
+    <form
+      class="editor-row"
+      onSubmit={(e) => {
+        e.preventDefault();
+        decide("reject");
+      }}
+    >
+      <Field label={t("detail.reject_note")} hint={t("detail.reject_hint")}>
+        <textarea required rows={3} maxLength={500} value={note} onInput={(e) => setNote(e.currentTarget.value)} />
+      </Field>
+      <ErrorNote error={error} />
+      <div class="row-actions">
+        <button class="primary small" disabled={busy}>
+          {t("detail.reject_send")}
+        </button>
+        <button type="button" class="small" onClick={() => setRejecting(false)}>
+          {t("cancel")}
+        </button>
+      </div>
+    </form>
   );
 }
 
