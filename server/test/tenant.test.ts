@@ -54,7 +54,7 @@ describe("tenant isolation", () => {
     const mine = await (await api("/api/requests", { method: "POST", cookie: b.cookie, body: { client_id: b.client.id, title: "B", deadline: inDays(7), items: [{ label: "y" }] } })).json<any>();
     const firmA = (await env.DB_NA.prepare("SELECT firm_id FROM clients WHERE id = ?").bind(a.client.id).first<any>()).firm_id;
     const rows = async () =>
-      JSON.stringify(await Promise.all(["clients", "templates", "requests", "items"].map((t) => env.DB_NA.prepare(`SELECT * FROM ${t} WHERE firm_id = ? ORDER BY id`).bind(firmA).all())));
+      JSON.stringify(await Promise.all(["clients", "templates", "requests", "items"].map((t) => env.DB_NA.prepare(`SELECT * FROM ${t} WHERE firm_id = ? ORDER BY id`).bind(firmA).all().then((r) => r.results))));
     const before = await rows();
 
     const itemId = req.items[0].id;
