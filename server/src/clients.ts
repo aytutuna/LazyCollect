@@ -113,9 +113,21 @@ clients.patch("/clients/:id", async (c) => {
 });
 
 clients.delete("/clients/:id", async (c) => {
-  const res = await c.get("db")
-    .prepare("UPDATE clients SET deleted_at = ? WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
-    .bind(Date.now(), c.get("firm").id, c.req.param("id"))
-    .run();
+  const db = c.get("db");
+  const firmId = c.get("firm").id;
+  const id = c.req.param("id");
+  const now = Date.now();
+  const [res] = await db.batch([
+    db.prepare("UPDATE clients SET deleted_at = ? WHERE firm_id = ? AND id = ? AND deleted_at IS NULL").bind(now, firmId, id),
+    db
+      .prepare(
+        `UPDATE links SET revoked_at = ? WHERE firm_id = ? AND revoked_at IS NULL
+         AND request_id IN (SELECT id FROM requests WHERE firm_id = ? AND client_id = ?)`,
+      )
+      .bind(now, firmId, firmId, id),
+    db
+      .prepare("UPDATE requests SET status = 'closed', closed_at = ? WHERE firm_id = ? AND client_id = ? AND status IN ('draft', 'open')")
+      .bind(now, firmId, id),
+  ]);
   return res.meta.changes ? c.json({ ok: true }) : notFound(c);
 });

@@ -90,3 +90,25 @@ describe("client link", () => {
     expect(statuses).toContain(429);
   });
 });
+
+describe("deleted client", () => {
+  it("revokes the link, closes the request and drops it from the list", async () => {
+    const { cookie, req, path } = await openRequest();
+    const clientId = (await env.DB_NA.prepare("SELECT client_id FROM requests").first<any>()).client_id;
+    expect((await api(path)).status).toBe(200);
+    expect((await api(`/api/clients/${clientId}`, { method: "DELETE", cookie })).status).toBe(200);
+    expect((await api(path)).status).toBe(404);
+    expect(await (await api("/api/requests", { cookie })).json()).toEqual([]);
+    const row = await env.DB_NA.prepare("SELECT status, closed_at FROM requests WHERE id = ?").bind(req.id).first<any>();
+    expect(row.status).toBe("closed");
+    expect(row.closed_at).toBeGreaterThan(0);
+    const link = await env.DB_NA.prepare("SELECT revoked_at FROM links").first<any>();
+    expect(link.revoked_at).toBeGreaterThan(0);
+  });
+
+  it("hides the view even if only the client row is flagged", async () => {
+    const { path } = await openRequest();
+    await env.DB_NA.prepare("UPDATE clients SET deleted_at = 1").run();
+    expect((await api(path)).status).toBe(404);
+  });
+});

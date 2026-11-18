@@ -98,7 +98,7 @@ requests.get("/requests", async (c) => {
          COALESCE(SUM(i.status = 'approved'), 0) AS approved,
          COALESCE(SUM(i.status = 'rejected'), 0) AS rejected
        FROM requests r
-       JOIN clients cl ON cl.firm_id = r.firm_id AND cl.id = r.client_id
+       JOIN clients cl ON cl.firm_id = r.firm_id AND cl.id = r.client_id AND cl.deleted_at IS NULL
        LEFT JOIN items i ON i.firm_id = r.firm_id AND i.request_id = r.id
        WHERE r.firm_id = ? AND r.deleted_at IS NULL
        GROUP BY r.id

@@ -21,6 +21,7 @@ client.get("/c/:token", async (c) => {
     .prepare(
       `SELECT r.id, r.firm_id, r.firm_name, r.title, r.note, r.deadline, r.status
        FROM links l JOIN requests r ON r.firm_id = l.firm_id AND r.id = l.request_id
+       JOIN clients cl ON cl.firm_id = r.firm_id AND cl.id = r.client_id AND cl.deleted_at IS NULL
        WHERE l.token_hash = ? AND l.revoked_at IS NULL AND l.expires_at > ?
        AND r.deleted_at IS NULL AND r.status != 'closed'`,
     )
