@@ -3,13 +3,14 @@ import { vi } from "vitest";
 
 export type Sent = { to: string[]; subject: string; text: string; html: string };
 
-export function mockOutbound(turnstileOk = true) {
+export function mockOutbound(turnstileOk = true, resendOk = true) {
   const sent: Sent[] = [];
   const real = globalThis.fetch;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url.startsWith("https://turnstile.test/")) return Response.json({ success: turnstileOk });
     if (url.startsWith("https://resend.test/")) {
+      if (!resendOk) return new Response("nope", { status: 500 });
       sent.push(JSON.parse(String(init?.body)));
       return Response.json({ id: "email_1" });
     }
@@ -20,11 +21,11 @@ export function mockOutbound(turnstileOk = true) {
 
 let ipCounter = 0;
 
-type Init = { method?: string; body?: unknown; cookie?: string; headers?: Record<string, string> };
+type Init = { method?: string; body?: unknown; cookie?: string; ip?: string; headers?: Record<string, string> };
 
 export function api(path: string, init: Init = {}) {
   const headers: Record<string, string> = {
-    "CF-Connecting-IP": `192.0.2.${++ipCounter % 250}`,
+    "CF-Connecting-IP": init.ip ?? `192.0.2.${++ipCounter % 250}`,
     ...init.headers,
   };
   if (init.method && init.method !== "GET") headers["X-Collect"] ??= "1";
