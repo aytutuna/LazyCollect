@@ -70,7 +70,7 @@ export function FirmSetup({ me, onSaved, onSignOut }: { me: Me; onSaved: () => v
       <h2>{t("setup.title")}</h2>
       <p class="muted">{t("setup.intro")}</p>
       {data ? <FirmForm firm={data} canEdit={me.user.role === "owner"} onSaved={onSaved} /> : error ? <ErrorNote error={error} /> : <Loading />}
-      <p>
+      <p class="spaced">
         <button type="button" class="link" onClick={onSignOut}>
           {t("nav.signout")}
         </button>
