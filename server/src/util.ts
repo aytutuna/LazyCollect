@@ -2,7 +2,8 @@ const encoder = new TextEncoder();
 
 export const MINUTE = 60_000;
 export const FETCH_TIMEOUT_MS = 10_000;
-export const DAY = 24 * 60 * MINUTE;
+export const HOUR = 60 * MINUTE;
+export const DAY = 24 * HOUR;
 
 function toHex(buf: ArrayBuffer): string {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");

@@ -7,6 +7,7 @@ interface __BaseEnv_Env {
 	DB_NA: D1Database;
 	LOGIN: RateLimit;
 	VERIFY: RateLimit;
+	CLIENT: RateLimit;
 	APP_URL: "https://collect.alazy.app";
 	EMAIL_FROM: "Lazy Collect <noreply@alazy.app>";
 }

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { auth } from "./auth";
+import { client } from "./client";
 import { clients } from "./clients";
 import { firm, loadFirm } from "./firm";
 import { requests } from "./requests";
@@ -18,6 +19,7 @@ app.onError((e, c) => {
 app.use("/api/*", csrf, loadSession);
 app.get("/api/health", (c) => c.json({ ok: true }));
 app.route("/api", auth);
+app.route("/api", client);
 app.use("/api/firm", loadFirm);
 app.use("/api/clients/*", loadFirm);
 app.use("/api/templates/*", loadFirm);

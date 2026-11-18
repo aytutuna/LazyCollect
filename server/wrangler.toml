@@ -40,5 +40,10 @@ name = "VERIFY"
 namespace_id = "2002"
 simple = { limit = 10, period = 60 }
 
+[[ratelimits]]
+name = "CLIENT"
+namespace_id = "2003"
+simple = { limit = 60, period = 60 }
+
 [triggers]
 crons = ["*/10 * * * *"]
