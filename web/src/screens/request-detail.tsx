@@ -15,6 +15,7 @@ export function RequestPage({ id }: { id: string }) {
   const { data: req, error, reload } = useLoad(() => get<RequestDetail>(`/requests/${id}`), [id]);
   const clients = useLoad(() => get<Client[]>("/clients"));
   const [editing, setEditing] = useState(false);
+  const [manage, setManage] = useState(false);
   const [adding, setAdding] = useState(false);
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [ask, setAsk] = useState<Ask>(null);
@@ -124,25 +125,32 @@ export function RequestPage({ id }: { id: string }) {
       )}
 
       <section>
-        <h2>{t("detail.items")}</h2>
+        <div class="head">
+          <h2>{t("detail.items")}</h2>
+          {editable && (
+            <button class="small" aria-pressed={manage} onClick={() => setManage(!manage)}>
+              {manage ? t("detail.done_editing") : t("detail.edit_items")}
+            </button>
+          )}
+        </div>
         <ul class="items">
           {req.items.map((item) => (
             <li key={item.id}>
-              {editingItem === item.id ? (
-                <div class="main">
+              <div class="main">
+                {editingItem === item.id ? (
                   <ItemForm requestId={id} item={item} onSaved={saved} onCancel={() => setEditingItem(null)} />
-                </div>
-              ) : (
-                <>
-                  <div class="main">
-                    <strong>{item.label}</strong> {!item.required && <span class="muted">({t("items.optional")})</span>}
+                ) : (
+                  <>
+                    <div class="line">
+                      <span>
+                        <strong>{item.label}</strong> {!item.required && <span class="muted">({t("items.optional")})</span>}
+                      </span>
+                      <Badge tone={ITEM_TONES[item.status]}>{t(`item.${item.status}`)}</Badge>
+                    </div>
                     {item.help && <div class="muted">{item.help}</div>}
                     {item.status === "rejected" && item.reject_note && <p class="reject">{item.reject_note}</p>}
-                  </div>
-                  <div class="side">
-                    <Badge tone={ITEM_TONES[item.status]}>{t(`item.${item.status}`)}</Badge>
-                    {editable && (
-                      <>
+                    {manage && (
+                      <div class="row-actions">
                         <button class="small" onClick={() => setEditingItem(item.id)}>
                           {t("edit")}
                         </button>
@@ -151,15 +159,15 @@ export function RequestPage({ id }: { id: string }) {
                             {t("items.remove")}
                           </button>
                         )}
-                      </>
+                      </div>
                     )}
-                  </div>
-                </>
-              )}
+                  </>
+                )}
+              </div>
             </li>
           ))}
         </ul>
-        {editable && (adding ? <ItemForm requestId={id} onSaved={saved} onCancel={() => setAdding(false)} /> : <button onClick={() => setAdding(true)}>{t("items.add")}</button>)}
+        {manage && (adding ? <ItemForm requestId={id} onSaved={saved} onCancel={() => setAdding(false)} /> : <button onClick={() => setAdding(true)}>{t("items.add")}</button>)}
       </section>
 
       <div class="actions">

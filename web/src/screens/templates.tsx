@@ -47,7 +47,7 @@ export function Templates() {
               </details>
             </div>
             <div class="side">
-              <Link href={`/new?template=${tpl.id}`} class="button small primary">
+              <Link href={`/new?template=${tpl.id}`} class="button small">
                 {t("templates.use")}
               </Link>
               {tpl.builtin ? (
