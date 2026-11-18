@@ -32,7 +32,9 @@ app.route("/api", requests);
 
 app.get("/c/*", async (c) => {
   const page = await c.env.ASSETS.fetch(new URL("/c.html", c.req.url));
-  return new Response(page.body, { status: page.status, headers: { ...Object.fromEntries(page.headers), ...htmlHeaders, "Cache-Control": "no-store" } });
+  const headers = new Headers(page.headers);
+  for (const [name, value] of Object.entries({ ...htmlHeaders, "Cache-Control": "no-store" })) headers.set(name, value);
+  return new Response(page.body, { status: page.status, headers });
 });
 
 export default {
