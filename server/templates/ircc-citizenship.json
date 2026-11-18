@@ -1,0 +1,48 @@
+{
+  "id": "ircc-citizenship",
+  "name": "Citizenship application",
+  "items": [
+    {
+      "label": "PR card",
+      "required": true
+    },
+    {
+      "label": "Passport pages",
+      "help": "Every page, to show travel for physical presence",
+      "required": true
+    },
+    {
+      "label": "Language proof",
+      "help": "Test results or school records",
+      "required": true
+    },
+    {
+      "label": "Notices of Assessment",
+      "help": "Or CRA tax summaries for the required years",
+      "required": true
+    },
+    {
+      "label": "Government ID",
+      "required": true
+    },
+    {
+      "label": "Digital photos",
+      "help": "Meeting IRCC photo specifications",
+      "required": true
+    },
+    {
+      "label": "Police certificates",
+      "help": "If asked",
+      "required": false
+    },
+    {
+      "label": "Name change evidence",
+      "help": "Marriage certificate or court order",
+      "required": false
+    },
+    {
+      "label": "Certified translations",
+      "required": false
+    }
+  ]
+}

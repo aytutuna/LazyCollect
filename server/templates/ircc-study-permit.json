@@ -1,0 +1,57 @@
+{
+  "id": "ircc-study-permit",
+  "name": "Study permit",
+  "items": [
+    {
+      "label": "Passport",
+      "required": true
+    },
+    {
+      "label": "Letter of acceptance",
+      "help": "From a designated learning institution",
+      "required": true
+    },
+    {
+      "label": "Provincial attestation letter (PAL)",
+      "help": "Most applicants need one",
+      "required": true
+    },
+    {
+      "label": "Proof of funds",
+      "help": "Bank statements, GIC or scholarship letter",
+      "required": true
+    },
+    {
+      "label": "Study plan or letter of explanation",
+      "required": true
+    },
+    {
+      "label": "Previous diplomas and transcripts",
+      "required": true
+    },
+    {
+      "label": "Digital photo",
+      "help": "Meeting IRCC photo specifications",
+      "required": true
+    },
+    {
+      "label": "Medical exam receipt",
+      "help": "If your country or program requires it",
+      "required": false
+    },
+    {
+      "label": "Police certificate",
+      "required": false
+    },
+    {
+      "label": "Custodianship declaration",
+      "help": "For minor applicants",
+      "required": false
+    },
+    {
+      "label": "Quebec acceptance certificate (CAQ)",
+      "help": "For study in Quebec",
+      "required": false
+    }
+  ]
+}

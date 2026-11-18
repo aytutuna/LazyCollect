@@ -1,0 +1,123 @@
+{
+  "id": "t1-personal",
+  "name": "T1 personal tax return",
+  "items": [
+    {
+      "label": "Photo ID",
+      "help": "Driver's licence or passport",
+      "required": true
+    },
+    {
+      "label": "Last year's Notice of Assessment",
+      "required": true
+    },
+    {
+      "label": "T4 slips from every employer",
+      "required": true
+    },
+    {
+      "label": "T4A slips",
+      "help": "Pension, scholarships, self-employment or other income",
+      "required": false
+    },
+    {
+      "label": "T4A(OAS) and T4A(P) slips",
+      "help": "Old Age Security and CPP/QPP",
+      "required": false
+    },
+    {
+      "label": "T4E slip",
+      "help": "Employment Insurance benefits",
+      "required": false
+    },
+    {
+      "label": "T5 slips",
+      "help": "Interest and dividends",
+      "required": false
+    },
+    {
+      "label": "T3 and T5013 slips",
+      "help": "Trusts, mutual funds, partnerships",
+      "required": false
+    },
+    {
+      "label": "T5008 slips and trade records",
+      "help": "Securities sold",
+      "required": false
+    },
+    {
+      "label": "Crypto and foreign income records",
+      "required": false
+    },
+    {
+      "label": "RRSP and FHSA contribution receipts",
+      "help": "Include the first 60 days of the new year",
+      "required": false
+    },
+    {
+      "label": "T2202 tuition slip",
+      "required": false
+    },
+    {
+      "label": "Student loan interest statement",
+      "required": false
+    },
+    {
+      "label": "Childcare receipts",
+      "help": "With the provider's name and SIN or business number",
+      "required": false
+    },
+    {
+      "label": "Medical expense receipts",
+      "required": false
+    },
+    {
+      "label": "Charitable donation receipts",
+      "required": false
+    },
+    {
+      "label": "Union and professional dues",
+      "required": false
+    },
+    {
+      "label": "Moving expense receipts",
+      "required": false
+    },
+    {
+      "label": "Support payment records",
+      "required": false
+    },
+    {
+      "label": "Rent paid or property tax",
+      "help": "For provincial credits such as the Ontario Trillium Benefit",
+      "required": false
+    },
+    {
+      "label": "Disability tax credit certificate (T2201)",
+      "required": false
+    },
+    {
+      "label": "Spouse's net income and dependants' details",
+      "required": false
+    },
+    {
+      "label": "T2200 from your employer",
+      "help": "For work from home expenses",
+      "required": false
+    },
+    {
+      "label": "Sale of property or principal residence details",
+      "required": false
+    },
+    {
+      "label": "Foreign property over $100,000",
+      "help": "Statements for the T1135",
+      "required": false
+    },
+    {
+      "label": "Anything new this year",
+      "help": "Marriage, new baby, new job, a move",
+      "required": false
+    }
+  ]
+}

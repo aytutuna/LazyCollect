@@ -1,0 +1,48 @@
+{
+  "id": "ircc-work-permit",
+  "name": "Work permit",
+  "items": [
+    {
+      "label": "Passport",
+      "required": true
+    },
+    {
+      "label": "Job offer letter",
+      "help": "Include the LMIA or offer of employment number",
+      "required": true
+    },
+    {
+      "label": "Resume",
+      "required": true
+    },
+    {
+      "label": "Education documents",
+      "required": true
+    },
+    {
+      "label": "Proof of work history",
+      "help": "Reference letters or pay slips",
+      "required": true
+    },
+    {
+      "label": "Digital photo",
+      "help": "Meeting IRCC photo specifications",
+      "required": true
+    },
+    {
+      "label": "Police certificate",
+      "help": "If required",
+      "required": false
+    },
+    {
+      "label": "Medical exam receipt",
+      "help": "If required",
+      "required": false
+    },
+    {
+      "label": "Quebec acceptance certificate (CAQ)",
+      "help": "For work in Quebec",
+      "required": false
+    }
+  ]
+}

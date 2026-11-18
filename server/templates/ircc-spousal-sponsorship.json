@@ -1,0 +1,64 @@
+{
+  "id": "ircc-spousal-sponsorship",
+  "name": "Spousal sponsorship",
+  "items": [
+    {
+      "label": "Passports for sponsor and applicant",
+      "required": true
+    },
+    {
+      "label": "Marriage certificate or proof of relationship",
+      "required": true
+    },
+    {
+      "label": "Photos together over time",
+      "required": true
+    },
+    {
+      "label": "Chats, calls and messages",
+      "help": "Samples spread across the relationship",
+      "required": true
+    },
+    {
+      "label": "Travel history together",
+      "required": true
+    },
+    {
+      "label": "Police certificates",
+      "help": "For the applicant and the sponsor if asked",
+      "required": true
+    },
+    {
+      "label": "Medical exam receipt",
+      "help": "From an IRCC panel physician",
+      "required": true
+    },
+    {
+      "label": "Sponsor's PR card or citizenship certificate",
+      "required": true
+    },
+    {
+      "label": "Sponsor's income documents",
+      "help": "Notice of Assessment and employment letter",
+      "required": true
+    },
+    {
+      "label": "Joint bank accounts, leases or bills",
+      "required": false
+    },
+    {
+      "label": "Divorce or death certificate",
+      "help": "For a previous spouse",
+      "required": false
+    },
+    {
+      "label": "Children's birth certificates and IDs",
+      "required": false
+    },
+    {
+      "label": "Digital photos",
+      "help": "Meeting IRCC photo specifications",
+      "required": false
+    }
+  ]
+}

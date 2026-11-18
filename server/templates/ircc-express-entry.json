@@ -1,0 +1,71 @@
+{
+  "id": "ircc-express-entry",
+  "name": "Express Entry (permanent residence)",
+  "items": [
+    {
+      "label": "Passport",
+      "help": "Every page with stamps or visas",
+      "required": true
+    },
+    {
+      "label": "Language test results",
+      "help": "IELTS or CELPIP; TEF or TCF for French",
+      "required": true
+    },
+    {
+      "label": "Educational credential assessment (ECA)",
+      "required": true
+    },
+    {
+      "label": "Degrees, diplomas and transcripts",
+      "required": true
+    },
+    {
+      "label": "Work reference letters",
+      "help": "On letterhead with duties, hours and dates",
+      "required": true
+    },
+    {
+      "label": "Police certificates",
+      "help": "From each country where you lived 6 months or more",
+      "required": true
+    },
+    {
+      "label": "Medical exam receipt",
+      "help": "From an IRCC panel physician",
+      "required": true
+    },
+    {
+      "label": "Proof of funds",
+      "help": "Bank letters for the last 6 months",
+      "required": true
+    },
+    {
+      "label": "Invitation to Apply and profile number",
+      "required": true
+    },
+    {
+      "label": "Digital photos",
+      "help": "Meeting IRCC photo specifications",
+      "required": true
+    },
+    {
+      "label": "Provincial nomination",
+      "required": false
+    },
+    {
+      "label": "Job offer",
+      "required": false
+    },
+    {
+      "label": "Spouse or partner documents",
+      "help": "Passport, language test, education",
+      "required": false
+    },
+    {
+      "label": "Family information form",
+      "help": "Children and other family members",
+      "required": false
+    }
+  ]
+}

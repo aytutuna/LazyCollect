@@ -1,0 +1,60 @@
+{
+  "id": "t1-self-employed",
+  "name": "Self-employed T1 (T2125)",
+  "items": [
+    {
+      "label": "Photo ID",
+      "help": "Driver's licence or passport",
+      "required": true
+    },
+    {
+      "label": "Last year's Notice of Assessment",
+      "required": true
+    },
+    {
+      "label": "Income summary or invoices",
+      "required": true
+    },
+    {
+      "label": "Business bank and credit card statements",
+      "required": true
+    },
+    {
+      "label": "Expense receipts by category",
+      "required": true
+    },
+    {
+      "label": "GST/HST number and returns",
+      "required": false
+    },
+    {
+      "label": "Vehicle log with kilometres",
+      "help": "Business and total for the year",
+      "required": false
+    },
+    {
+      "label": "Home office details",
+      "help": "Area used, rent or mortgage interest, utilities, insurance, property tax",
+      "required": false
+    },
+    {
+      "label": "Purchases of equipment or vehicles",
+      "help": "For capital cost allowance",
+      "required": false
+    },
+    {
+      "label": "Payroll and subcontractor slips",
+      "help": "T4 and T4A",
+      "required": false
+    },
+    {
+      "label": "Last year's financial statements",
+      "required": false
+    },
+    {
+      "label": "T4, T5 and other slips",
+      "help": "Any personal slips you received",
+      "required": false
+    }
+  ]
+}
