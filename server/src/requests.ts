@@ -69,11 +69,13 @@ requests.post("/requests", async (c) => {
     db
       .prepare("INSERT INTO requests (id, firm_id, client_id, title, note, deadline, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(id, firmId, body.client_id, title, note, due, c.get("session")!.userId, now),
-    ...items.map((item, i) =>
-      db
-        .prepare("INSERT INTO items (id, firm_id, request_id, position, label, help, required) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .bind(randomId(), firmId, id, i, item.label, item.help ?? null, item.required ? 1 : 0),
-    ),
+    db
+      .prepare(
+        `INSERT INTO items (id, firm_id, request_id, position, label, help, required)
+         SELECT lower(hex(randomblob(16))), ?, ?, key, json_extract(value, '$.label'), json_extract(value, '$.help'), json_extract(value, '$.required')
+         FROM json_each(?)`,
+      )
+      .bind(firmId, id, JSON.stringify(items)),
   ]);
   return c.json(await loadRequest(c, id), 201);
 });
