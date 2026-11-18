@@ -10,6 +10,7 @@ export const requests = new Hono<AppEnv>();
 const COLS = "id, client_id, title, note, deadline, firm_name, status, sent_at, closed_at, created_at";
 const ITEM_COLS = "id, position, label, help, required, status, reject_note, reviewed_at";
 const LINK_GRACE = 30 * DAY;
+const MAX_ITEMS = 100;
 const MAX_AHEAD = 2 * 365 * DAY;
 
 type Req = { id: string; status: string; deadline: number };
@@ -155,6 +156,14 @@ requests.patch("/requests/:id", async (c) => {
 
 const editable = (req: Req) => req.status === "draft" || req.status === "open";
 
+// repeated in the write itself so a close that lands after the read still wins
+const LIVE = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('draft', 'open') AND deleted_at IS NULL)";
+
+async function refused(c: Context<AppEnv>) {
+  const req = await findRequest(c);
+  return req && !editable(req) ? c.json({ error: "locked" }, 409) : notFound(c);
+}
+
 requests.post("/requests/:id/items", async (c) => {
   const body = await readBody(c);
   const item = body ? parseItem(body) : undefined;
@@ -163,13 +172,19 @@ requests.post("/requests/:id/items", async (c) => {
   if (!req) return notFound(c);
   if (!editable(req)) return c.json({ error: "locked" }, 409);
   const id = randomId();
-  await c.get("db")
+  const firmId = c.get("firm").id;
+  const res = await c.get("db")
     .prepare(
       `INSERT INTO items (id, firm_id, request_id, position, label, help, required)
-       VALUES (?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM items WHERE firm_id = ? AND request_id = ?), ?, ?, ?)`,
+       SELECT ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM items WHERE firm_id = ? AND request_id = ?), ?, ?, ?
+       WHERE ${LIVE} AND (SELECT COUNT(*) FROM items WHERE firm_id = ? AND request_id = ?) < ${MAX_ITEMS}`,
     )
-    .bind(id, c.get("firm").id, req.id, c.get("firm").id, req.id, item.label, item.help ?? null, item.required ? 1 : 0)
+    .bind(id, firmId, req.id, firmId, req.id, item.label, item.help ?? null, item.required ? 1 : 0, firmId, req.id, firmId, req.id)
     .run();
+  if (!res.meta.changes) {
+    const now = await findRequest(c);
+    return now && editable(now) ? c.json({ error: "too_many_items" }, 409) : refused(c);
+  }
   const row = await c.get("db").prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(id).first<{ required: number }>();
   return c.json({ ...row, required: row!.required === 1 }, 201);
 });
@@ -199,10 +214,10 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
   const set = setClause(fields);
   const db = c.get("db");
   const res = await db
-    .prepare(`UPDATE items SET ${set.sql} WHERE firm_id = ? AND request_id = ? AND id = ?`)
-    .bind(...set.values, c.get("firm").id, req.id, c.req.param("itemId"))
+    .prepare(`UPDATE items SET ${set.sql} WHERE firm_id = ? AND request_id = ? AND id = ? AND ${LIVE}`)
+    .bind(...set.values, c.get("firm").id, req.id, c.req.param("itemId"), c.get("firm").id, req.id)
     .run();
-  if (!res.meta.changes) return notFound(c);
+  if (!res.meta.changes) return refused(c);
   const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(c.req.param("itemId")).first<{ required: number }>();
   return c.json({ ...row, required: row!.required === 1 });
 });
@@ -218,10 +233,11 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
     .first<{ status: string }>();
   if (!item) return notFound(c);
   if (item.status !== "empty") return c.json({ error: "has_upload" }, 409);
-  await db.prepare("DELETE FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status = 'empty'")
-    .bind(c.get("firm").id, req.id, c.req.param("itemId"))
+  const res = await db
+    .prepare(`DELETE FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status = 'empty' AND ${LIVE}`)
+    .bind(c.get("firm").id, req.id, c.req.param("itemId"), c.get("firm").id, req.id)
     .run();
-  return c.json({ ok: true });
+  return res.meta.changes ? c.json({ ok: true }) : refused(c);
 });
 
 requests.post("/requests/:id/close", async (c) => {
@@ -251,17 +267,21 @@ requests.post("/requests/:id/link", async (c) => {
   const userId = c.get("session")!.userId;
   const token = `${firm.region}_${randomToken()}`;
   const hash = await hmac(c.env.HASH_KEY, token.slice(firm.region.length + 1));
-  await db.batch([
-    db.prepare("UPDATE links SET revoked_at = ? WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL").bind(now, firm.id, req.id),
+  const results = await db.batch([
+    db.prepare(`UPDATE links SET revoked_at = ? WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL AND ${LIVE}`).bind(now, firm.id, req.id, firm.id, req.id),
     db
-      .prepare("INSERT INTO links (token_hash, firm_id, request_id, expires_at, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind(hash, firm.id, req.id, req.deadline + LINK_GRACE, userId, now),
+      .prepare(`INSERT INTO links (token_hash, firm_id, request_id, expires_at, created_by, created_at) SELECT ?, ?, ?, ?, ?, ? WHERE ${LIVE}`)
+      .bind(hash, firm.id, req.id, req.deadline + LINK_GRACE, userId, now, firm.id, req.id),
     db
-      .prepare("UPDATE requests SET status = 'open', sent_at = ?, firm_name = ? WHERE firm_id = ? AND id = ?")
+      .prepare(
+        `INSERT INTO audit (id, firm_id, at, actor_type, actor_id, action, object_type, object_id)
+         SELECT ?, ?, ?, 'user', ?, 'link.create', 'request', ? WHERE ${LIVE}`,
+      )
+      .bind(randomId(), firm.id, now, userId, req.id, firm.id, req.id),
+    db
+      .prepare("UPDATE requests SET status = 'open', sent_at = ?, firm_name = ? WHERE firm_id = ? AND id = ? AND status IN ('draft', 'open') AND deleted_at IS NULL")
       .bind(now, firm.name, firm.id, req.id),
-    db
-      .prepare("INSERT INTO audit (id, firm_id, at, actor_type, actor_id, action, object_type, object_id) VALUES (?, ?, ?, 'user', ?, 'link.create', 'request', ?)")
-      .bind(randomId(), firm.id, now, userId, req.id),
   ]);
+  if (!results[1].meta.changes) return refused(c);
   return c.json({ url: `${c.env.APP_URL}/c/${token}` });
 });

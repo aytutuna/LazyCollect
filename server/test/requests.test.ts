@@ -255,3 +255,18 @@ describe("request rules", () => {
     expect((await patch({ title: "B" })).status).toBe(200);
   });
 });
+
+describe("item cap", () => {
+  it("refuses a 101st item", async () => {
+    const { cookie, client } = await setup();
+    const items = Array.from({ length: 100 }, (_, i) => ({ label: `Item ${i}` }));
+    const r = await (await make(cookie, { client_id: client.id, title: "A", deadline: inDays(7), items })).json<any>();
+    const res = await api(`/api/requests/${r.id}/items`, { method: "POST", cookie, body: item });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "too_many_items" });
+    const count = await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM items").first<{ n: number }>();
+    expect(count!.n).toBe(100);
+    await api(`/api/requests/${r.id}/items/${r.items[0].id}`, { method: "DELETE", cookie });
+    expect((await api(`/api/requests/${r.id}/items`, { method: "POST", cookie, body: item })).status).toBe(201);
+  });
+});
