@@ -8,6 +8,7 @@ import ircWork from "../templates/ircc-work-permit.json";
 import t1Personal from "../templates/t1-personal.json";
 import t1SelfEmployed from "../templates/t1-self-employed.json";
 import t2YearEnd from "../templates/t2-year-end.json";
+import { audit } from "./audit";
 import type { AppEnv } from "./session";
 import { randomId } from "./util";
 import { invalid, locale, maybe, notFound, readBody, setClause, text } from "./validate";
@@ -69,10 +70,12 @@ templates.post("/templates", async (c) => {
   const id = randomId();
   const now = Date.now();
   const db = c.get("db");
-  await db
-    .prepare("INSERT INTO templates (id, firm_id, name, locale, items_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .bind(id, c.get("firm").id, name, lang, JSON.stringify(items), now, now)
-    .run();
+  await db.batch([
+    db
+      .prepare("INSERT INTO templates (id, firm_id, name, locale, items_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(id, c.get("firm").id, name, lang, JSON.stringify(items), now, now),
+    audit(c, "template.create", "template", id),
+  ]);
   const row = await db.prepare(`SELECT ${COLS} FROM templates WHERE id = ?`).bind(id).first<Row>();
   return c.json(present(row!), 201);
 });
@@ -100,19 +103,25 @@ templates.patch("/templates/:id", async (c) => {
   fields.updated_at = Date.now();
   const set = setClause(fields);
   const db = c.get("db");
-  const res = await db
-    .prepare(`UPDATE templates SET ${set.sql} WHERE firm_id = ? AND id = ?`)
-    .bind(...set.values, c.get("firm").id, c.req.param("id"))
-    .run();
-  if (!res.meta.changes) return notFound(c);
+  const found = await db.prepare("SELECT id FROM templates WHERE firm_id = ? AND id = ?").bind(c.get("firm").id, c.req.param("id")).first();
+  if (!found) return notFound(c);
+  await db.batch([
+    db
+      .prepare(`UPDATE templates SET ${set.sql} WHERE firm_id = ? AND id = ?`)
+      .bind(...set.values, c.get("firm").id, c.req.param("id")),
+    audit(c, "template.update", "template", c.req.param("id")),
+  ]);
   const row = await db.prepare(`SELECT ${COLS} FROM templates WHERE id = ?`).bind(c.req.param("id")).first<Row>();
   return c.json(present(row!));
 });
 
 templates.delete("/templates/:id", async (c) => {
-  const res = await c.get("db")
-    .prepare("DELETE FROM templates WHERE firm_id = ? AND id = ?")
-    .bind(c.get("firm").id, c.req.param("id"))
-    .run();
-  return res.meta.changes ? c.json({ ok: true }) : notFound(c);
+  const db = c.get("db");
+  const found = await db.prepare("SELECT id FROM templates WHERE firm_id = ? AND id = ?").bind(c.get("firm").id, c.req.param("id")).first();
+  if (!found) return notFound(c);
+  await db.batch([
+    db.prepare("DELETE FROM templates WHERE firm_id = ? AND id = ?").bind(c.get("firm").id, c.req.param("id")),
+    audit(c, "template.delete", "template", c.req.param("id")),
+  ]);
+  return c.json({ ok: true });
 });

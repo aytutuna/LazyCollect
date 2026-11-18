@@ -1,4 +1,5 @@
 import { Hono, type MiddlewareHandler } from "hono";
+import { audit } from "./audit";
 import { isRegion, regionOf } from "./regions";
 import type { AppEnv, Firm } from "./session";
 import { invalid, maybe, readBody, setClause, text } from "./validate";
@@ -59,5 +60,7 @@ firm.patch("/firm", async (c) => {
   await c.env.CONTROL.prepare(`UPDATE firms SET ${set.sql} WHERE id = ?`)
     .bind(...set.values, c.get("firm").id)
     .run();
+  // the audit table lives in the region database, so this can't share a batch with the update above
+  await audit(c, "firm.update", "firm", c.get("firm").id, { fields: Object.keys(fields) }).run();
   return c.json({ ok: true });
 });

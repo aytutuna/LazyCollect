@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { audit } from "./audit";
 import { normalizeEmail } from "./auth";
 import type { AppEnv } from "./session";
 import { randomId } from "./util";
@@ -8,6 +9,8 @@ export const clients = new Hono<AppEnv>();
 
 const COLS = "id, name, email, phone, locale, email_ok_at, sms_ok_at, consent_by, created_at";
 const PHONE_RE = /^[\d\s()+.-]{7,40}$/;
+
+const CHANNELS = [["email_ok_at", "email"], ["sms_ok_at", "sms"]] as const;
 
 type ClientRow = { id: string; email: string | null; phone: string | null; email_ok_at: number | null; sms_ok_at: number | null };
 
@@ -37,26 +40,31 @@ clients.post("/clients", async (c) => {
   const userId = c.get("session")!.userId;
   const now = Date.now();
   const id = randomId();
-  await c.get("db")
-    .prepare(
-      `INSERT INTO clients (id, firm_id, name, email, phone, locale, email_ok_at, sms_ok_at, consent_by, created_by, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .bind(
-      id,
-      c.get("firm").id,
-      name,
-      email,
-      tel,
-      lang,
-      body.contact_ok && email ? now : null,
-      body.contact_ok && tel ? now : null,
-      body.contact_ok ? userId : null,
-      userId,
-      now,
-    )
-    .run();
-  const row = await c.get("db").prepare(`SELECT ${COLS} FROM clients WHERE id = ?`).bind(id).first();
+  const db = c.get("db");
+  const granted = [email && "email", tel && "sms"].filter(Boolean);
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO clients (id, firm_id, name, email, phone, locale, email_ok_at, sms_ok_at, consent_by, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        id,
+        c.get("firm").id,
+        name,
+        email,
+        tel,
+        lang,
+        body.contact_ok && email ? now : null,
+        body.contact_ok && tel ? now : null,
+        body.contact_ok ? userId : null,
+        userId,
+        now,
+      ),
+    audit(c, "client.create", "client", id),
+    ...(body.contact_ok && granted.length ? [audit(c, "client.consent", "client", id, { set: granted })] : []),
+  ]);
+  const row = await db.prepare(`SELECT ${COLS} FROM clients WHERE id = ?`).bind(id).first();
   return c.json(row, 201);
 });
 
@@ -108,7 +116,15 @@ clients.patch("/clients/:id", async (c) => {
   }
   if (!Object.keys(fields).length) return invalid(c);
   const set = setClause(fields);
-  await db.prepare(`UPDATE clients SET ${set.sql} WHERE firm_id = ? AND id = ?`).bind(...set.values, firmId, row.id).run();
+  const consent = {
+    set: CHANNELS.filter(([col]) => fields[col]).map(([, name]) => name),
+    cleared: CHANNELS.filter(([col]) => fields[col] === null && row[col]).map(([, name]) => name),
+  };
+  await db.batch([
+    db.prepare(`UPDATE clients SET ${set.sql} WHERE firm_id = ? AND id = ?`).bind(...set.values, firmId, row.id),
+    audit(c, "client.update", "client", row.id, { fields: Object.keys(fields) }),
+    ...(consent.set.length || consent.cleared.length ? [audit(c, "client.consent", "client", row.id, consent)] : []),
+  ]);
   return c.json(await db.prepare(`SELECT ${COLS} FROM clients WHERE id = ?`).bind(row.id).first());
 });
 
@@ -117,7 +133,9 @@ clients.delete("/clients/:id", async (c) => {
   const firmId = c.get("firm").id;
   const id = c.req.param("id");
   const now = Date.now();
-  const [res] = await db.batch([
+  const found = await db.prepare("SELECT id FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL").bind(firmId, id).first();
+  if (!found) return notFound(c);
+  await db.batch([
     db.prepare("UPDATE clients SET deleted_at = ? WHERE firm_id = ? AND id = ? AND deleted_at IS NULL").bind(now, firmId, id),
     db
       .prepare(
@@ -128,6 +146,7 @@ clients.delete("/clients/:id", async (c) => {
     db
       .prepare("UPDATE requests SET status = 'closed', closed_at = ? WHERE firm_id = ? AND client_id = ? AND status IN ('draft', 'open')")
       .bind(now, firmId, id),
+    audit(c, "client.delete", "client", id),
   ]);
-  return res.meta.changes ? c.json({ ok: true }) : notFound(c);
+  return c.json({ ok: true });
 });

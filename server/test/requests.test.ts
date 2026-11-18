@@ -156,7 +156,7 @@ describe("request link", () => {
     expect(row.token_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(url).not.toContain(row.token_hash);
     expect(row.expires_at).toBe(req.deadline + 30 * DAY);
-    const audit = await env.DB_NA.prepare("SELECT actor_type, action, object_id FROM audit").all<any>();
+    const audit = await env.DB_NA.prepare("SELECT actor_type, action, object_id FROM audit WHERE action = 'link.create'").all<any>();
     expect(audit.results).toEqual([{ actor_type: "user", action: "link.create", object_id: id }]);
   });
 

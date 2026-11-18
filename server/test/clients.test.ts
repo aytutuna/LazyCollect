@@ -82,3 +82,45 @@ describe("clients", () => {
     expect(await (await api("/api/clients", { cookie: a })).json()).toHaveLength(1);
   });
 });
+
+describe("audit", () => {
+  const rows = async (like: string) =>
+    (await env.DB_NA.prepare("SELECT action, object_type, actor_type, meta FROM audit WHERE action LIKE ? ORDER BY at, rowid").bind(like).all<any>()).results;
+
+  it("logs creation and the consent given with it", async () => {
+    const cookie = await login();
+    const c = await (await add(cookie, { name: "A", email: "a@mail.test", phone: "6135550101", contact_ok: true })).json<any>();
+    await add(cookie, { name: "B", email: "b@mail.test", contact_ok: false });
+    const consent = await rows("client.consent");
+    expect(consent).toHaveLength(1);
+    expect(JSON.parse(consent[0].meta)).toEqual({ set: ["email", "sms"] });
+    expect((await rows("client.create")).map((r) => r.object_type)).toEqual(["client", "client"]);
+    const row = await env.DB_NA.prepare("SELECT object_id FROM audit WHERE action = 'client.consent'").first<any>();
+    expect(row.object_id).toBe(c.id);
+  });
+
+  it("logs consent set and cleared by an update", async () => {
+    const cookie = await login();
+    const c = await (await add(cookie, { name: "A", email: "a@mail.test", phone: "6135550101", contact_ok: true })).json<any>();
+    const patch = (body: unknown) => api(`/api/clients/${c.id}`, { method: "PATCH", cookie, body });
+    await patch({ contact_ok: false });
+    await patch({ name: "B" });
+    await patch({ email: "new@mail.test", contact_ok: true });
+    const consent = (await rows("client.consent")).map((r) => JSON.parse(r.meta));
+    expect(consent).toEqual([{ set: ["email", "sms"] }, { set: [], cleared: ["email", "sms"] }, { set: ["email", "sms"], cleared: [] }]);
+    expect(await rows("client.update")).toHaveLength(3);
+  });
+
+  it("logs delete, template and firm changes", async () => {
+    const cookie = await login();
+    const c = await (await add(cookie, { name: "A", contact_ok: false })).json<any>();
+    await api(`/api/clients/${c.id}`, { method: "DELETE", cookie });
+    const t = await (await api("/api/templates", { method: "POST", cookie, body: { name: "T", items: [{ label: "x" }] } })).json<any>();
+    await api(`/api/templates/${t.id}`, { method: "PATCH", cookie, body: { name: "U" } });
+    await api(`/api/templates/${t.id}`, { method: "DELETE", cookie });
+    await api("/api/firm", { method: "PATCH", cookie, body: { name: "Firm" } });
+    await api("/api/clients/nope", { method: "DELETE", cookie });
+    const actions = (await rows("%")).map((r) => r.action);
+    expect(actions).toEqual(["client.create", "client.delete", "template.create", "template.update", "template.delete", "firm.update"]);
+  });
+});
