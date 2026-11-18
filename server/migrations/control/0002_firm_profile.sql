@@ -1,0 +1,4 @@
+ALTER TABLE firms ADD COLUMN legal_name TEXT;
+ALTER TABLE firms ADD COLUMN address TEXT;
+ALTER TABLE firms ADD COLUMN phone TEXT;
+ALTER TABLE firms ADD COLUMN province TEXT;

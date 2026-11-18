@@ -3,6 +3,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig(async () => {
   const migrations = await readD1Migrations("./migrations/control");
+  const naMigrations = await readD1Migrations("./migrations/na");
   return {
     plugins: [
       cloudflareTest({
@@ -10,6 +11,7 @@ export default defineConfig(async () => {
         miniflare: {
           bindings: {
             TEST_MIGRATIONS: migrations,
+            TEST_MIGRATIONS_NA: naMigrations,
             TURNSTILE_SECRET: "1x0000000000000000000000000000000AA",
             RESEND_API_KEY: "re_test",
             HASH_KEY: "test-salt",
