@@ -1,9 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { api, inDays, openRequest, pdf, setup, upload } from "./helpers";
+import { api, inDays, openRequest, pdf, review, setup, upload } from "./helpers";
 
-const review = (cookie: string, reqId: string, itemId: string, body: unknown) =>
-  api(`/api/requests/${reqId}/items/${itemId}/review`, { method: "POST", cookie, body });
 
 async function submitted() {
   const o = await openRequest();

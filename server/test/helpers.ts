@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { exports } from "cloudflare:workers";
 import { vi } from "vitest";
 import { DAY } from "../src/util";
@@ -113,4 +114,12 @@ export function upload(path: string, itemId: string, body: Uint8Array | Readable
   };
   for (const h of init.omit ?? []) delete headers[h];
   return exports.default.fetch(`https://collect.alazy.app${path}/items/${itemId}/files`, { method: "PUT", headers, body, duplex: "half" } as RequestInit);
+}
+
+// sends the item's live files as what the reviewer saw, unless a test says otherwise
+export async function review(cookie: string, reqId: string, itemId: string, body: Record<string, unknown>) {
+  const files =
+    body.files ??
+    (await env.DB_NA.prepare("SELECT id FROM files WHERE item_id = ? AND state = 'live' AND deleted_at IS NULL").bind(itemId).all<{ id: string }>()).results.map((r) => r.id);
+  return api(`/api/requests/${reqId}/items/${itemId}/review`, { method: "POST", cookie, body: { ...body, files } });
 }

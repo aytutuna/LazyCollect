@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { api, jpeg, openRequest, pdf, randomBytes, sha, upload } from "./helpers";
+import { api, jpeg, openRequest, pdf, randomBytes, review, sha, upload } from "./helpers";
 
 const png = (n: number) => Object.assign(randomBytes(n), [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const counts = async () => ({
@@ -103,9 +103,12 @@ describe("client upload", () => {
     const { req, path } = await openRequest();
     const uploadId = crypto.randomUUID();
     const results = await Promise.all([1, 2, 3].map(() => upload(path, req.items[0].id, pdf(70_000), { uploadId })));
-    expect(results.map((r) => r.status).sort()).toContain(201);
-    const ids = new Set(await Promise.all(results.map(async (r) => (await r.json<any>()).id)));
-    expect(ids.size).toBe(1);
+    const statuses = results.map((r) => r.status);
+    expect(statuses).toContain(201);
+    expect(statuses.every((s) => s === 201 || s === 200 || s === 409)).toBe(true);
+    const bodies = await Promise.all(results.map((r) => r.json<any>()));
+    expect(new Set(bodies.filter((b) => b.id).map((b) => b.id)).size).toBe(1);
+    expect(bodies.filter((b) => b.error).every((b) => b.error === "busy")).toBe(true);
     expect(await counts()).toEqual({ rows: 1, objects: 1 });
   });
 
@@ -132,7 +135,7 @@ describe("client upload", () => {
     const { cookie, req, path } = await openRequest();
     const item = req.items[0].id;
     expect((await upload("/api/c/garbage", item, pdf(100))).status).toBe(404);
-    expect((await upload(`${path.slice(0, -1)}A`, item, pdf(100))).status).toBe(404);
+    expect((await upload(`${path.slice(0, -1)}${path.endsWith("A") ? "B" : "A"}`, item, pdf(100))).status).toBe(404);
     await env.DB_NA.prepare("UPDATE links SET expires_at = ?").bind(Date.now() - 1).run();
     expect((await upload(path, item, pdf(100))).status).toBe(404);
     await env.DB_NA.prepare("UPDATE links SET expires_at = ?").bind(Date.now() + 86_400_000).run();
@@ -151,7 +154,7 @@ describe("client upload", () => {
     const { cookie, req, path } = await openRequest();
     const item = req.items[0].id;
     await upload(path, item, pdf(100));
-    await api(`/api/requests/${req.id}/items/${item}/review`, { method: "POST", cookie, body: { decision: "approve" } });
+    await review(cookie, req.id, item, { decision: "approve" });
     const res = await upload(path, item, pdf(100));
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "approved" });
@@ -208,7 +211,21 @@ describe("client upload", () => {
     const names = ["../../etc/pa\u0000ss\u202ewd.pdf", "a".repeat(300), "   ", "...hidden.pdf", "C:\\dir\\file?.pdf", "résumé 📄.pdf"];
     for (const name of names) expect((await upload(path, item, pdf(60), { name })).status).toBe(201);
     const { results } = await env.DB_NA.prepare("SELECT name FROM files ORDER BY uploaded_at, rowid").all<{ name: string }>();
-    expect(results.map((r) => r.name)).toEqual(["_.._etc_passwd.pdf", "a".repeat(200), "file.pdf", "hidden.pdf", "C__dir_file_.pdf", "résumé 📄.pdf"]);
+    expect(results.map((r) => r.name)).toEqual(["_.._etc_passwd.pdf", "a".repeat(196) + ".pdf", "file.pdf", "hidden.pdf", "C__dir_file_.pdf", "résumé 📄.pdf"]);
+  });
+
+  it.each([
+    ["T4.pdf.html", pdf(60), "T4.pdf"],
+    ["report.v2", pdf(60), "report.pdf"],
+    ["scan", pdf(60), "scan.pdf"],
+    ["IMG.JPG", jpeg(60), "IMG.JPG"],
+    ["photo.png", jpeg(60), "photo.jpg"],
+    ["page.exe", png(60), "page.png"],
+    [`${"b".repeat(250)}.pdf.js`, pdf(60), `${"b".repeat(196)}.pdf`],
+  ])("names %s after what the bytes are", async (name, body, want) => {
+    const { req, path } = await openRequest();
+    expect((await upload(path, req.items[0].id, body, { name })).status).toBe(201);
+    expect((await env.DB_NA.prepare("SELECT name FROM files").first<any>())!.name).toBe(want);
   });
 
   it("writes an audit row for the upload", async () => {
@@ -244,7 +261,7 @@ describe("request status", () => {
     const item = req.items[0].id;
     await upload(path, item, pdf(100));
     expect(await status(path)).toBe("complete");
-    await api(`/api/requests/${req.id}/items/${item}/review`, { method: "POST", cookie, body: { decision: "reject", note: "Too dark" } });
+    await review(cookie, req.id, item, { decision: "reject", note: "Too dark" });
     expect(await status(path)).toBe("open");
     expect((await (await api(path)).json<any>()).items[0]).toMatchObject({ status: "rejected", reject_note: "Too dark" });
     await upload(path, item, pdf(110));
@@ -299,7 +316,7 @@ describe("client delete", () => {
     const { cookie, req, path } = await openRequest();
     const item = req.items[0].id;
     const file = await (await upload(path, item, pdf(100))).json<any>();
-    await api(`/api/requests/${req.id}/items/${item}/review`, { method: "POST", cookie, body: { decision: "approve" } });
+    await review(cookie, req.id, item, { decision: "approve" });
     const res = await api(`${path}/files/${file.id}`, { method: "DELETE" });
     expect(res.status).toBe(409);
     expect(await counts()).toEqual({ rows: 1, objects: 1 });

@@ -53,14 +53,57 @@ describe("chunk format", () => {
   });
 });
 
+describe("decryptStream", () => {
+  const sealed = async (size: number) => {
+    const key = await fileKey(randomBytes(32), "c".repeat(32));
+    await seal(randomBytes(size), key, "t/flags");
+    return { key, bytes: new Uint8Array(await (await env.FILES_NA.get("t/flags"))!.arrayBuffer()) };
+  };
+  const drain = async (key: CryptoKey, bytes: Uint8Array) => new Response(await decryptStream(key, stream(bytes))).arrayBuffer();
+  const at = (i: number) => HEADER + i * (CHUNK + TAG);
+
+  it("accepts the intact object", async () => {
+    const { key, bytes } = await sealed(CHUNK * 2 + 10);
+    expect((await drain(key, bytes)).byteLength).toBe(CHUNK * 2 + 10);
+  });
+
+  it("rejects a dropped last chunk", async () => {
+    const { key, bytes } = await sealed(CHUNK * 2 + 10);
+    await expect(drain(key, bytes.slice(0, at(2)))).rejects.toThrow();
+  });
+
+  it("rejects an exact multiple with its last chunk removed", async () => {
+    const { key, bytes } = await sealed(CHUNK * 3);
+    expect(bytes.length).toBe(at(3));
+    await expect(drain(key, bytes.slice(0, at(2)))).rejects.toThrow();
+  });
+
+  it("rejects appended bytes and an appended copy of a chunk", async () => {
+    const { key, bytes } = await sealed(CHUNK * 2);
+    await expect(drain(key, new Uint8Array([...bytes, 1]))).rejects.toThrow();
+    await expect(drain(key, new Uint8Array([...bytes, ...bytes.subarray(at(1), at(2))]))).rejects.toThrow();
+  });
+
+  it("rejects an object holding only the header", async () => {
+    const { key, bytes } = await sealed(10);
+    await expect(drain(key, bytes.slice(0, HEADER))).rejects.toThrow();
+  });
+});
+
 describe("firm key", () => {
   it("is created once even when first uploads race", async () => {
-    const { req, path } = await openRequest();
+    const { cookie, req, path } = await openRequest();
     const item = req.items[0].id;
     const firm = (await env.CONTROL.prepare("SELECT id, dek_wrapped FROM firms").first<any>())!;
     expect(firm.dek_wrapped).toBeNull();
-    const results = await Promise.all([upload(path, item, pdf(2000)), upload(path, item, pdf(3000)), upload(path, item, pdf(4000))]);
+    const bodies = [pdf(2000), pdf(3000), pdf(4000)];
+    const results = await Promise.all(bodies.map((b) => upload(path, item, b)));
     expect(results.map((r) => r.status)).toEqual([201, 201, 201]);
+    for (const [i, r] of results.entries()) {
+      const file = await r.json<any>();
+      const got = await api(`/api/files/${file.id}`, { cookie });
+      expect(await sha(await got.arrayBuffer())).toBe(await sha(bodies[i]));
+    }
     const wrapped = (await env.CONTROL.prepare("SELECT dek_wrapped FROM firms").first<any>())!.dek_wrapped as string;
     expect(wrapped).toMatch(/^gcm1:/);
     const keys = await Promise.all(Array.from({ length: 4 }, () => firmDek(env, "na", firm.id, true)));
