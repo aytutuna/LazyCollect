@@ -10,7 +10,7 @@ import { Requests } from "./screens/requests";
 import { SignIn } from "./screens/signin";
 import { TemplatePage, Templates } from "./screens/templates";
 import type { Me } from "./types";
-import { Loading } from "./ui";
+import { ErrorNote, Loading } from "./ui";
 
 function NavLink({ href, children }: { href: string; children: string }) {
   const [active] = useRoute(href === "/" ? "/" : `${href}/*?`);
@@ -25,22 +25,60 @@ export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [blocked, setBlocked] = useState(false);
 
-  const loadMe = () => get<Me>("/me").then(setMe, (e) => e instanceof ApiError && e.status !== 401 || setMe(null));
+  const [fault, setFault] = useState<{ error: unknown; retry?: () => void } | null>(null);
+
+  // a 401 is handled by the unauthorized hook; anything else is thrown to the caller
+  async function loadMe() {
+    try {
+      setMe(await get<Me>("/me"));
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 401)) throw e;
+    }
+  }
+
+  function reload() {
+    setFault(null);
+    loadMe().catch((error) => setFault({ error, retry: reload }));
+  }
 
   useEffect(() => {
     onApiEvents({ unauthorized: () => setMe(null), plan: () => setBlocked(true) });
-    loadMe();
+    reload();
   }, []);
 
   async function signOut() {
-    await post("/auth/logout").catch(() => {});
+    try {
+      await post("/auth/logout");
+    } catch (error) {
+      setFault({ error });
+      return;
+    }
     setMe(null);
     setBlocked(false);
   }
 
-  if (me === undefined) return <Loading />;
-  if (me === null) return <SignIn onDone={loadMe} />;
-  if (!me.firm.name) return <FirmSetup me={me} onSaved={loadMe} onSignOut={signOut} />;
+  const notice = fault && (
+    <div class="panel">
+      <ErrorNote error={fault.error} />
+      <button onClick={fault.retry ?? (() => setFault(null))}>{fault.retry ? t("retry") : t("dismiss")}</button>
+    </div>
+  );
+
+  if (me === undefined) return notice ?? <Loading />;
+  if (me === null)
+    return (
+      <>
+        {notice}
+        <SignIn onDone={loadMe} />
+      </>
+    );
+  if (!me.firm.name)
+    return (
+      <>
+        {notice}
+        <FirmSetup me={me} onSaved={reload} onSignOut={signOut} />
+      </>
+    );
 
   const ended = blocked || (me.firm.plan_status !== "active" && !(me.firm.plan_status === "trialing" && (me.firm.trial_ends_at ?? 0) > Date.now()));
 
@@ -62,6 +100,7 @@ export function App() {
           {t("plan.ended")}
         </div>
       )}
+      {notice}
       <main>
         <Switch>
           <Route path="/">
@@ -82,7 +121,7 @@ export function App() {
           </Route>
           <Route path="/templates/:id">{(params) => <TemplatePage id={params.id} />}</Route>
           <Route path="/settings">
-            <Settings me={me} onSaved={loadMe} onSignOut={signOut} />
+            <Settings me={me} onSaved={reload} onSignOut={signOut} />
           </Route>
           <Route>
             <p>{t("notfound")}</p>
