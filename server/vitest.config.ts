@@ -12,7 +12,7 @@ export default defineConfig(async () => {
             TEST_MIGRATIONS: migrations,
             TURNSTILE_SECRET: "1x0000000000000000000000000000000AA",
             RESEND_API_KEY: "re_test",
-            RATE_SALT: "test-salt",
+            HASH_KEY: "test-salt",
             RESEND_BASE: "https://resend.test",
             TURNSTILE_BASE: "https://turnstile.test",
           },

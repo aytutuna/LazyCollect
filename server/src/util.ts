@@ -1,6 +1,7 @@
 const encoder = new TextEncoder();
 
 export const MINUTE = 60_000;
+export const FETCH_TIMEOUT_MS = 10_000;
 export const DAY = 24 * 60 * MINUTE;
 
 function toHex(buf: ArrayBuffer): string {

@@ -5,7 +5,7 @@ import { DAY, randomToken, sha256 } from "./util";
 export type Session = { tokenHash: string; userId: string; firmId: string };
 export type AppEnv = { Bindings: Env; Variables: { session: Session | null } };
 
-const COOKIE = "lc_session";
+const COOKIE = "__Host-lc_session";
 const LIFETIME = 30 * DAY;
 
 function setSessionCookie(c: Context<AppEnv>, token: string) {
@@ -32,7 +32,7 @@ export async function createSession(c: Context<AppEnv>, userId: string, firmId: 
 export async function endSession(c: Context<AppEnv>) {
   const session = c.get("session");
   if (session) await c.env.CONTROL.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(session.tokenHash).run();
-  deleteCookie(c, COOKIE, { path: "/" });
+  deleteCookie(c, COOKIE, { path: "/", secure: true });
 }
 
 export const loadSession: MiddlewareHandler<AppEnv> = async (c, next) => {

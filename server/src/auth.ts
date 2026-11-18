@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { createSession, endSession, type AppEnv } from "./session";
 import { sendLoginEmail } from "./email";
-import { DAY, MINUTE, hmac, randomCode, randomId, randomToken, sha256 } from "./util";
+import { DAY, MINUTE, hmac, randomCode, randomId, randomToken, sha256, FETCH_TIMEOUT_MS } from "./util";
 
 export const auth = new Hono<AppEnv>();
 
@@ -26,7 +26,7 @@ async function turnstileOk(env: Env, token: unknown, ip: string | undefined): Pr
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ secret: env.TURNSTILE_SECRET, response: token, remoteip: ip }),
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) return false;
   const body = await res.json<{ success?: boolean }>();
@@ -34,8 +34,8 @@ async function turnstileOk(env: Env, token: unknown, ip: string | undefined): Pr
 }
 
 async function rateLimited(env: Env, ip: string): Promise<boolean> {
-  if (!env.LOGIN || !env.RATE_SALT) throw new Error("login rate limit is not configured");
-  const { success } = await env.LOGIN.limit({ key: await hmac(env.RATE_SALT, ip) });
+  if (!env.LOGIN || !env.HASH_KEY) throw new Error("login rate limit is not configured");
+  const { success } = await env.LOGIN.limit({ key: await hmac(env.HASH_KEY, ip) });
   return !success;
 }
 
@@ -48,7 +48,7 @@ auth.post("/auth/start", async (c) => {
   if (!(await turnstileOk(c.env, body?.turnstile, ip))) return c.json({ error: "turnstile" }, 400);
 
   const now = Date.now();
-  const emailHash = await sha256(email);
+  const emailHash = await hmac(c.env.HASH_KEY, email);
   const recent = await c.env.CONTROL.prepare("SELECT COUNT(*) AS n FROM login_codes WHERE email_hash = ? AND created_at > ?")
     .bind(emailHash, now - CODE_TTL)
     .first<{ n: number }>();
@@ -60,7 +60,7 @@ auth.post("/auth/start", async (c) => {
     `INSERT INTO login_codes (id, email, email_hash, code_hash, link_hash, expires_at, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   )
-    .bind(randomId(), email, emailHash, await sha256(`${emailHash}:${code}`), await sha256(linkToken), now + CODE_TTL, now)
+    .bind(randomId(), email, emailHash, await hmac(c.env.HASH_KEY, `${emailHash}:${code}`), await sha256(linkToken), now + CODE_TTL, now)
     .run();
   await sendLoginEmail(c.env, email, code, `${c.env.APP_URL}/api/auth/link?t=${linkToken}`);
   return c.json({ ok: true });
@@ -101,7 +101,7 @@ auth.post("/auth/verify", async (c) => {
   const email = normalizeEmail(body?.email);
   if (!email || typeof body?.code !== "string") return c.json({ error: "invalid" }, 400);
   const db = c.env.CONTROL;
-  const emailHash = await sha256(email);
+  const emailHash = await hmac(c.env.HASH_KEY, email);
   const row = await db
     .prepare(
       `SELECT id, email, code_hash FROM login_codes
@@ -116,7 +116,7 @@ auth.post("/auth/verify", async (c) => {
     .prepare("UPDATE login_codes SET attempts = attempts + 1 WHERE id = ? AND attempts < ?")
     .bind(row.id, MAX_ATTEMPTS)
     .run();
-  if (tried.meta.changes !== 1 || (await sha256(`${emailHash}:${body.code.trim()}`)) !== row.code_hash) {
+  if (tried.meta.changes !== 1 || (await hmac(c.env.HASH_KEY, `${emailHash}:${body.code.trim()}`)) !== row.code_hash) {
     return c.json({ error: "invalid" }, 400);
   }
   if (!(await useCode(db, row.id))) return c.json({ error: "invalid" }, 400);
@@ -131,7 +131,7 @@ auth.get("/auth/link", async (c) => {
   const row = await db
     .prepare("SELECT id, email FROM login_codes WHERE link_hash = ? AND used_at IS NULL AND expires_at > ?")
     .bind(await sha256(t), Date.now())
-    .first<CodeRow>();
+    .first<{ id: string; email: string }>();
   if (!row || !(await useCode(db, row.id))) return c.text("Invalid or expired link", 400);
   if (!(await signIn(c, row.email))) return c.text("This account is disabled", 403);
   return c.redirect("/", 302);

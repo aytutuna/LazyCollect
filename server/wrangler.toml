@@ -1,5 +1,6 @@
-# Secrets (wrangler secret put): RESEND_API_KEY, TURNSTILE_SECRET, RATE_SALT
-# For wrangler dev put the same names in .dev.vars (gitignored).
+# Secrets (wrangler secret put): RESEND_API_KEY, TURNSTILE_SECRET, HASH_KEY
+# For wrangler dev put the same names in .dev.vars (gitignored), plus
+# APP_URL=http://localhost:8787 so the origin check and email links match.
 
 name = "lazycollect"
 main = "src/index.ts"
@@ -33,3 +34,6 @@ EMAIL_FROM = "Lazy Collect <noreply@alazy.app>"
 name = "LOGIN"
 namespace_id = "2001"
 simple = { limit = 10, period = 60 }
+
+[triggers]
+crons = ["*/10 * * * *"]

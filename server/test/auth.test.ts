@@ -54,7 +54,7 @@ describe("verify", () => {
     const res = await signIn(sent);
     expect(res.status).toBe(200);
     const header = res.headers.get("set-cookie")!;
-    expect(header).toMatch(/^lc_session=[\w-]{43};/);
+    expect(header).toMatch(/^__Host-lc_session=[\w-]{43};/);
     expect(header).toContain("HttpOnly");
     expect(header).toContain("Secure");
     expect(header).toContain("SameSite=Lax");
@@ -147,7 +147,7 @@ describe("logout", () => {
     const cookie = cookieFrom(await signIn(sent));
     const res = await api("/api/auth/logout", { method: "POST", cookie });
     expect(res.status).toBe(200);
-    expect(res.headers.get("set-cookie")).toContain("lc_session=;");
+    expect(res.headers.get("set-cookie")).toContain("__Host-lc_session=;");
     expect((await api("/api/me", { cookie })).status).toBe(401);
   });
 });
