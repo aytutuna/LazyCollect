@@ -1,4 +1,5 @@
-# Secrets (wrangler secret put): RESEND_API_KEY, TURNSTILE_SECRET, HASH_KEY
+# Secrets (wrangler secret put): RESEND_API_KEY, TURNSTILE_SECRET, HASH_KEY,
+# MASTER_KEY_NA (32 random bytes, base64: openssl rand -base64 32; losing it makes every NA file unreadable)
 # For wrangler dev put the same names in .dev.vars (gitignored), plus
 # APP_URL=http://localhost:8787 so the origin check and email links match.
 
@@ -53,6 +54,11 @@ simple = { limit = 10, period = 60 }
 name = "CLIENT"
 namespace_id = "2003"
 simple = { limit = 60, period = 60 }
+
+[[ratelimits]]
+name = "UPLOAD"
+namespace_id = "2004"
+simple = { limit = 30, period = 60 }
 
 [triggers]
 crons = ["*/10 * * * *"]

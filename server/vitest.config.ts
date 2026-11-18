@@ -15,6 +15,7 @@ export default defineConfig(async () => {
             TURNSTILE_SECRET: "1x0000000000000000000000000000000AA",
             RESEND_API_KEY: "re_test",
             HASH_KEY: "test-salt",
+            MASTER_KEY_NA: "dGVzdC1tYXN0ZXIta2V5LTMyLWJ5dGVzLWxvbmchISE=",
             RESEND_BASE: "https://resend.test",
             TURNSTILE_BASE: "https://turnstile.test",
           },

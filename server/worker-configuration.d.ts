@@ -8,6 +8,7 @@ interface __BaseEnv_Env {
 	LOGIN: RateLimit;
 	VERIFY: RateLimit;
 	CLIENT: RateLimit;
+	UPLOAD: RateLimit;
 	ASSETS: Fetcher;
 	APP_URL: "https://collect.alazy.app";
 	EMAIL_FROM: "Lazy Collect <noreply@alazy.app>";
