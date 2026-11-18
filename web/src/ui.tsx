@@ -58,6 +58,7 @@ export function Confirm(props: {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     ref.current?.showModal();
+    return () => ref.current?.close();
   }, []);
   return (
     <dialog ref={ref} aria-labelledby="dialog-title" onCancel={props.onCancel}>
@@ -68,7 +69,7 @@ export function Confirm(props: {
         <button type="button" class={props.danger ? "danger" : "primary"} disabled={props.busy} onClick={props.onConfirm}>
           {props.confirm}
         </button>
-        <button type="button" onClick={props.onCancel}>
+        <button type="button" autoFocus={props.danger} onClick={props.onCancel}>
           {t("cancel")}
         </button>
       </div>

@@ -56,7 +56,7 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[] = []) {
   return { ...state, reload: () => setRound((n) => n + 1) };
 }
 
-export function useAction() {
+export function useAction(onError?: (e: unknown) => void) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   async function run(fn: () => Promise<unknown>): Promise<boolean> {
@@ -67,10 +67,11 @@ export function useAction() {
       return true;
     } catch (e) {
       setError(e);
+      onError?.(e);
       return false;
     } finally {
       setBusy(false);
     }
   }
-  return { busy, error, run };
+  return { busy, error, run, reset: () => setError(null) };
 }

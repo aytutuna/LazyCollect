@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import { useLocation } from "wouter-preact";
-import { del, get, patch, post, useAction, useLoad } from "../api";
+import { ApiError, del, get, patch, post, useAction, useLoad } from "../api";
 import { fmtDate, fromInput, inDays, isLate, relative, toInput } from "../format";
 import { t } from "../i18n";
 import type { Client, Item, RequestDetail } from "../types";
@@ -21,7 +21,7 @@ export function RequestPage({ id }: { id: string }) {
   const [ask, setAsk] = useState<Ask>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const act = useAction();
+  const act = useAction((e) => e instanceof ApiError && e.status === 409 && reload());
 
   if (!req) return error ? <ErrorNote error={error} /> : <Loading />;
 
@@ -29,6 +29,11 @@ export function RequestPage({ id }: { id: string }) {
   const clientName = clients.data?.find((c) => c.id === req.client_id)?.name ?? "";
   const received = req.items.filter((i) => i.status === "submitted" || i.status === "approved").length;
   const late = isLate(req.deadline) && editable;
+
+  function closeAsk() {
+    setAsk(null);
+    act.reset();
+  }
 
   async function makeLink() {
     const done = await act.run(async () => {
@@ -178,13 +183,13 @@ export function RequestPage({ id }: { id: string }) {
       </div>
 
       {ask === "link" && (
-        <Confirm title={t("detail.new_link")} body={t("detail.new_link_warning")} confirm={t("detail.new_link")} busy={act.busy} error={act.error} onConfirm={makeLink} onCancel={() => setAsk(null)} />
+        <Confirm title={t("detail.new_link")} body={t("detail.new_link_warning")} confirm={t("detail.new_link")} busy={act.busy} error={act.error} onConfirm={makeLink} onCancel={closeAsk} />
       )}
       {ask === "close" && (
-        <Confirm title={t("detail.close")} body={t("detail.close_body")} confirm={t("detail.close")} busy={act.busy} error={act.error} onConfirm={close} onCancel={() => setAsk(null)} />
+        <Confirm title={t("detail.close")} body={t("detail.close_body")} confirm={t("detail.close")} busy={act.busy} error={act.error} onConfirm={close} onCancel={closeAsk} />
       )}
       {ask === "delete" && (
-        <Confirm title={t("detail.delete")} body={t("detail.delete_body")} confirm={t("detail.delete")} danger busy={act.busy} error={act.error} onConfirm={remove} onCancel={() => setAsk(null)} />
+        <Confirm title={t("detail.delete")} body={t("detail.delete_body")} confirm={t("detail.delete")} danger busy={act.busy} error={act.error} onConfirm={remove} onCancel={closeAsk} />
       )}
     </>
   );

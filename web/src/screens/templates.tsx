@@ -91,7 +91,10 @@ export function Templates() {
           busy={act.busy}
           error={act.error}
           onConfirm={remove}
-          onCancel={() => setAsking(null)}
+          onCancel={() => {
+            setAsking(null);
+            act.reset();
+          }}
         />
       )}
     </>
