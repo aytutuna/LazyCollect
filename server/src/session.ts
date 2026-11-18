@@ -3,7 +3,18 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { DAY, randomToken, sha256 } from "./util";
 
 export type Session = { tokenHash: string; userId: string; firmId: string };
-export type AppEnv = { Bindings: Env; Variables: { session: Session | null } };
+export type Firm = {
+  id: string;
+  name: string | null;
+  legal_name: string | null;
+  address: string | null;
+  phone: string | null;
+  province: string | null;
+  region: string;
+  plan_status: string;
+  trial_ends_at: number | null;
+};
+export type AppEnv = { Bindings: Env; Variables: { session: Session | null; firm: Firm; db: D1Database } };
 
 const COOKIE = "__Host-lc_session";
 const LIFETIME = 30 * DAY;

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { auth } from "./auth";
+import { firm, loadFirm } from "./firm";
 import { csrf } from "./csrf";
 import { DAY } from "./util";
 import { loadSession, type AppEnv } from "./session";
@@ -14,6 +15,8 @@ app.onError((e, c) => {
 app.use("/api/*", csrf, loadSession);
 app.get("/api/health", (c) => c.json({ ok: true }));
 app.route("/api", auth);
+app.use("/api/firm", loadFirm);
+app.route("/api", firm);
 
 export default {
   fetch: app.fetch,

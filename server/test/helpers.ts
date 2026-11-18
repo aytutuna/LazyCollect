@@ -55,3 +55,10 @@ export function linkFrom(mail: Sent): string {
 export function cookieFrom(res: Response): string {
   return res.headers.get("set-cookie")!.split(";")[0];
 }
+
+export async function login(email = "owner@firm.test"): Promise<string> {
+  const sent = mockOutbound();
+  await start(email);
+  const res = await api("/api/auth/verify", { method: "POST", body: { email, code: codeFrom(sent[0]) } });
+  return cookieFrom(res);
+}
