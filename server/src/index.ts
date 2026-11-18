@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { auth } from "./auth";
+import { clients } from "./clients";
 import { firm, loadFirm } from "./firm";
 import { csrf } from "./csrf";
 import { DAY } from "./util";
@@ -16,7 +17,9 @@ app.use("/api/*", csrf, loadSession);
 app.get("/api/health", (c) => c.json({ ok: true }));
 app.route("/api", auth);
 app.use("/api/firm", loadFirm);
+app.use("/api/clients/*", loadFirm);
 app.route("/api", firm);
+app.route("/api", clients);
 
 export default {
   fetch: app.fetch,

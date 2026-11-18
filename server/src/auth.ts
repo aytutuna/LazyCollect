@@ -16,7 +16,7 @@ function need(env: Env, ...names: (keyof Env)[]) {
   for (const n of names) if (!env[n]) throw new Error(`${n} is not set`);
 }
 
-function normalizeEmail(v: unknown): string | null {
+export function normalizeEmail(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const email = v.trim().toLowerCase();
   return email.length <= 254 && EMAIL_RE.test(email) ? email : null;
@@ -35,7 +35,7 @@ async function turnstileOk(env: Env, token: unknown, ip: string | undefined): Pr
   return body.success === true;
 }
 
-async function rateLimited(env: Env, limiter: RateLimit | undefined, ip: string | undefined): Promise<boolean> {
+export async function rateLimited(env: Env, limiter: RateLimit | undefined, ip: string | undefined): Promise<boolean> {
   if (!limiter) throw new Error("rate limit binding is missing");
   const { success } = await limiter.limit({ key: await hmac(env.HASH_KEY, ipPrefix(ip ?? "unknown")) });
   return !success;
