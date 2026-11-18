@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { usable } from "./firm";
+import { regionOf, type Region } from "./regions";
 import { syncStatus } from "./status";
 import type { AppEnv } from "./session";
 import { builtinTemplates, parseItem, parseItems, type Item } from "./templates";
@@ -92,7 +93,7 @@ async function loadRequest(c: Context<AppEnv>, id: string) {
     .bind(firmId, id)
     .all<{ id: string; required: number }>();
   const { results: files } = await db
-    .prepare("SELECT id, item_id, name, size, mime, uploaded_at FROM files WHERE firm_id = ? AND request_id = ? AND deleted_at IS NULL ORDER BY uploaded_at, rowid")
+    .prepare("SELECT id, item_id, name, size, mime, uploaded_at FROM files WHERE firm_id = ? AND request_id = ? AND state = 'live' AND deleted_at IS NULL ORDER BY uploaded_at, rowid")
     .bind(firmId, id)
     .all<{ item_id: string }>();
   return {
@@ -153,7 +154,7 @@ requests.patch("/requests/:id", async (c) => {
   const req = await findRequest(c);
   if (!req) return notFound(c);
   if (req.status === "closed") return c.json({ error: "locked" }, 409);
-  if (typeof fields.deadline === "number" && req.status === "open" && !usable(c.get("firm"), Date.now())) {
+  if (typeof fields.deadline === "number" && req.status !== "draft" && !usable(c.get("firm"), Date.now())) {
     return c.json({ error: "plan" }, 402);
   }
   const db = c.get("db");
@@ -171,10 +172,10 @@ requests.patch("/requests/:id", async (c) => {
   return c.json(await loadRequest(c, req.id));
 });
 
-const editable = (req: Req) => req.status === "draft" || req.status === "open";
+const editable = (req: Req) => req.status === "draft" || req.status === "open" || req.status === "complete";
 
 // repeated in the write itself so a close that lands after the read still wins
-const LIVE = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('draft', 'open') AND deleted_at IS NULL)";
+const LIVE = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('draft', 'open', 'complete') AND deleted_at IS NULL)";
 
 async function refused(c: Context<AppEnv>) {
   const req = await findRequest(c);
@@ -200,6 +201,7 @@ requests.post("/requests/:id/items", async (c) => {
       )
       .bind(id, firmId, req.id, firmId, req.id, item.label, item.help ?? null, item.required ? 1 : 0, firmId, req.id, firmId, req.id),
     audit(c, "item.add", "item", id, { request: req.id }, { sql: "EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND id = ?)", binds: [firmId, id] }),
+    syncStatus(db, firmId, req.id),
   ]);
   if (!res.meta.changes) {
     const now = await findRequest(c);
@@ -243,6 +245,7 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
       sql: `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ?) AND ${LIVE}`,
       binds: [firmId, req.id, itemId, firmId, req.id],
     }),
+    syncStatus(db, firmId, req.id),
   ]);
   if (!res.meta.changes) return refused(c);
   const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(c.req.param("itemId")).first<{ required: number }>();
@@ -260,24 +263,39 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
     .first<{ status: string }>();
   if (!item) return notFound(c);
   if (item.status !== "empty") return c.json({ error: "has_upload" }, 409);
-  const firmId = c.get("firm").id;
+  const firm = c.get("firm");
+  const firmId = firm.id;
   const itemId = c.req.param("itemId");
+  // rows of files the client removed still wait for the sweep; their objects go now so the item can leave
+  const { results: gone } = await db
+    .prepare("SELECT id, r2_key FROM files WHERE firm_id = ? AND item_id = ? AND deleted_at IS NOT NULL")
+    .bind(firmId, itemId)
+    .all<{ id: string; r2_key: string }>();
+  if (gone.length) await regionOf(c.env, firm.region as Region).bucket.delete(gone.map((f) => f.r2_key));
+  const bare = "status = 'empty' AND NOT EXISTS (SELECT 1 FROM files WHERE firm_id = items.firm_id AND item_id = items.id AND deleted_at IS NULL)";
+  const binds = [firmId, req.id, itemId, firmId, req.id];
   // the audit row goes first: its condition reads the item the delete removes
-  const [, res] = await db.batch([
+  const [, , res] = await db.batch([
     audit(c, "item.delete", "item", itemId, { request: req.id }, {
-      sql: `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status = 'empty') AND ${LIVE}`,
-      binds: [firmId, req.id, itemId, firmId, req.id],
+      sql: `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND ${bare}) AND ${LIVE}`,
+      binds,
     }),
     db
-      .prepare(`DELETE FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status = 'empty' AND ${LIVE}`)
-      .bind(firmId, req.id, itemId, firmId, req.id),
+      .prepare("DELETE FROM files WHERE firm_id = ? AND item_id = ? AND deleted_at IS NOT NULL AND id IN (SELECT value FROM json_each(?))")
+      .bind(firmId, itemId, JSON.stringify(gone.map((f) => f.id))),
+    db.prepare(`DELETE FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND ${bare} AND ${LIVE}`).bind(...binds),
+    syncStatus(db, firmId, req.id),
   ]);
-  return res.meta.changes ? c.json({ ok: true }) : refused(c);
+  if (res.meta.changes) return c.json({ ok: true });
+  const left = await db.prepare("SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ?").bind(firmId, req.id, itemId).first();
+  return left && (await findRequest(c)) ? c.json({ error: "has_upload" }, 409) : refused(c);
 });
 
 requests.post("/requests/:id/items/:itemId/review", async (c) => {
   const body = await readBody(c);
   if (!body || (body.decision !== "approve" && body.decision !== "reject")) return invalid(c);
+  const seen = Array.isArray(body.files) && body.files.every((f) => typeof f === "string") ? [...new Set(body.files as string[])] : null;
+  if (!seen) return invalid(c);
   const approve = body.decision === "approve";
   const note = approve ? null : text(body.note, 500);
   if (!approve && !note) return invalid(c);
@@ -289,18 +307,29 @@ requests.post("/requests/:id/items/:itemId/review", async (c) => {
   const status = approve ? "approved" : "rejected";
   const ready = `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status IN ('submitted', 'approved'))
     AND EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)`;
+  // the files the reviewer was looking at must still be exactly the item's live files
+  const live = "firm_id = ? AND item_id = ? AND state = 'live' AND deleted_at IS NULL";
+  const same = `(SELECT COUNT(*) FROM files WHERE ${live}) = ?
+    AND NOT EXISTS (SELECT 1 FROM files WHERE ${live} AND id NOT IN (SELECT value FROM json_each(?)))`;
   const binds = [firmId, req.id, itemId, firmId, req.id];
+  const sameBinds = [firmId, itemId, seen.length, firmId, itemId, JSON.stringify(seen)];
   // the audit row goes first: its condition reads the status the update changes
   const [, res] = await db.batch([
-    audit(c, "item.review", "item", itemId, { request: req.id, decision: body.decision }, { sql: ready, binds }),
+    audit(c, "item.review", "item", itemId, { request: req.id, decision: body.decision }, { sql: `${ready} AND ${same}`, binds: [...binds, ...sameBinds] }),
     db
-      .prepare(`UPDATE items SET status = ?, reject_note = ?, reviewed_by = ?, reviewed_at = ? WHERE firm_id = ? AND request_id = ? AND id = ? AND ${ready}`)
-      .bind(status, note, c.get("session")!.userId, Date.now(), firmId, req.id, itemId, ...binds),
+      .prepare(`UPDATE items SET status = ?, reject_note = ?, reviewed_by = ?, reviewed_at = ? WHERE firm_id = ? AND request_id = ? AND id = ? AND ${ready} AND ${same}`)
+      .bind(status, note, c.get("session")!.userId, Date.now(), firmId, req.id, itemId, ...binds, ...sameBinds),
     syncStatus(db, firmId, req.id),
   ]);
   if (!res.meta.changes) {
-    const item = await db.prepare("SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ?").bind(firmId, req.id, itemId).first();
-    return item ? c.json({ error: "locked" }, 409) : notFound(c);
+    const item = await db
+      .prepare("SELECT status FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
+      .bind(firmId, req.id, itemId)
+      .first<{ status: string }>();
+    if (!item) return notFound(c);
+    const now = await findRequest(c);
+    const reviewable = (item.status === "submitted" || item.status === "approved") && (now?.status === "open" || now?.status === "complete");
+    return c.json({ error: reviewable ? "stale" : "locked" }, 409);
   }
   const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(itemId).first<{ required: number }>();
   return c.json({ ...row, required: row!.required === 1 });
@@ -366,8 +395,9 @@ requests.post("/requests/:id/link", async (c) => {
       )
       .bind(randomId(), firm.id, now, userId, req.id, firm.id, req.id),
     db
-      .prepare("UPDATE requests SET status = 'open', sent_at = ?, firm_name = ? WHERE firm_id = ? AND id = ? AND status IN ('draft', 'open') AND deleted_at IS NULL")
+      .prepare("UPDATE requests SET status = CASE WHEN status = 'draft' THEN 'open' ELSE status END, sent_at = ?, firm_name = ? WHERE firm_id = ? AND id = ? AND status IN ('draft', 'open', 'complete') AND deleted_at IS NULL")
       .bind(now, firm.name, firm.id, req.id),
+    syncStatus(db, firm.id, req.id),
   ]);
   if (!results[1].meta.changes) return refused(c);
   return c.json({ url: `${c.env.APP_URL}/c/${token}` });
