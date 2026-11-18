@@ -28,7 +28,7 @@ function loadScript() {
   return script;
 }
 
-const SITEKEY = import.meta.env.VITE_TURNSTILE_SITEKEY || "1x00000000000000000000AA";
+const SITEKEY = import.meta.env.VITE_TURNSTILE_SITEKEY || (import.meta.env.DEV ? "1x00000000000000000000AA" : "");
 
 export function Turnstile({ onToken }: { onToken: (token: string) => void }) {
   const box = useRef<HTMLDivElement>(null);

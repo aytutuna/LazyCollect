@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 import { useLocation } from "wouter-preact";
 import { del, get, patch, post, useAction, useLoad } from "../api";
-import { fmtDate, fromInput, isLate, relative, toInput } from "../format";
+import { fmtDate, fromInput, inDays, isLate, relative, toInput } from "../format";
 import { t } from "../i18n";
 import type { Client, Item, RequestDetail } from "../types";
 import { Badge, Check, Confirm, ErrorNote, Field, Loading, statusLabel, statusTone } from "../ui";
@@ -206,7 +206,7 @@ function DetailsForm({ req, onSaved, onCancel }: { req: RequestDetail; onSaved: 
         <textarea rows={3} maxLength={2000} value={note} onInput={(e) => setNote(e.currentTarget.value)} />
       </Field>
       <Field label={t("new.deadline")}>
-        <input type="date" required min={toInput(Date.now())} value={deadline} onInput={(e) => setDeadline(e.currentTarget.value)} />
+        <input type="date" required min={deadline === toInput(req.deadline) ? undefined : toInput(Date.now())} max={toInput(inDays(729))} value={deadline} onInput={(e) => setDeadline(e.currentTarget.value)} />
       </Field>
       <ErrorNote error={error} />
       <div class="actions">

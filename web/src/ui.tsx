@@ -60,8 +60,8 @@ export function Confirm(props: {
     ref.current?.showModal();
   }, []);
   return (
-    <dialog ref={ref} onCancel={props.onCancel}>
-      <h2>{props.title}</h2>
+    <dialog ref={ref} aria-labelledby="dialog-title" onCancel={props.onCancel}>
+      <h2 id="dialog-title">{props.title}</h2>
       <p>{props.body}</p>
       <ErrorNote error={props.error} />
       <div class="actions">

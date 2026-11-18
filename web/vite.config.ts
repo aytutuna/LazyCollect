@@ -5,6 +5,6 @@ export default defineConfig({
     rollupOptions: { input: { main: "index.html", c: "c.html" } },
   },
   server: {
-    proxy: { "/api": "http://localhost:8787" },
+    proxy: { "/api": { target: "http://localhost:8787", headers: { origin: "http://localhost:8787" } } },
   },
 });

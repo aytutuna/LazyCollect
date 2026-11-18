@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { Link, Route, Switch, useRoute } from "wouter-preact";
-import { get, onApiEvents, post } from "./api";
+import { ApiError, get, onApiEvents, post } from "./api";
 import { t } from "./i18n";
 import { Clients } from "./screens/clients";
 import { FirmSetup, Settings } from "./screens/firm";
@@ -25,7 +25,7 @@ export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [blocked, setBlocked] = useState(false);
 
-  const loadMe = () => get<Me>("/me").then(setMe, () => setMe(null));
+  const loadMe = () => get<Me>("/me").then(setMe, (e) => e instanceof ApiError && e.status !== 401 || setMe(null));
 
   useEffect(() => {
     onApiEvents({ unauthorized: () => setMe(null), plan: () => setBlocked(true) });
@@ -70,7 +70,7 @@ export function App() {
           <Route path="/new">
             <NewRequest />
           </Route>
-          <Route path="/requests/:id">{(params) => <RequestPage id={params.id} />}</Route>
+          <Route path="/requests/:id">{(params) => <RequestPage key={params.id} id={params.id} />}</Route>
           <Route path="/clients">
             <Clients />
           </Route>
