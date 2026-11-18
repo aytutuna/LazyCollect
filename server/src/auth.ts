@@ -177,6 +177,7 @@ auth.get("/auth/link", async (c) => {
   if (!row) return page("<p>This link is invalid or has expired.</p>");
   return page(`<p>Sign in to Lazy Collect as <b>${escapeHtml(row.email)}</b>?</p>
 <button id="go">Sign in</button>
+<p id="note" role="alert"></p>
 <script src="/link.js"></script>`);
 });
 
