@@ -6,6 +6,11 @@ import { loadSession, type AppEnv } from "./session";
 
 const app = new Hono<AppEnv>();
 
+app.onError((e, c) => {
+  console.error(e instanceof Error ? e.message : "error");
+  return c.json({ error: "server_error" }, 500);
+});
+
 app.use("/api/*", csrf, loadSession);
 app.get("/api/health", (c) => c.json({ ok: true }));
 app.route("/api", auth);

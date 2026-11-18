@@ -1,17 +1,20 @@
 import { Hono, type Context } from "hono";
 import { createSession, endSession, type AppEnv } from "./session";
 import { sendLoginEmail } from "./email";
-import { DAY, MINUTE, hmac, randomCode, randomId, randomToken, sha256, FETCH_TIMEOUT_MS } from "./util";
+import { DAY, MINUTE, hmac, randomCode, randomId, randomToken, sha256, ipPrefix, FETCH_TIMEOUT_MS } from "./util";
 
 export const auth = new Hono<AppEnv>();
 
 const CODE_TTL = 10 * MINUTE;
 const MAX_CODES = 3;
 const MAX_ATTEMPTS = 3;
+const MAX_FAILED_PER_DAY = 10;
 const TRIAL_DAYS = 14;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-type CodeRow = { id: string; email: string; code_hash: string };
+function need(env: Env, ...names: (keyof Env)[]) {
+  for (const n of names) if (!env[n]) throw new Error(`${n} is not set`);
+}
 
 function normalizeEmail(v: unknown): string | null {
   if (typeof v !== "string") return null;
@@ -20,7 +23,6 @@ function normalizeEmail(v: unknown): string | null {
 }
 
 async function turnstileOk(env: Env, token: unknown, ip: string | undefined): Promise<boolean> {
-  if (!env.TURNSTILE_SECRET) throw new Error("TURNSTILE_SECRET is not set");
   if (typeof token !== "string" || !token) return false;
   const res = await fetch(`${env.TURNSTILE_BASE ?? "https://challenges.cloudflare.com"}/turnstile/v0/siteverify`, {
     method: "POST",
@@ -33,83 +35,107 @@ async function turnstileOk(env: Env, token: unknown, ip: string | undefined): Pr
   return body.success === true;
 }
 
-async function rateLimited(env: Env, ip: string): Promise<boolean> {
-  if (!env.LOGIN || !env.HASH_KEY) throw new Error("login rate limit is not configured");
-  const { success } = await env.LOGIN.limit({ key: await hmac(env.HASH_KEY, ip) });
+async function rateLimited(env: Env, limiter: RateLimit | undefined, ip: string | undefined): Promise<boolean> {
+  if (!limiter) throw new Error("rate limit binding is missing");
+  const { success } = await limiter.limit({ key: await hmac(env.HASH_KEY, ipPrefix(ip ?? "unknown")) });
   return !success;
 }
 
 auth.post("/auth/start", async (c) => {
+  need(c.env, "TURNSTILE_SECRET", "RESEND_API_KEY", "HASH_KEY");
   const body = await c.req.json<{ email?: unknown; turnstile?: unknown }>().catch(() => null);
   const email = normalizeEmail(body?.email);
   if (!email) return c.json({ error: "invalid_email" }, 400);
   const ip = c.req.header("CF-Connecting-IP");
-  if (await rateLimited(c.env, ip ?? "unknown")) return c.json({ error: "rate_limited" }, 429);
+  if (await rateLimited(c.env, c.env.LOGIN, ip)) return c.json({ error: "rate_limited" }, 429);
   if (!(await turnstileOk(c.env, body?.turnstile, ip))) return c.json({ error: "turnstile" }, 400);
 
+  const db = c.env.CONTROL;
   const now = Date.now();
+  const id = randomId();
   const emailHash = await hmac(c.env.HASH_KEY, email);
-  const recent = await c.env.CONTROL.prepare("SELECT COUNT(*) AS n FROM login_codes WHERE email_hash = ? AND created_at > ?")
-    .bind(emailHash, now - CODE_TTL)
-    .first<{ n: number }>();
-  if ((recent?.n ?? 0) >= MAX_CODES) return c.json({ ok: true });
-
   const code = randomCode();
   const linkToken = randomToken();
-  await c.env.CONTROL.prepare(
-    `INSERT INTO login_codes (id, email, email_hash, code_hash, link_hash, expires_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  )
-    .bind(randomId(), email, emailHash, await hmac(c.env.HASH_KEY, `${emailHash}:${code}`), await sha256(linkToken), now + CODE_TTL, now)
-    .run();
-  await sendLoginEmail(c.env, email, code, `${c.env.APP_URL}/api/auth/link?t=${linkToken}`);
+  // the count sits inside the insert so parallel requests can't pass the cap together
+  const [inserted] = await db.batch([
+    db
+      .prepare(
+        `INSERT INTO login_codes (id, email, email_hash, code_hash, link_hash, expires_at, created_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?
+         WHERE (SELECT COUNT(*) FROM login_codes WHERE email_hash = ? AND created_at > ?) < ?`,
+      )
+      .bind(id, email, emailHash, await hmac(c.env.HASH_KEY, `${emailHash}:${code}`), await sha256(linkToken), now + CODE_TTL, now, emailHash, now - CODE_TTL, MAX_CODES),
+    db
+      .prepare(
+        `UPDATE login_codes SET used_at = COALESCE(used_at, ?), link_used_at = COALESCE(link_used_at, ?)
+         WHERE email_hash = ? AND id != ? AND (used_at IS NULL OR link_used_at IS NULL)
+         AND EXISTS (SELECT 1 FROM login_codes WHERE id = ?)`,
+      )
+      .bind(now, now, emailHash, id, id),
+  ]);
+  if (inserted.meta.changes === 0) return c.json({ ok: true });
+  try {
+    await sendLoginEmail(c.env, email, code, `${c.env.APP_URL}/api/auth/link?t=${linkToken}`);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : "login email failed");
+    await db.prepare("DELETE FROM login_codes WHERE id = ?").bind(id).run();
+    return c.json({ error: "email" }, 502);
+  }
   return c.json({ ok: true });
 });
 
 async function signIn(c: Context<AppEnv>, email: string): Promise<boolean> {
   const db = c.env.CONTROL;
-  let user = await db
-    .prepare("SELECT id, firm_id, disabled_at FROM users WHERE email = ?")
-    .bind(email)
-    .first<{ id: string; firm_id: string; disabled_at: number | null }>();
-  if (user?.disabled_at) return false;
+  const find = () =>
+    db
+      .prepare("SELECT id, firm_id, disabled_at FROM users WHERE email = ?")
+      .bind(email)
+      .first<{ id: string; firm_id: string; disabled_at: number | null }>();
+  let user = await find();
   if (!user) {
     const now = Date.now();
     const firmId = randomId();
-    const userId = randomId();
+    // a parallel first sign-in may have won the email; then the firm made here is dropped again
     await db.batch([
       db
         .prepare("INSERT INTO firms (id, plan_status, trial_ends_at, created_at) VALUES (?, 'trialing', ?, ?)")
         .bind(firmId, now + TRIAL_DAYS * DAY, now),
       db
-        .prepare("INSERT INTO users (id, firm_id, email, role, created_at) VALUES (?, ?, ?, 'owner', ?)")
-        .bind(userId, firmId, email, now),
+        .prepare("INSERT INTO users (id, firm_id, email, role, created_at) VALUES (?, ?, ?, 'owner', ?) ON CONFLICT (email) DO NOTHING")
+        .bind(randomId(), firmId, email, now),
+      db
+        .prepare("DELETE FROM firms WHERE id = ? AND NOT EXISTS (SELECT 1 FROM users WHERE firm_id = ?)")
+        .bind(firmId, firmId),
     ]);
-    user = { id: userId, firm_id: firmId, disabled_at: null };
+    user = (await find())!;
   }
+  if (user.disabled_at) return false;
   await createSession(c, user.id, user.firm_id);
   return true;
 }
 
-async function useCode(db: D1Database, id: string): Promise<boolean> {
-  const res = await db.prepare("UPDATE login_codes SET used_at = ? WHERE id = ? AND used_at IS NULL").bind(Date.now(), id).run();
-  return res.meta.changes === 1;
-}
-
 auth.post("/auth/verify", async (c) => {
+  need(c.env, "HASH_KEY");
+  if (await rateLimited(c.env, c.env.VERIFY, c.req.header("CF-Connecting-IP"))) return c.json({ error: "rate_limited" }, 429);
   const body = await c.req.json<{ email?: unknown; code?: unknown }>().catch(() => null);
   const email = normalizeEmail(body?.email);
   if (!email || typeof body?.code !== "string") return c.json({ error: "invalid" }, 400);
   const db = c.env.CONTROL;
+  const now = Date.now();
   const emailHash = await hmac(c.env.HASH_KEY, email);
+  const failed = await db
+    .prepare("SELECT COALESCE(SUM(attempts), 0) AS n FROM login_codes WHERE email_hash = ? AND created_at > ?")
+    .bind(emailHash, now - DAY)
+    .first<{ n: number }>();
+  if (failed!.n >= MAX_FAILED_PER_DAY) return c.json({ error: "too_many" }, 429);
   const row = await db
     .prepare(
       `SELECT id, email, code_hash FROM login_codes
        WHERE email_hash = ? AND used_at IS NULL AND expires_at > ? AND attempts < ?
        ORDER BY created_at DESC LIMIT 1`,
     )
-    .bind(emailHash, Date.now(), MAX_ATTEMPTS)
-    .first<CodeRow>();
+    .bind(emailHash, now, MAX_ATTEMPTS)
+    .first<{ id: string; email: string; code_hash: string }>();
   if (!row) return c.json({ error: "invalid" }, 400);
   // count the try before comparing so parallel guesses can't exceed the limit
   const tried = await db
@@ -119,7 +145,12 @@ auth.post("/auth/verify", async (c) => {
   if (tried.meta.changes !== 1 || (await hmac(c.env.HASH_KEY, `${emailHash}:${body.code.trim()}`)) !== row.code_hash) {
     return c.json({ error: "invalid" }, 400);
   }
-  if (!(await useCode(db, row.id))) return c.json({ error: "invalid" }, 400);
+  // a correct try isn't a failure for the daily budget
+  const used = await db
+    .prepare("UPDATE login_codes SET used_at = ?, attempts = attempts - 1 WHERE id = ? AND used_at IS NULL")
+    .bind(now, row.id)
+    .run();
+  if (used.meta.changes !== 1) return c.json({ error: "invalid" }, 400);
   if (!(await signIn(c, row.email))) return c.json({ error: "disabled" }, 403);
   return c.json({ ok: true });
 });
@@ -156,6 +187,8 @@ document.getElementById("go").onclick = async () => {
 });
 
 auth.post("/auth/link", async (c) => {
+  need(c.env, "HASH_KEY");
+  if (await rateLimited(c.env, c.env.VERIFY, c.req.header("CF-Connecting-IP"))) return c.json({ error: "rate_limited" }, 429);
   const body = await c.req.json<{ t?: unknown }>().catch(() => null);
   if (typeof body?.t !== "string") return c.json({ error: "invalid" }, 400);
   const row = await c.env.CONTROL.prepare(
