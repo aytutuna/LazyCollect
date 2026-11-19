@@ -1,9 +1,9 @@
 import { useState } from "preact/hooks";
-import { useLocation } from "wouter-preact";
+import { Link, useLocation } from "wouter-preact";
 import { ApiError, del, get, patch, post, useAction, useLoad } from "../api";
 import { fmtDate, fmtSize, fromInput, inDays, isLate, relative, toInput } from "../format";
 import { t } from "../i18n";
-import type { Client, Item, ItemWithFiles, RequestDetail } from "../types";
+import type { Client, Firm, Item, ItemWithFiles, LinkResult, Message, RequestDetail } from "../types";
 import { Badge, Check, Confirm, ErrorNote, Field, Loading, statusLabel, statusTone } from "../ui";
 
 const ITEM_TONES = { empty: "grey", submitted: "teal", approved: "green", rejected: "red" };
@@ -14,6 +14,10 @@ export function RequestPage({ id }: { id: string }) {
   const [, go] = useLocation();
   const { data: req, error, reload } = useLoad(() => get<RequestDetail>(`/requests/${id}`), [id]);
   const clients = useLoad(() => get<Client[]>("/clients"));
+  const firm = useLoad(() => get<Firm>("/firm"));
+  const sent = useLoad(() => get<Message[]>(`/requests/${id}/messages`), [id]);
+  const [emailIt, setEmailIt] = useState(true);
+  const [mailNote, setMailNote] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [manage, setManage] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -26,7 +30,14 @@ export function RequestPage({ id }: { id: string }) {
   if (!req) return error ? <ErrorNote error={error} /> : <Loading />;
 
   const editable = req.status === "draft" || req.status === "open" || req.status === "complete";
-  const clientName = clients.data?.find((c) => c.id === req.client_id)?.name ?? "";
+  const client = clients.data?.find((c) => c.id === req.client_id);
+  const clientName = client?.name ?? "";
+  const mailBlock = !firm.data || !client ? null : !firm.data.address ? "address" : !client.email || !client.email_ok_at ? "client" : client.email_stop_at ? "stopped" : null;
+  const emailing = emailIt && !mailBlock && Boolean(firm.data && client);
+  const refresh = () => {
+    reload();
+    sent.reload();
+  };
   const received = req.items.filter((i) => i.status === "submitted" || i.status === "approved").length;
   const late = isLate(req.deadline) && editable;
 
@@ -37,9 +48,11 @@ export function RequestPage({ id }: { id: string }) {
 
   async function makeLink() {
     const done = await act.run(async () => {
-      setUrl((await post<{ url: string }>(`/requests/${id}/link`)).url);
+      const made = await post<LinkResult>(`/requests/${id}/link`, { send_email: emailing });
+      setUrl(made.url);
+      setMailNote(made.emailed ? t("detail.emailed", { email: client!.email! }) : made.email_failed ? t("detail.email_failed") : null);
       setCopied(false);
-      reload();
+      refresh();
     });
     if (done) setAsk(null);
   }
@@ -58,6 +71,10 @@ export function RequestPage({ id }: { id: string }) {
 
   async function copy() {
     await navigator.clipboard.writeText(url!).then(() => setCopied(true), () => {});
+  }
+
+  async function toggleReminders(on: boolean) {
+    if (await act.run(() => patch(`/requests/${id}`, { reminders_on: on }))) reload();
   }
 
   async function removeItem(item: Item) {
@@ -126,14 +143,45 @@ export function RequestPage({ id }: { id: string }) {
                   {copied ? t("detail.copied") : t("detail.copy")}
                 </button>
               </div>
-              <p class="muted">{t("detail.email_soon")}</p>
+              {mailNote && <p class="muted">{mailNote}</p>}
             </>
           ) : (
             <p class="muted">{req.sent_at ? t("detail.link_exists") : t("detail.link_none")}</p>
           )}
+          {firm.data && client && (
+            <>
+              <Check label={client.email ? t("detail.email_to", { email: client.email }) : t("detail.email_to_client")} checked={emailing} disabled={Boolean(mailBlock)} onChange={setEmailIt} />
+              {mailBlock === "address" && (
+                <p class="muted">
+                  <Link href="/settings">{t("detail.email_address")}</Link>
+                </p>
+              )}
+              {mailBlock === "client" && <p class="muted">{t("detail.email_client")}</p>}
+              {mailBlock === "stopped" && <p class="muted">{t("detail.email_stopped")}</p>}
+            </>
+          )}
           <button class={url || req.sent_at ? "" : "primary"} disabled={act.busy || req.items.length === 0} onClick={() => (req.sent_at ? setAsk("link") : makeLink())}>
             {req.sent_at ? t("detail.new_link") : t("detail.create_link")}
           </button>
+        </section>
+      )}
+
+      {editable && req.sent_at && (
+        <section>
+          <h2>{t("detail.reminders")}</h2>
+          <Check label={t("detail.reminders_on")} checked={req.reminders_on} disabled={act.busy} onChange={toggleReminders} />
+          <p class="muted">{req.reminders_on && req.next_reminder_at ? t("detail.reminders_next", { date: fmtDate(req.next_reminder_at) }) : t("detail.reminders_none")}</p>
+          {sent.data && sent.data.length > 0 ? (
+            <ul class="files">
+              {sent.data.map((m) => (
+                <li key={m.id}>
+                  {t(`message.${m.kind}`)} <span class="muted">{fmtDate(m.sent_at)}, {t(`message.${m.status}`)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p class="muted">{t("detail.messages_none")}</p>
+          )}
         </section>
       )}
 

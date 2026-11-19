@@ -110,7 +110,10 @@ export function Clients() {
                   </tr>
                 ) : (
                   <tr>
-                    <td class="name">{c.name}</td>
+                    <td class="name">
+                      {c.name}
+                      {c.email_stop_at && <div class="muted">{t("clients.unsubscribed")}</div>}
+                    </td>
                     <td class="wide">{c.email ?? "-"}</td>
                     <td class="wide">{c.phone ?? "-"}</td>
                     <td class="narrow muted">{[c.email, c.phone].filter(Boolean).join(" · ")}</td>

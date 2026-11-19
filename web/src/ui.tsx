@@ -32,10 +32,10 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   );
 }
 
-export function Check({ label, checked, onChange, required }: { label: string; checked: boolean; onChange: (v: boolean) => void; required?: boolean }) {
+export function Check({ label, checked, onChange, required, disabled }: { label: string; checked: boolean; onChange: (v: boolean) => void; required?: boolean; disabled?: boolean }) {
   return (
     <label class="check">
-      <input type="checkbox" checked={checked} required={required} onChange={(e) => onChange(e.currentTarget.checked)} />
+      <input type="checkbox" checked={checked} required={required} disabled={disabled} onChange={(e) => onChange(e.currentTarget.checked)} />
       <span>{label}</span>
     </label>
   );

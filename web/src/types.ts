@@ -10,6 +10,7 @@ export type Firm = {
   address: string | null;
   phone: string | null;
   province: string | null;
+  tz: string;
   plan_status: string;
   trial_ends_at: number | null;
 };
@@ -20,6 +21,7 @@ export type Client = {
   email: string | null;
   phone: string | null;
   email_ok_at: number | null;
+  email_stop_at: number | null;
   sms_ok_at: number | null;
 };
 
@@ -62,8 +64,14 @@ export type RequestDetail = {
   deadline: number;
   status: string;
   sent_at: number | null;
+  reminders_on: boolean;
+  next_reminder_at: number | null;
   items: ItemWithFiles[];
 };
+
+export type Message = { id: string; kind: "invite" | "reminder" | "deadline" | "rejected"; seq: number; status: "sending" | "sent" | "failed"; sent_at: number };
+
+export type LinkResult = { url: string; emailed?: true; email_failed?: true };
 
 export type ClientItem = Omit<Item, "position"> & { files: Omit<FileRow, "mime">[] };
 

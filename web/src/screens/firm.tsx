@@ -5,6 +5,7 @@ import { t } from "../i18n";
 import type { Firm, Me } from "../types";
 import { ErrorNote, Field, Loading } from "../ui";
 
+const ZONES = ["America/St_Johns", "America/Halifax", "America/Toronto", "America/Winnipeg", "America/Regina", "America/Edmonton", "America/Vancouver"];
 const PROVINCES = ["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"];
 
 function FirmForm({ firm, canEdit, onSaved }: { firm: Firm; canEdit: boolean; onSaved: () => void }) {
@@ -13,6 +14,7 @@ function FirmForm({ firm, canEdit, onSaved }: { firm: Firm; canEdit: boolean; on
   const [address, setAddress] = useState(firm.address ?? "");
   const [phone, setPhone] = useState(firm.phone ?? "");
   const [province, setProvince] = useState(firm.province ?? "");
+  const [tz, setTz] = useState(firm.tz);
   const hasBusiness = Boolean(firm.legal_name || firm.address || firm.phone || firm.province);
   const [saved, setSaved] = useState(false);
   const { busy, error, run } = useAction();
@@ -20,7 +22,7 @@ function FirmForm({ firm, canEdit, onSaved }: { firm: Firm; canEdit: boolean; on
   async function submit(e: Event) {
     e.preventDefault();
     setSaved(false);
-    const ok = await run(() => patch("/firm", { name, legal_name: legal, address, phone, province }));
+    const ok = await run(() => patch("/firm", { name, legal_name: legal, address, phone, province, tz }));
     if (ok) {
       setSaved(true);
       onSaved();
@@ -54,6 +56,13 @@ function FirmForm({ firm, canEdit, onSaved }: { firm: Firm; canEdit: boolean; on
             </select>
           </Field>
         </details>
+        <Field label={t("firm.tz")} hint={t("firm.tz_hint")}>
+          <select value={tz} onChange={(e) => setTz(e.currentTarget.value)}>
+            {(ZONES.includes(firm.tz) ? ZONES : [firm.tz, ...ZONES]).map((z) => (
+              <option value={z}>{ZONES.includes(z) ? t(`tz.${z}`) : z}</option>
+            ))}
+          </select>
+        </Field>
       </fieldset>
       <ErrorNote error={error} />
       {saved && <p class="ok">{t("saved")}</p>}
