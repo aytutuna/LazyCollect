@@ -375,7 +375,7 @@ describe("reminders", () => {
     await pin(req.id, at(2027, 1, 5, 10));
     await env.DB_NA.prepare(
       "INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at) SELECT lower(hex(randomblob(16))), firm_id, id, client_id, 'email', 'reminder', 1, 1, 'x', 'sending', 3, ? FROM requests",
-    ).bind(at(2027, 1, 5, 8)).run();
+    ).bind(at(2027, 1, 4, 8)).run();
     sent.length = 0;
     await runReminders(env, at(2027, 1, 5, 10, 5));
     expect(sent).toHaveLength(0);
