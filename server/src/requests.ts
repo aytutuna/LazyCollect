@@ -1,8 +1,12 @@
 import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { usable } from "./firm";
+import { LINK_GRACE, sealToken } from "./links";
+import { deliver, unsubUrl } from "./mail";
 import { regionOf, type Region } from "./regions";
+import { missingItems, senderName, sendersOf } from "./reminders";
 import { syncStatus } from "./status";
+import { nextReminder } from "./tz";
 import type { AppEnv } from "./session";
 import { builtinTemplates, parseItem, parseItems, type Item } from "./templates";
 import { DAY, hmac, randomId, randomToken } from "./util";
@@ -10,17 +14,16 @@ import { invalid, maybe, notFound, readBody, setClause, text } from "./validate"
 
 export const requests = new Hono<AppEnv>();
 
-const COLS = "id, client_id, title, note, deadline, firm_name, status, sent_at, closed_at, created_at";
+const COLS = "id, client_id, title, note, deadline, firm_name, status, sent_at, closed_at, created_at, reminders_on, next_reminder_at";
 const ITEM_COLS = "id, position, label, help, required, status, reject_note, reviewed_at";
-const LINK_GRACE = 30 * DAY;
 const MAX_ITEMS = 100;
 const MAX_AHEAD = 2 * 365 * DAY;
 
-type Req = { id: string; status: string; deadline: number };
+type Req = { id: string; client_id: string; title: string; status: string; deadline: number; reminders_on: number };
 
 const findRequest = (c: Context<AppEnv>) =>
   c.get("db")
-    .prepare("SELECT id, status, deadline FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
+    .prepare("SELECT id, client_id, title, status, deadline, reminders_on FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
     .bind(c.get("firm").id, c.req.param("id"))
     .first<Req>();
 
@@ -87,7 +90,7 @@ requests.post("/requests", async (c) => {
 async function loadRequest(c: Context<AppEnv>, id: string) {
   const db = c.get("db");
   const firmId = c.get("firm").id;
-  const row = await db.prepare(`SELECT ${COLS} FROM requests WHERE firm_id = ? AND id = ?`).bind(firmId, id).first();
+  const row = await db.prepare(`SELECT ${COLS} FROM requests WHERE firm_id = ? AND id = ?`).bind(firmId, id).first<{ reminders_on: number }>();
   const { results } = await db
     .prepare(`SELECT ${ITEM_COLS} FROM items WHERE firm_id = ? AND request_id = ? ORDER BY position`)
     .bind(firmId, id)
@@ -98,6 +101,7 @@ async function loadRequest(c: Context<AppEnv>, id: string) {
     .all<{ item_id: string }>();
   return {
     ...row,
+    reminders_on: row!.reminders_on === 1,
     items: results.map((i) => ({
       ...i,
       required: i.required === 1,
@@ -150,6 +154,10 @@ requests.patch("/requests/:id", async (c) => {
     if (due === undefined) return invalid(c);
     fields.deadline = due;
   }
+  if ("reminders_on" in body) {
+    if (typeof body.reminders_on !== "boolean") return invalid(c);
+    fields.reminders_on = body.reminders_on ? 1 : 0;
+  }
   if (!Object.keys(fields).length) return invalid(c);
   const req = await findRequest(c);
   if (!req) return notFound(c);
@@ -159,6 +167,13 @@ requests.patch("/requests/:id", async (c) => {
   }
   const db = c.get("db");
   const firmId = c.get("firm").id;
+  const now = Date.now();
+  const due = typeof fields.deadline === "number" ? fields.deadline : req.deadline;
+  const on = "reminders_on" in fields ? fields.reminders_on === 1 : req.reminders_on === 1;
+  // a draft has no cadence until its link goes out; a passed deadline has had its note already
+  if (req.status !== "draft" && ("reminders_on" in fields || "deadline" in fields)) {
+    fields.next_reminder_at = on && due > now ? nextReminder(now, due, c.get("firm").tz) : null;
+  }
   const set = setClause(fields);
   const stmts = [db.prepare(`UPDATE requests SET ${set.sql} WHERE firm_id = ? AND id = ?`).bind(...set.values, firmId, req.id)];
   // a later deadline would otherwise leave the live link expiring early
@@ -314,12 +329,24 @@ requests.post("/requests/:id/items/:itemId/review", async (c) => {
   const binds = [firmId, req.id, itemId, firmId, req.id];
   const sameBinds = [firmId, itemId, seen.length, firmId, itemId, JSON.stringify(seen)];
   // the audit row goes first: its condition reads the status the update changes
+  const at = Date.now();
   const [, res] = await db.batch([
     audit(c, "item.review", "item", itemId, { request: req.id, decision: body.decision }, { sql: `${ready} AND ${same}`, binds: [...binds, ...sameBinds] }),
     db
       .prepare(`UPDATE items SET status = ?, reject_note = ?, reviewed_by = ?, reviewed_at = ? WHERE firm_id = ? AND request_id = ? AND id = ? AND ${ready} AND ${same}`)
-      .bind(status, note, c.get("session")!.userId, Date.now(), firmId, req.id, itemId, ...binds, ...sameBinds),
+      .bind(status, note, c.get("session")!.userId, at, firmId, req.id, itemId, ...binds, ...sameBinds),
     syncStatus(db, firmId, req.id),
+    // the client hears about rejections from the reminder pass, once they stop coming in
+    ...(approve
+      ? []
+      : [
+          db
+            .prepare(
+              `UPDATE requests SET reject_mark_at = ? WHERE firm_id = ? AND id = ?
+               AND EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status = 'rejected' AND reviewed_at = ?)`,
+            )
+            .bind(at, firmId, req.id, firmId, req.id, itemId, at),
+        ]),
   ]);
   if (!res.meta.changes) {
     const item = await db
@@ -380,14 +407,28 @@ requests.post("/requests/:id/link", async (c) => {
   if (req.deadline <= now) return c.json({ error: "deadline_passed" }, 409);
 
   const db = c.get("db");
+  const body = await readBody(c);
+  const sendEmail = body?.send_email === true;
+  let invitee: { name: string; email: string } | null = null;
+  if (sendEmail) {
+    if (!firm.address) return c.json({ error: "address_needed" }, 400);
+    const client = await db
+      .prepare("SELECT name, email, email_ok_at, email_stop_at FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
+      .bind(firm.id, req.client_id)
+      .first<{ name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null }>();
+    if (!client?.email || !client.email_ok_at) return c.json({ error: "client_email_needed" }, 400);
+    if (client.email_stop_at) return c.json({ error: "client_unsubscribed" }, 400);
+    invitee = { name: client.name, email: client.email };
+  }
+
   const userId = c.get("session")!.userId;
   const token = `${firm.region}_${randomToken()}`;
   const hash = await hmac(c.env.HASH_KEY, token.slice(firm.region.length + 1));
   const results = await db.batch([
     db.prepare(`UPDATE links SET revoked_at = ? WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL AND ${LIVE}`).bind(now, firm.id, req.id, firm.id, req.id),
     db
-      .prepare(`INSERT INTO links (token_hash, firm_id, request_id, expires_at, created_by, created_at) SELECT ?, ?, ?, ?, ?, ? WHERE ${LIVE}`)
-      .bind(hash, firm.id, req.id, req.deadline + LINK_GRACE, userId, now, firm.id, req.id),
+      .prepare(`INSERT INTO links (token_hash, firm_id, request_id, expires_at, created_by, created_at, token_enc) SELECT ?, ?, ?, ?, ?, ?, ? WHERE ${LIVE}`)
+      .bind(hash, firm.id, req.id, req.deadline + LINK_GRACE, userId, now, await sealToken(c.env, token), firm.id, req.id),
     db
       .prepare(
         `INSERT INTO audit (id, firm_id, at, actor_type, actor_id, action, object_type, object_id)
@@ -395,10 +436,53 @@ requests.post("/requests/:id/link", async (c) => {
       )
       .bind(randomId(), firm.id, now, userId, req.id, firm.id, req.id),
     db
-      .prepare("UPDATE requests SET status = CASE WHEN status = 'draft' THEN 'open' ELSE status END, sent_at = ?, firm_name = ? WHERE firm_id = ? AND id = ? AND status IN ('draft', 'open', 'complete') AND deleted_at IS NULL")
-      .bind(now, firm.name, firm.id, req.id),
+      .prepare(
+        `UPDATE requests SET status = CASE WHEN status = 'draft' THEN 'open' ELSE status END, sent_at = ?, firm_name = ?,
+           next_reminder_at = CASE WHEN reminders_on = 1 THEN ? ELSE NULL END
+         WHERE firm_id = ? AND id = ? AND status IN ('draft', 'open', 'complete') AND deleted_at IS NULL`,
+      )
+      .bind(now, firm.name, nextReminder(now, req.deadline, firm.tz), firm.id, req.id),
     syncStatus(db, firm.id, req.id),
   ]);
   if (!results[1].meta.changes) return refused(c);
-  return c.json({ url: `${c.env.APP_URL}/c/${token}` });
+  const url = `${c.env.APP_URL}/c/${token}`;
+  if (!invitee) return c.json({ url });
+
+  try {
+    const [sender] = (await sendersOf(c.env, firm.region as Region, [firm.id])).values();
+    const { outcome } = await deliver(
+      c.env,
+      { db, firmId: firm.id, requestId: req.id, clientId: req.client_id, kind: "invite", seq: null },
+      {
+        kind: "invite",
+        sender: senderName(sender),
+        address: firm.address!,
+        phone: firm.phone,
+        replyTo: sender.owner_email!,
+        clientName: invitee.name,
+        clientEmail: invitee.email,
+        title: req.title,
+        deadline: req.deadline,
+        tz: firm.tz,
+        items: await missingItems(db, firm.id, req.id, false),
+        url,
+        unsubUrl: await unsubUrl(c.env, firm.region as Region, req.client_id, firm.id),
+      },
+      now,
+    );
+    if (outcome === "sent") return c.json({ url, emailed: true });
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : "error");
+  }
+  return c.json({ url, email_failed: true });
+});
+
+requests.get("/requests/:id/messages", async (c) => {
+  const req = await findRequest(c);
+  if (!req) return notFound(c);
+  const { results } = await c.get("db")
+    .prepare("SELECT id, kind, seq, status, sent_at FROM messages WHERE firm_id = ? AND request_id = ? ORDER BY sent_at DESC, rowid DESC LIMIT 100")
+    .bind(c.get("firm").id, req.id)
+    .all();
+  return c.json(results);
 });

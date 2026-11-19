@@ -205,6 +205,12 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
         )
         .bind(req.firm_id, req.id, itemId, ...here),
       syncStatus(db, req.firm_id, req.id),
+      db
+        .prepare(
+          `UPDATE requests SET notice_due_at = COALESCE(notice_due_at, ?) WHERE firm_id = ? AND id = ?
+           AND EXISTS (SELECT 1 FROM files WHERE firm_id = ? AND id = ? AND state = 'live')`,
+        )
+        .bind(Date.now(), req.firm_id, req.id, ...here),
       auditClient(db, req.firm_id, ipHash, "file.upload", "file", fileId, { request: req.id, item: itemId, size: length, mime }, {
         sql: "EXISTS (SELECT 1 FROM files WHERE firm_id = ? AND id = ? AND state = 'live')",
         binds: here,

@@ -14,7 +14,7 @@ routes = [{ pattern = "collect.alazy.app", custom_domain = true }]
 directory = "../web/dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/api/*", "/c/*"]
+run_worker_first = ["/api/*", "/c/*", "/u/*"]
 
 [observability]
 enabled = true

@@ -5,8 +5,10 @@ import { clients } from "./clients";
 import { files } from "./files";
 import { firm, loadFirm } from "./firm";
 import { requests } from "./requests";
+import { runReminders } from "./reminders";
 import { sweepFiles } from "./sweep";
 import { templates } from "./templates";
+import { unsubscribe } from "./unsubscribe";
 import { uploads } from "./upload";
 import { csrf } from "./csrf";
 import { htmlHeaders } from "./headers";
@@ -41,6 +43,8 @@ app.route("/api", templates);
 app.route("/api", requests);
 app.route("/api", files);
 
+app.route("/u", unsubscribe);
+
 app.get("/c/*", async (c) => {
   const page = await c.env.ASSETS.fetch(new URL("/c", c.req.url));
   const headers = new Headers(page.headers);
@@ -57,5 +61,6 @@ export default {
       env.CONTROL.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
     ]);
     await sweepFiles(env, now);
+    await runReminders(env, now);
   },
 };
