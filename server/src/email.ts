@@ -34,6 +34,9 @@ export async function sendLoginEmail(env: Env, to: string, code: string, link: s
   if (!res.ok) throw new Error(`login email rejected: HTTP ${res.status}`);
 }
 
+// the provider is busy or down: the message was not refused, so the attempt should not count
+export class Transient extends Error {}
+
 export type Outgoing = { from: string; to: string; replyTo?: string; subject: string; text: string; html?: string; headers?: Record<string, string>; idempotencyKey?: string };
 
 // resolves to the provider's id for the message
@@ -55,6 +58,7 @@ export async function sendMail(env: Env, m: Outgoing): Promise<string | null> {
   }
   // a reused key means an earlier attempt of this slot was accepted
   if (res.status === 409 && m.idempotencyKey) return null;
+  if (res.status === 429 || res.status >= 500) throw new Transient(`email deferred: HTTP ${res.status}`);
   if (!res.ok) throw new Error(`email rejected: HTTP ${res.status}`);
   const body = await res.json<{ id?: string }>().catch(() => null);
   return body?.id ?? null;

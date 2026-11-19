@@ -172,7 +172,7 @@ requests.patch("/requests/:id", async (c) => {
   const on = "reminders_on" in fields ? fields.reminders_on === 1 : req.reminders_on === 1;
   // a draft has no cadence until its link goes out; a passed deadline has had its note already
   if (req.status !== "draft" && ("reminders_on" in fields || "deadline" in fields)) {
-    fields.next_reminder_at = on && due > now ? nextReminder(now, due, c.get("firm").tz) : null;
+    fields.next_reminder_at = on && due > now ? nextReminder(now, due, c.get("firm").tz, true) : null;
   }
   const set = setClause(fields);
   const stmts = [db.prepare(`UPDATE requests SET ${set.sql} WHERE firm_id = ? AND id = ?`).bind(...set.values, firmId, req.id)];
@@ -349,7 +349,7 @@ requests.post("/requests/:id/items/:itemId/review", async (c) => {
           // a request reopened by this rejection must not also get a stale reminder
           db
             .prepare("UPDATE requests SET next_reminder_at = ? WHERE firm_id = ? AND id = ? AND next_reminder_at IS NOT NULL AND next_reminder_at <= ?")
-            .bind(nextReminder(at, req.deadline, c.get("firm").tz), firmId, req.id, at),
+            .bind(nextReminder(at, req.deadline, c.get("firm").tz, false), firmId, req.id, at),
         ]),
   ]);
   if (!res.meta.changes) {
@@ -442,11 +442,11 @@ requests.post("/requests/:id/link", async (c) => {
       .bind(randomId(), firm.id, now, userId, req.id, firm.id, req.id),
     db
       .prepare(
-        `UPDATE requests SET status = CASE WHEN status = 'draft' THEN 'open' ELSE status END, sent_at = ?, firm_name = ?,
+        `UPDATE requests SET status = CASE WHEN status = 'draft' THEN 'open' ELSE status END, sent_at = ?, firm_name = ?, tz = ?,
            next_reminder_at = CASE WHEN reminders_on = 1 THEN ? ELSE NULL END
          WHERE firm_id = ? AND id = ? AND status IN ('draft', 'open', 'complete') AND deleted_at IS NULL`,
       )
-      .bind(now, firm.name, nextReminder(now, req.deadline, firm.tz), firm.id, req.id),
+      .bind(now, firm.name, firm.tz, nextReminder(now, req.deadline, firm.tz, true), firm.id, req.id),
     syncStatus(db, firm.id, req.id),
   ]);
   if (!results[1].meta.changes) return refused(c);

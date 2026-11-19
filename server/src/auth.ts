@@ -209,7 +209,7 @@ auth.get("/me", async (c) => {
   const session = c.get("session");
   if (!session) return c.json({ error: "unauthorized" }, 401);
   const row = await c.env.CONTROL.prepare(
-    `SELECT u.id, u.email, u.name, u.role, f.id AS firm_id, f.name AS firm_name, f.plan_status, f.trial_ends_at
+    `SELECT u.id, u.email, u.name, u.role, f.id AS firm_id, f.name AS firm_name, f.tz, f.plan_status, f.trial_ends_at
      FROM users u JOIN firms f ON f.id = u.firm_id WHERE u.id = ?`,
   )
     .bind(session.userId)
@@ -220,12 +220,13 @@ auth.get("/me", async (c) => {
       role: string;
       firm_id: string;
       firm_name: string | null;
+      tz: string;
       plan_status: string;
       trial_ends_at: number | null;
     }>();
   if (!row) return c.json({ error: "unauthorized" }, 401);
   return c.json({
     user: { id: row.id, email: row.email, name: row.name, role: row.role },
-    firm: { id: row.firm_id, name: row.firm_name, plan_status: row.plan_status, trial_ends_at: row.trial_ends_at },
+    firm: { id: row.firm_id, name: row.firm_name, tz: row.tz, plan_status: row.plan_status, trial_ends_at: row.trial_ends_at },
   });
 });

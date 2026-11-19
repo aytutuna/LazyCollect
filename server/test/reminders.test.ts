@@ -62,34 +62,53 @@ describe("zones", () => {
 });
 
 describe("cadence", () => {
-  it("waits three days after an invite far from the deadline", () => {
+  it("waits three days after the link far from the deadline", () => {
     const sent = at(2026, 12, 1, 14, 23);
-    expect(nextReminder(sent, DEADLINE, TZ)).toBe(sent + 3 * DAY);
+    expect(nextReminder(sent, DEADLINE, TZ, true)).toBe(sent + 3 * DAY);
   });
 
-  it("steps through 7, 3, 1 and 0 days before the deadline and ends with the note", () => {
+  it("goes weekly, then two days before the deadline and on its morning, and ends with the note", () => {
     const steps: number[] = [];
     let t = at(2027, 1, 5, 10, 5);
-    for (let i = 0; i < 8; i++) {
-      t = nextReminder(t, DEADLINE, TZ);
+    for (let i = 0; i < 4; i++) {
+      t = nextReminder(t, DEADLINE, TZ, false);
       steps.push(t);
     }
-    expect(steps).toEqual([
-      at(2027, 1, 8, 10, 5),
-      at(2027, 1, 11, 10, 5),
-      at(2027, 1, 13, 9),
-      at(2027, 1, 16, 9),
-      at(2027, 1, 17, 9),
-      at(2027, 1, 19, 9),
-      at(2027, 1, 20, 9),
-      at(2027, 1, 21, 9),
-    ]);
+    expect(steps).toEqual([at(2027, 1, 12, 10, 5), at(2027, 1, 18, 9), at(2027, 1, 20, 9), at(2027, 1, 21, 9)]);
+  });
+
+  it("drops a fixed reminder that would follow another within 36 hours", () => {
+    expect(nextReminder(at(2027, 1, 17, 10), DEADLINE, TZ, false)).toBe(at(2027, 1, 20, 9));
+    expect(nextReminder(at(2027, 1, 19, 10), DEADLINE, TZ, false)).toBe(at(2027, 1, 21, 9));
   });
 
   it("never picks the same day twice", () => {
-    const after = at(2027, 1, 13, 9, 30);
-    const next = nextReminder(after, DEADLINE, TZ);
+    const after = at(2027, 1, 18, 9, 30);
+    const next = nextReminder(after, DEADLINE, TZ, false);
     expect(dayOf(next, TZ)).not.toEqual(dayOf(after, TZ));
+  });
+
+  // every email a client gets for one request: the reminders and the closing note
+  function schedule(days: number) {
+    const due = at(2027, 3, 1 + days, 23, 59);
+    const link = at(2027, 3, 1, 10);
+    const sends: number[] = [];
+    let t = nextReminder(link, due, TZ, true);
+    for (;;) {
+      sends.push(t);
+      if (t > due) return sends;
+      t = nextReminder(t, due, TZ, false);
+    }
+  }
+
+  it("sends 5 emails for a 14 day request and 7 for a 30 day one", () => {
+    expect(schedule(14)).toHaveLength(5);
+    expect(schedule(30)).toHaveLength(7);
+    for (const days of [14, 30]) {
+      const gaps = schedule(days).slice(1).map((t, i) => t - schedule(days)[i]);
+      // 36 hours apart, except the closing note which follows the deadline morning
+      expect(gaps.slice(0, -1).every((g) => g >= 36 * HOUR)).toBe(true);
+    }
   });
 });
 
@@ -219,7 +238,7 @@ describe("reminders", () => {
 
     const row = await requestRow(req.id);
     expect(row.reminder_seq).toBe(1);
-    expect(row.next_reminder_at).toBe(at(2027, 1, 8, 10, 5));
+    expect(row.next_reminder_at).toBe(at(2027, 1, 12, 10, 5));
     const logged = (await messages()).filter((m) => m.kind === "reminder");
     expect(logged).toHaveLength(1);
     expect(logged[0]).toMatchObject({ seq: 1, status: "sent" });
@@ -258,7 +277,7 @@ describe("reminders", () => {
     await runReminders(env, at(2027, 1, 5, 10, 5));
     await pin(req.id, at(2027, 1, 5, 10), 0);
     await runReminders(env, at(2027, 1, 5, 10, 15));
-    await runReminders(env, at(2027, 1, 6, 9, 5));
+    await runReminders(env, at(2027, 1, 7, 9, 5));
     expect(sent).toHaveLength(1);
     expect((await requestRow(req.id)).reminder_seq).toBe(1);
   });
@@ -282,7 +301,7 @@ describe("reminders", () => {
     expect(sent).toHaveLength(1);
   });
 
-  it("sends a client at most one reminder a day across requests", async () => {
+  it("sends a client at most one reminder in 36 hours across requests", async () => {
     const { cookie, client, req } = await ready();
     const second = await (
       await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "Second", deadline: Date.now() + 400 * DAY, items: [{ label: "ID", required: true }] } })
@@ -295,8 +314,10 @@ describe("reminders", () => {
     sent.length = 0;
     await runReminders(env, at(2027, 1, 5, 11));
     expect(sent).toHaveLength(1);
-    expect((await requestRow(second.id)).next_reminder_at).toBe(at(2027, 1, 6, 9));
+    expect((await requestRow(second.id)).next_reminder_at).toBe(at(2027, 1, 7, 9));
     await runReminders(env, at(2027, 1, 6, 9, 5));
+    expect(sent).toHaveLength(1);
+    await runReminders(env, at(2027, 1, 7, 9, 5));
     expect(sent).toHaveLength(2);
   });
 
@@ -357,7 +378,7 @@ describe("reminders", () => {
     mockOutbound();
     await invite(cookie, req.id);
     await pin(req.id, at(2027, 1, 5, 10));
-    mockOutbound(true, false);
+    mockOutbound(true, 422);
     for (const min of [5, 15, 25]) await runReminders(env, at(2027, 1, 5, 10, min));
     let row = (await messages()).find((m) => m.kind === "reminder");
     expect(row).toMatchObject({ status: "failed", attempts: 3 });
@@ -375,11 +396,46 @@ describe("reminders", () => {
     await pin(req.id, at(2027, 1, 5, 10));
     await env.DB_NA.prepare(
       "INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at) SELECT lower(hex(randomblob(16))), firm_id, id, client_id, 'email', 'reminder', 1, 1, 'x', 'sending', 3, ? FROM requests",
-    ).bind(at(2027, 1, 4, 8)).run();
+    ).bind(at(2027, 1, 1, 8)).run();
     sent.length = 0;
     await runReminders(env, at(2027, 1, 5, 10, 5));
     expect(sent).toHaveLength(0);
     expect((await requestRow(req.id)).reminder_seq).toBe(1);
+  });
+
+  it("does not count a busy provider against the attempts and pauses the pass", async () => {
+    const { cookie, client, req } = await ready();
+    const second = await (
+      await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "Second", deadline: Date.now() + 400 * DAY, items: [{ label: "ID", required: true }] } })
+    ).json<any>();
+    mockOutbound();
+    await invite(cookie, req.id);
+    await invite(cookie, second.id);
+    await pin(req.id, at(2027, 1, 5, 10));
+    await pin(second.id, at(2027, 1, 5, 10, 1));
+    for (const status of [429, 503]) {
+      mockOutbound(true, status);
+      for (const min of [5, 15, 25, 35]) await runReminders(env, at(2027, 1, 5, 10, min));
+    }
+    const rows = (await messages()).filter((m) => m.kind === "reminder");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "failed", attempts: 0 });
+    expect((await requestRow(req.id)).reminder_seq).toBe(0);
+    const sent = mockOutbound();
+    await runReminders(env, at(2027, 1, 5, 10, 45));
+    expect(sent).toHaveLength(1);
+  });
+
+  it("leaves a pre-M4 link alone when the client has no email", async () => {
+    const { cookie, client, req } = await ready();
+    mockOutbound();
+    await invite(cookie, req.id, {});
+    await env.DB_NA.prepare("UPDATE links SET token_enc = NULL").run();
+    await api(`/api/clients/${client.id}`, { method: "PATCH", cookie, body: { email: "" } });
+    await pin(req.id, at(2027, 1, 5, 10));
+    await runReminders(env, at(2027, 1, 5, 10, 5));
+    const links = await env.DB_NA.prepare("SELECT revoked_at FROM links").all<any>();
+    expect(links.results).toEqual([{ revoked_at: null }]);
   });
 
   it("recovers a failed send on the next run", async () => {
@@ -387,7 +443,7 @@ describe("reminders", () => {
     mockOutbound();
     await invite(cookie, req.id);
     await pin(req.id, at(2027, 1, 5, 10));
-    mockOutbound(true, false);
+    mockOutbound(true, 422);
     await runReminders(env, at(2027, 1, 5, 10, 5));
     const sent = mockOutbound();
     await runReminders(env, at(2027, 1, 5, 10, 15));
@@ -546,6 +602,34 @@ describe("upload notice to the account", () => {
     expect(notices(sent)[1].subject).toBe("Amy uploaded 1 document to 2025 taxes");
     await runReminders(env, now + 3 * HOUR);
     expect(notices(sent)).toHaveLength(2);
+  });
+});
+
+describe("upload notice failures", () => {
+  it("gives up after three failed tries", async () => {
+    const o = await openRequest();
+    await upload(o.path, o.req.items[0].id, pdf(500));
+    mockOutbound(true, 422);
+    const now = Date.now();
+    for (const min of [0, 10, 20, 30]) await runReminders(env, now + min * MINUTE);
+    const row = await requestRow(o.req.id);
+    expect(row.notice_due_at).toBeNull();
+    expect(row.notice_tries).toBe(0);
+    const sent = mockOutbound();
+    await runReminders(env, now + 3 * HOUR);
+    expect(sent).toHaveLength(0);
+  });
+});
+
+describe("request time zone", () => {
+  it("shows the client page the zone the link was made in", async () => {
+    const { cookie, req } = await ready();
+    mockOutbound();
+    await api("/api/firm", { method: "PATCH", cookie, body: { tz: "America/Vancouver" } });
+    const { url } = await (await invite(cookie, req.id, {})).json<any>();
+    const view = await (await api(`/api/c/${url.split("/c/")[1]}`)).json<any>();
+    expect(view.tz).toBe("America/Vancouver");
+    expect((await (await api("/api/me", { cookie })).json<any>()).firm.tz).toBe("America/Vancouver");
   });
 });
 

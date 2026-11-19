@@ -1,4 +1,4 @@
-import { escapeHtml, sendMail } from "./email";
+import { Transient, escapeHtml, sendMail } from "./email";
 import { isRegion, type Region } from "./regions";
 import { MINUTE, hmac, randomId, sha256 } from "./util";
 
@@ -102,7 +102,7 @@ ${p(`${escapeHtml(why)} <a href="${escapeHtml(l.unsubUrl)}" style="color:#666666
   return { subject, text, html };
 }
 
-export type Outcome = "sent" | "failed" | "done" | "busy" | "gave_up";
+export type Outcome = "sent" | "failed" | "later" | "done" | "busy" | "gave_up";
 
 type Slot = { db: D1Database; firmId: string; requestId: string; clientId: string; kind: Kind; seq: number | null };
 
@@ -172,8 +172,13 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
   } catch (e) {
     const error = e instanceof Error ? e.message : "error";
     console.error(error);
-    await db.prepare("UPDATE messages SET status = 'failed', error = ? WHERE id = ?").bind(error.slice(0, 200), messageId).run();
-    return { outcome: "failed", seq: seq! };
+    // a busy provider does not use up one of the attempts
+    const later = e instanceof Transient;
+    await db
+      .prepare("UPDATE messages SET status = 'failed', error = ?, attempts = attempts - ? WHERE id = ?")
+      .bind(error.slice(0, 200), later ? 1 : 0, messageId)
+      .run();
+    return { outcome: later ? "later" : "failed", seq: seq! };
   }
 }
 

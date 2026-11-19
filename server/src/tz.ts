@@ -1,4 +1,4 @@
-import { DAY } from "./util";
+import { DAY, HOUR } from "./util";
 
 const formats = new Map<string, Intl.DateTimeFormat>();
 
@@ -63,18 +63,21 @@ export function nextOpening(ms: number, tz: string): number {
   return t > ms ? t : atHour(addDays(today, 1), QUIET_START, tz);
 }
 
-const EVERY = 3 * DAY;
-const COUNTDOWN = [7, 3, 1, 0];
+const FIRST = 3 * DAY;
+const EVERY = 7 * DAY;
+export const SPACING = 36 * HOUR;
+const COUNTDOWN = [2, 0];
 
-// the regular cadence, pulled forward to 7, 3 and 1 days before the deadline and on the day, and ending with the note the day after it
-export function nextReminder(after: number, deadline: number, tz: string): number {
+// Three days after the link, then weekly, with one reminder two days before the deadline and one on its morning, and the note the day after it.
+// `first` is true when `after` is the link going out rather than a reminder; a fixed reminder that would land within 36 hours of the last one is dropped.
+export function nextReminder(after: number, deadline: number, tz: string, first: boolean): number {
   const last = dayOf(deadline, tz);
   const today = dayOf(after, tz);
-  const candidates = [after + EVERY];
+  const candidates = [after + (first ? FIRST : EVERY)];
   for (const n of COUNTDOWN) {
     const day = addDays(last, -n);
     const t = atHour(day, QUIET_START, tz);
-    if (t > after && !sameDay(day, today)) candidates.push(t);
+    if (t > after && !sameDay(day, today) && (first || t - after >= SPACING)) candidates.push(t);
   }
   const before = candidates.filter((t) => t < deadline);
   return before.length ? Math.min(...before) : atHour(addDays(last, 1), QUIET_START, tz);

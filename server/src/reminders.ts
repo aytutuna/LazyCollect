@@ -3,8 +3,10 @@ import { usable } from "./firm";
 import { linkUrl } from "./links";
 import { deliver, unsubUrl, type Missing } from "./mail";
 import { regionIds, regionOf, type Region } from "./regions";
-import { atHour, dayOf, inHours, nextOpening, nextReminder } from "./tz";
+import { SPACING, dayOf, inHours, nextOpening, nextReminder, sameDay } from "./tz";
 import { DAY, HOUR, MINUTE } from "./util";
+
+const MAX_NOTICE_TRIES = 3;
 
 const BATCH = 100;
 const REJECT_QUIET = 10 * MINUTE;
@@ -100,7 +102,9 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
     .all<Row>();
   const senders = await sendersOf(env, region, results.map((r) => r.firm_id));
 
+  let busy = false;
   await each(results, async (r) => {
+    if (busy) return;
     const sender = senders.get(r.firm_id);
     const move = (to: number | null) =>
       db.prepare("UPDATE requests SET next_reminder_at = ? WHERE firm_id = ? AND id = ? AND reminder_seq = ?").bind(to, r.firm_id, r.id, r.seq).run();
@@ -109,17 +113,22 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
     if (!reachable(r) || !canSend(sender, now)) return move(now + DAY);
     const tz = sender.tz;
     if (!inHours(now, tz)) return move(nextOpening(now, tz));
-    const today = await db
-      .prepare(
-        `SELECT 1 FROM messages WHERE firm_id = ? AND client_id = ? AND kind IN ('reminder', 'deadline') AND status IN ('sent', 'sending') AND sent_at >= ? LIMIT 1`,
-      )
-      .bind(r.firm_id, r.client_id, atHour(dayOf(now, tz), 0, tz))
-      .first();
-    if (today) return move(nextOpening(now, tz));
+    // a client hears from us at most once in 36 hours; the note after the deadline closes things out, and the deadline morning may follow the reminder two days before
+    const kind = now >= r.deadline ? "deadline" : "reminder";
+    if (kind === "reminder") {
+      const recent = await db
+        .prepare(
+          `SELECT request_id, sent_at FROM messages WHERE firm_id = ? AND client_id = ? AND kind IN ('reminder', 'deadline') AND status IN ('sent', 'sending') AND sent_at > ?
+           ORDER BY sent_at DESC LIMIT 1`,
+        )
+        .bind(r.firm_id, r.client_id, now - SPACING)
+        .first<{ request_id: string; sent_at: number }>();
+      const morning = sameDay(dayOf(now, tz), dayOf(r.deadline, tz));
+      if (recent && !(recent.request_id === r.id && morning)) return move(nextOpening(recent.sent_at + SPACING - 1, tz));
+    }
 
     const items = await missingItems(db, r.firm_id, r.id, false);
     if (!items.length) return move(null);
-    const kind = now >= r.deadline ? "deadline" : "reminder";
     const slot = { db, firmId: r.firm_id, requestId: r.id, clientId: r.client_id, kind, seq: r.seq + 1 } as const;
     const { outcome } = await deliver(
       env,
@@ -141,10 +150,11 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
       },
       now,
     );
-    if (outcome === "failed" || outcome === "busy") return;
+    if (outcome === "later") busy = true;
+    if (outcome === "failed" || outcome === "busy" || outcome === "later") return;
     await db
       .prepare("UPDATE requests SET reminder_seq = ?, next_reminder_at = ? WHERE firm_id = ? AND id = ? AND reminder_seq = ?")
-      .bind(r.seq + 1, kind === "deadline" ? null : nextReminder(now, r.deadline, tz), r.firm_id, r.id, r.seq)
+      .bind(r.seq + 1, kind === "deadline" ? null : nextReminder(now, r.deadline, tz, false), r.firm_id, r.id, r.seq)
       .run();
   });
 }
@@ -160,7 +170,9 @@ async function rejectedPass(env: Env, region: Region, db: D1Database, now: numbe
     .all<Row & { status: string }>();
   const senders = await sendersOf(env, region, results.map((r) => r.firm_id));
 
+  let busy = false;
   await each(results, async (r) => {
+    if (busy) return;
     const sender = senders.get(r.firm_id);
     const clear = () =>
       db.prepare("UPDATE requests SET reject_mark_at = NULL WHERE firm_id = ? AND id = ? AND reject_mark_at = ?").bind(r.firm_id, r.id, r.mark).run();
@@ -188,7 +200,8 @@ async function rejectedPass(env: Env, region: Region, db: D1Database, now: numbe
       },
       now,
     );
-    if (outcome === "failed" || outcome === "busy") return;
+    if (outcome === "later") busy = true;
+    if (outcome === "failed" || outcome === "busy" || outcome === "later") return;
     await db
       .prepare(
         `UPDATE requests SET rejected_seq = ?, reject_mark_at = CASE WHEN reject_mark_at = ? THEN NULL ELSE reject_mark_at END
@@ -203,14 +216,14 @@ async function rejectedPass(env: Env, region: Region, db: D1Database, now: numbe
 async function noticePass(env: Env, db: D1Database, now: number) {
   const { results } = await db
     .prepare(
-      `SELECT r.id, r.firm_id, r.title, r.notified_at, r.notice_due_at AS due, c.name AS client_name,
+      `SELECT r.id, r.firm_id, r.title, r.notified_at, r.notice_due_at AS due, r.notice_tries AS tries, c.name AS client_name,
          (SELECT COUNT(*) FROM files f WHERE f.firm_id = r.firm_id AND f.request_id = r.id AND f.uploaded_by = 'client'
            AND f.state = 'live' AND f.deleted_at IS NULL AND f.uploaded_at > COALESCE(r.notified_at, 0)) AS n
        ${JOIN} WHERE r.notice_due_at IS NOT NULL AND (r.notified_at IS NULL OR r.notified_at <= ?) AND r.deleted_at IS NULL
        ORDER BY r.notice_due_at LIMIT ${BATCH}`,
     )
     .bind(now - HOUR)
-    .all<{ id: string; firm_id: string; title: string; notified_at: number | null; due: number; client_name: string; n: number }>();
+    .all<{ id: string; firm_id: string; title: string; notified_at: number | null; due: number; tries: number; client_name: string; n: number }>();
   const owners = await ownersOf(env, results.map((r) => r.firm_id));
 
   await each(results, async (r) => {
@@ -229,11 +242,13 @@ async function noticePass(env: Env, db: D1Database, now: number) {
         text: `${what}.\n\nOpen it here:\n${env.APP_URL}/requests/${r.id}\n`,
       });
     } catch (e) {
-      console.error(e instanceof Error ? e.message : "error");
-      // put the note back so the next run tries again
+      const tries = r.tries + 1;
+      const spent = tries >= MAX_NOTICE_TRIES;
+      console.error(`owner notice ${tries}/${MAX_NOTICE_TRIES} failed: ${e instanceof Error ? e.message : "error"}`);
+      // put the note back so the next run tries again, until the tries are used up
       await db
-        .prepare("UPDATE requests SET notified_at = ?, notice_due_at = COALESCE(notice_due_at, ?) WHERE firm_id = ? AND id = ?")
-        .bind(r.notified_at, r.due, r.firm_id, r.id)
+        .prepare("UPDATE requests SET notified_at = ?, notice_due_at = ?, notice_tries = ? WHERE firm_id = ? AND id = ?")
+        .bind(spent ? now : r.notified_at, spent ? null : r.due, spent ? 0 : tries, r.firm_id, r.id)
         .run();
     }
   });

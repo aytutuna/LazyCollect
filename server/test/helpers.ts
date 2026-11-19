@@ -5,14 +5,15 @@ import { DAY } from "../src/util";
 
 export type Sent = { from: string; to: string[]; reply_to?: string; subject: string; text: string; html: string; headers?: Record<string, string> };
 
-export function mockOutbound(turnstileOk = true, resendOk = true) {
+// resendOk false answers 500; a number answers with that status
+export function mockOutbound(turnstileOk = true, resendOk: boolean | number = true) {
   const sent: Sent[] = [];
   const real = globalThis.fetch;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url.startsWith("https://turnstile.test/")) return Response.json({ success: turnstileOk });
     if (url.startsWith("https://resend.test/")) {
-      if (!resendOk) return new Response("nope", { status: 500 });
+      if (resendOk !== true) return new Response("nope", { status: resendOk === false ? 500 : resendOk });
       sent.push(JSON.parse(String(init?.body)));
       return Response.json({ id: "email_1" });
     }
