@@ -9,7 +9,8 @@ ALTER TABLE clients ADD COLUMN email_stop_at INTEGER;
 ALTER TABLE links ADD COLUMN token_enc TEXT;
 
 -- requests that were already open start the cadence from their invite
-UPDATE requests SET next_reminder_at = sent_at + 259200000 WHERE status = 'open' AND sent_at IS NOT NULL AND deleted_at IS NULL;
+UPDATE requests SET next_reminder_at = sent_at + 259200000 WHERE status = 'open' AND sent_at IS NOT NULL AND deleted_at IS NULL
+  AND deadline > CAST(strftime('%s', 'now') AS INTEGER) * 1000;
 
 CREATE INDEX idx_requests_reminder ON requests (next_reminder_at) WHERE next_reminder_at IS NOT NULL;
 CREATE INDEX idx_requests_rejected ON requests (reject_mark_at) WHERE reject_mark_at IS NOT NULL;

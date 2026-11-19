@@ -138,6 +138,14 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
       .bind(hash, now, firmId, requestId, kind, slot.seq, now - STALE)
       .first<{ id: string }>();
     if (!retried) {
+      // a last attempt that never reported back is given up on, or its request would stay due forever
+      await db
+        .prepare(
+          `UPDATE messages SET status = 'failed', error = 'no result' WHERE firm_id = ? AND request_id = ? AND kind = ? AND seq = ? AND channel = 'email'
+           AND status = 'sending' AND attempts >= ${MAX_ATTEMPTS} AND sent_at < ?`,
+        )
+        .bind(firmId, requestId, kind, slot.seq, now - STALE)
+        .run();
       const row = await db
         .prepare("SELECT status FROM messages WHERE firm_id = ? AND request_id = ? AND kind = ? AND seq = ? AND channel = 'email'")
         .bind(firmId, requestId, kind, slot.seq)
@@ -156,6 +164,7 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
       subject,
       text,
       html,
+      idempotencyKey: `${firmId}:${requestId}:${kind}:${seq}`,
       headers: { "List-Unsubscribe": `<${l.unsubUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
     });
     await db.prepare("UPDATE messages SET status = 'sent', provider_id = ?, sent_at = ? WHERE id = ?").bind(providerId, now, messageId).run();

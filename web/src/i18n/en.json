@@ -56,6 +56,7 @@
   "error.plan": "Your free trial has ended. Billing is coming soon.",
   "error.address_needed": "Add your mailing address in Settings to email clients.",
   "error.client_email_needed": "This client needs an email address and your confirmation that you may contact them.",
+  "error.sender_needed": "This account has no owner who can receive replies, so it cannot send email yet.",
   "error.client_unsubscribed": "This client has asked not to get emails.",
   "error.deadline_passed": "The deadline has passed. Set a later deadline first.",
   "error.unauthorized": "Please sign in again.",

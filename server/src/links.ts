@@ -31,8 +31,11 @@ export async function mintLink(env: Env, db: D1Database, region: string, firmId:
   await db.batch([
     db.prepare("UPDATE links SET revoked_at = ? WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL").bind(now, firmId, requestId),
     db
-      .prepare("INSERT INTO links (token_hash, firm_id, request_id, expires_at, created_by, created_at, token_enc) VALUES (?, ?, ?, ?, 'system', ?, ?)")
-      .bind(await hmac(env.HASH_KEY, token.slice(region.length + 1)), firmId, requestId, deadline + LINK_GRACE, now, await sealToken(env, token)),
+      .prepare(
+        `INSERT INTO links (token_hash, firm_id, request_id, expires_at, created_by, created_at, token_enc)
+         SELECT ?, ?, ?, ?, 'system', ?, ? WHERE EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)`,
+      )
+      .bind(await hmac(env.HASH_KEY, token.slice(region.length + 1)), firmId, requestId, Math.max(deadline, now) + LINK_GRACE, now, await sealToken(env, token), firmId, requestId),
     db
       .prepare("INSERT INTO audit (id, firm_id, at, actor_type, action, object_type, object_id) VALUES (?, ?, ?, 'system', 'link.create', 'request', ?)")
       .bind(randomId(), firmId, now, requestId),

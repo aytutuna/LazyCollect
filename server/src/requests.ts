@@ -346,6 +346,10 @@ requests.post("/requests/:id/items/:itemId/review", async (c) => {
                AND EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status = 'rejected' AND reviewed_at = ?)`,
             )
             .bind(at, firmId, req.id, firmId, req.id, itemId, at),
+          // a request reopened by this rejection must not also get a stale reminder
+          db
+            .prepare("UPDATE requests SET next_reminder_at = ? WHERE firm_id = ? AND id = ? AND next_reminder_at IS NOT NULL AND next_reminder_at <= ?")
+            .bind(nextReminder(at, req.deadline, c.get("firm").tz), firmId, req.id, at),
         ]),
   ]);
   if (!res.meta.changes) {
@@ -412,6 +416,7 @@ requests.post("/requests/:id/link", async (c) => {
   let invitee: { name: string; email: string } | null = null;
   if (sendEmail) {
     if (!firm.address) return c.json({ error: "address_needed" }, 400);
+    if (![...(await sendersOf(c.env, firm.region as Region, [firm.id])).values()][0]?.owner_email) return c.json({ error: "sender_needed" }, 400);
     const client = await db
       .prepare("SELECT name, email, email_ok_at, email_stop_at FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
       .bind(firm.id, req.client_id)

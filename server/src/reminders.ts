@@ -104,8 +104,9 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
     const sender = senders.get(r.firm_id);
     const move = (to: number | null) =>
       db.prepare("UPDATE requests SET next_reminder_at = ? WHERE firm_id = ? AND id = ? AND reminder_seq = ?").bind(to, r.firm_id, r.id, r.seq).run();
-    if (!sender || !reachable(r)) return move(null);
-    if (!canSend(sender, now)) return move(now + DAY);
+    if (!sender || r.email_stop_at || r.client_deleted) return move(null);
+    // missing contact details can be fixed later, so the request stays in the cadence
+    if (!reachable(r) || !canSend(sender, now)) return move(now + DAY);
     const tz = sender.tz;
     if (!inHours(now, tz)) return move(nextOpening(now, tz));
     const today = await db
