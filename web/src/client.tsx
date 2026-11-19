@@ -4,7 +4,7 @@ import { ApiError, del, get, useAction, useLoad } from "./api";
 import { fmtDate, fmtSize, isLate, relative } from "./format";
 import { t } from "./i18n";
 import type { ClientItem, ClientView } from "./types";
-import { Badge, Check, ErrorNote, Loading } from "./ui";
+import { Badge, ErrorNote, Loading } from "./ui";
 import { MAX_SIZE, combineToPdf, prepareImage, sendFile, type Prepared } from "./upload";
 import "./styles.css";
 
@@ -18,7 +18,7 @@ type Job = { key: string; file: Prepared; uploadId: string; progress: number; fa
 function Uploads({ token, item, onChange }: { token: string; item: ClientItem; onChange: () => void }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [preparing, setPreparing] = useState(false);
-  const [combine, setCombine] = useState(true);
+  const [combined, setCombined] = useState(0);
   const camera = useRef<HTMLInputElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const removal = useAction();
@@ -45,6 +45,7 @@ function Uploads({ token, item, onChange }: { token: string; item: ClientItem; o
     input.value = "";
     if (!picked.length) return;
     setPreparing(true);
+    setCombined(0);
     let ready: Prepared[] = [];
     for (const file of picked) {
       ready.push(file.type.startsWith("image/") ? await prepareImage(file) : { blob: file, name: file.name, jpeg: false });
@@ -52,10 +53,13 @@ function Uploads({ token, item, onChange }: { token: string; item: ClientItem; o
     const photos = ready.filter((r) => r.jpeg);
     // a few kB per page covers the PDF structure; past the cap the photos go up separately
     const estimate = photos.reduce((sum, p) => sum + p.blob.size + 2048, 0);
-    if (combine && photos.length > 1 && estimate <= MAX_SIZE) {
+    if (photos.length > 1 && estimate <= MAX_SIZE) {
       try {
         const pdf = await combineToPdf(photos.map((p) => p.blob), item.label);
-        if (pdf.blob.size <= MAX_SIZE) ready = [...ready.filter((r) => !r.jpeg), pdf];
+        if (pdf.blob.size <= MAX_SIZE) {
+          ready = [...ready.filter((r) => !r.jpeg), pdf];
+          setCombined(photos.length);
+        }
       } catch {
         // the photos go up one by one instead
       }
@@ -114,6 +118,7 @@ function Uploads({ token, item, onChange }: { token: string; item: ClientItem; o
         </div>
       ))}
       {preparing && <p class="muted">{t("client.preparing")}</p>}
+      {combined > 0 && <p class="muted">{t("client.combined", { n: combined })}</p>}
       <ErrorNote error={removal.error} />
       {open && (
         <>
@@ -125,7 +130,6 @@ function Uploads({ token, item, onChange }: { token: string; item: ClientItem; o
               {t("client.choose_file")}
             </button>
           </div>
-          <Check label={t("client.combine")} checked={combine} onChange={setCombine} />
           <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={(e) => pick(e.currentTarget)} />
           <input ref={picker} type="file" accept="image/*,application/pdf" multiple hidden onChange={(e) => pick(e.currentTarget)} />
         </>
