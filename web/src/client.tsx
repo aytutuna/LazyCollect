@@ -1,7 +1,7 @@
 import { render } from "preact";
 import { useRef, useState } from "preact/hooks";
 import { ApiError, del, get, useAction, useLoad } from "./api";
-import { fmtDate, fmtSize, isLate, relative } from "./format";
+import { fmtDate, fmtSize, isLate, relative, setZone } from "./format";
 import { t } from "./i18n";
 import type { ClientItem, ClientView } from "./types";
 import { Badge, ErrorNote, Loading } from "./ui";
@@ -178,6 +178,7 @@ function Page() {
     );
   }
   if (!data) return <Loading />;
+  setZone(data.tz);
 
   const optional = data.items.filter((i) => !i.required);
   const received = data.items.filter((i) => i.status === "submitted" || i.status === "approved").length;

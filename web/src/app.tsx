@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { Link, Route, Switch, useRoute } from "wouter-preact";
 import { ApiError, get, onApiEvents, post } from "./api";
+import { setZone } from "./format";
 import { t } from "./i18n";
 import { Clients } from "./screens/clients";
 import { FirmSetup, Settings } from "./screens/firm";
@@ -30,7 +31,9 @@ export function App() {
   // a 401 is handled by the unauthorized hook; anything else is thrown to the caller
   async function loadMe() {
     try {
-      setMe(await get<Me>("/me"));
+      const found = await get<Me>("/me");
+      setZone(found.firm.tz);
+      setMe(found);
     } catch (e) {
       if (!(e instanceof ApiError && e.status === 401)) throw e;
     }

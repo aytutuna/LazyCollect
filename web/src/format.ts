@@ -1,16 +1,30 @@
 import { t } from "./i18n";
 
-const dateFmt = new Intl.DateTimeFormat("en-CA", { dateStyle: "medium" });
+// Dates mean the account's time zone, not the browser's: a deadline is 23:59 there.
+let zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-export const fmtDate = (ms: number) => dateFmt.format(ms);
+export function setZone(tz: string) {
+  zone = tz;
+}
 
-const startOfDay = (ms: number) => {
-  const d = new Date(ms);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+const wall = (ms: number) => {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", { timeZone: zone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric" })
+      .formatToParts(ms)
+      .map((x) => [x.type, Number(x.value)]),
+  );
+  return { y: p.year, m: p.month, d: p.day, h: p.hour, min: p.minute };
+};
+
+export const fmtDate = (ms: number) => new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeZone: zone }).format(ms);
+
+const dayNumber = (ms: number) => {
+  const w = wall(ms);
+  return Date.UTC(w.y, w.m - 1, w.d) / 86_400_000;
 };
 
 export function relative(ms: number): string {
-  const days = Math.round((startOfDay(ms) - startOfDay(Date.now())) / 86_400_000);
+  const days = dayNumber(ms) - dayNumber(Date.now());
   if (days === 0) return t("rel.today");
   if (days === 1) return t("rel.tomorrow");
   if (days === -1) return t("rel.yesterday");
@@ -20,14 +34,20 @@ export function relative(ms: number): string {
 export const isLate = (ms: number) => ms < Date.now();
 
 export function toInput(ms: number): string {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const w = wall(ms);
+  return `${w.y}-${String(w.m).padStart(2, "0")}-${String(w.d).padStart(2, "0")}`;
 }
 
-// the whole deadline day counts, so it ends at 23:59 local time
+// the whole deadline day counts, so it ends at 23:59 in the account's zone
 export function fromInput(s: string): number {
   const [y, m, d] = s.split("-").map(Number);
-  return new Date(y, m - 1, d, 23, 59, 0).getTime();
+  const target = Date.UTC(y, m - 1, d, 23, 59);
+  const offset = (t: number) => {
+    const w = wall(t);
+    return Date.UTC(w.y, w.m - 1, w.d, w.h, w.min) - t;
+  };
+  const first = target - offset(target);
+  return target - offset(first);
 }
 
 export const inDays = (n: number) => Date.now() + n * 86_400_000;

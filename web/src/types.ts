@@ -1,6 +1,6 @@
 export type Me = {
   user: { id: string; email: string; name: string | null; role: "owner" | "member" };
-  firm: { id: string; name: string | null; plan_status: string; trial_ends_at: number | null };
+  firm: { id: string; name: string | null; tz: string; plan_status: string; trial_ends_at: number | null };
 };
 
 export type Firm = {
@@ -77,6 +77,7 @@ export type ClientItem = Omit<Item, "position"> & { files: Omit<FileRow, "mime">
 
 export type ClientView = {
   firm_name: string;
+  tz: string;
   title: string;
   note: string | null;
   deadline: number;
