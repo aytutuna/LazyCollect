@@ -7,7 +7,7 @@ import { blank, invalid, locale, maybe, notFound, readBody, setClause, text } fr
 
 export const clients = new Hono<AppEnv>();
 
-const COLS = "id, name, email, phone, locale, email_ok_at, sms_ok_at, consent_by, created_at";
+const COLS = "id, name, email, phone, locale, email_ok_at, email_stop_at, sms_ok_at, consent_by, created_at";
 const PHONE_RE = /^[\d\s()+.-]{7,40}$/;
 
 const CHANNELS = [["email_ok_at", "email"], ["sms_ok_at", "sms"]] as const;
