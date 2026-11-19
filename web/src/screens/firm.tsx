@@ -13,6 +13,7 @@ function FirmForm({ firm, canEdit, onSaved }: { firm: Firm; canEdit: boolean; on
   const [address, setAddress] = useState(firm.address ?? "");
   const [phone, setPhone] = useState(firm.phone ?? "");
   const [province, setProvince] = useState(firm.province ?? "");
+  const hasBusiness = Boolean(firm.legal_name || firm.address || firm.phone || firm.province);
   const [saved, setSaved] = useState(false);
   const { busy, error, run } = useAction();
 
@@ -33,23 +34,26 @@ function FirmForm({ firm, canEdit, onSaved }: { firm: Firm; canEdit: boolean; on
         <Field label={t("firm.name")} hint={t("firm.name_hint")}>
           <input required maxLength={120} value={name} onInput={(e) => setName(e.currentTarget.value)} />
         </Field>
-        <Field label={t("firm.legal")} hint={t("firm.legal_hint")}>
-          <input maxLength={160} value={legal} onInput={(e) => setLegal(e.currentTarget.value)} />
-        </Field>
-        <Field label={t("firm.address")}>
-          <textarea rows={3} maxLength={300} value={address} onInput={(e) => setAddress(e.currentTarget.value)} />
-        </Field>
-        <Field label={t("firm.phone")}>
-          <input type="tel" maxLength={40} value={phone} onInput={(e) => setPhone(e.currentTarget.value)} />
-        </Field>
-        <Field label={t("firm.province")}>
-          <select value={province} onChange={(e) => setProvince(e.currentTarget.value)}>
-            <option value="">{t("firm.province_none")}</option>
-            {PROVINCES.map((p) => (
-              <option value={p}>{t(`province.${p}`)}</option>
-            ))}
-          </select>
-        </Field>
+        <details class="business" open={hasBusiness}>
+          <summary>{t("firm.business")}</summary>
+          <Field label={t("firm.legal")} hint={t("firm.legal_hint")}>
+            <input maxLength={160} value={legal} onInput={(e) => setLegal(e.currentTarget.value)} />
+          </Field>
+          <Field label={t("firm.address")}>
+            <textarea rows={3} maxLength={300} value={address} onInput={(e) => setAddress(e.currentTarget.value)} />
+          </Field>
+          <Field label={t("firm.phone")}>
+            <input type="tel" maxLength={40} value={phone} onInput={(e) => setPhone(e.currentTarget.value)} />
+          </Field>
+          <Field label={t("firm.province")}>
+            <select value={province} onChange={(e) => setProvince(e.currentTarget.value)}>
+              <option value="">{t("firm.province_none")}</option>
+              {PROVINCES.map((p) => (
+                <option value={p}>{t(`province.${p}`)}</option>
+              ))}
+            </select>
+          </Field>
+        </details>
       </fieldset>
       <ErrorNote error={error} />
       {saved && <p class="ok">{t("saved")}</p>}
