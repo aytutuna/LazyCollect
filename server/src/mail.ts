@@ -158,7 +158,7 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
       html,
       headers: { "List-Unsubscribe": `<${l.unsubUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
     });
-    await db.prepare("UPDATE messages SET status = 'sent', provider_id = ?, sent_at = ? WHERE id = ?").bind(providerId, Date.now(), messageId).run();
+    await db.prepare("UPDATE messages SET status = 'sent', provider_id = ?, sent_at = ? WHERE id = ?").bind(providerId, now, messageId).run();
     return { outcome: "sent", seq: seq! };
   } catch (e) {
     const error = e instanceof Error ? e.message : "error";

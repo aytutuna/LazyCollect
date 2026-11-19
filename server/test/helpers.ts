@@ -3,7 +3,7 @@ import { exports } from "cloudflare:workers";
 import { vi } from "vitest";
 import { DAY } from "../src/util";
 
-export type Sent = { to: string[]; subject: string; text: string; html: string };
+export type Sent = { from: string; to: string[]; reply_to?: string; subject: string; text: string; html: string; headers?: Record<string, string> };
 
 export function mockOutbound(turnstileOk = true, resendOk = true) {
   const sent: Sent[] = [];
