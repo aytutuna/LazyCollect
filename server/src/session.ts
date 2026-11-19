@@ -10,6 +10,7 @@ export type Firm = {
   address: string | null;
   phone: string | null;
   province: string | null;
+  tz: string;
   region: string;
   plan_status: string;
   trial_ends_at: number | null;

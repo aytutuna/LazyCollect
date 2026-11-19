@@ -2,13 +2,14 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { audit } from "./audit";
 import { isRegion, regionOf } from "./regions";
 import type { AppEnv, Firm } from "./session";
+import { validZone } from "./tz";
 import { invalid, maybe, readBody, setClause, text } from "./validate";
 
 export const firm = new Hono<AppEnv>();
 
 const PROVINCES = ["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"];
 
-export function usable(f: Firm, now: number): boolean {
+export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at">, now: number): boolean {
   return f.plan_status === "active" || (f.plan_status === "trialing" && f.trial_ends_at !== null && f.trial_ends_at > now);
 }
 
@@ -16,7 +17,7 @@ export const loadFirm: MiddlewareHandler<AppEnv> = async (c, next) => {
   const session = c.get("session");
   if (!session) return c.json({ error: "unauthorized" }, 401);
   const row = await c.env.CONTROL.prepare(
-    "SELECT id, name, legal_name, address, phone, province, region, plan_status, trial_ends_at FROM firms WHERE id = ?",
+    "SELECT id, name, legal_name, address, phone, province, tz, region, plan_status, trial_ends_at FROM firms WHERE id = ?",
   )
     .bind(session.firmId)
     .first<Firm>();
@@ -54,6 +55,10 @@ firm.patch("/firm", async (c) => {
     const p = body.province === null || body.province === "" ? null : body.province;
     if (p !== null && !PROVINCES.includes(p as string)) return invalid(c);
     fields.province = p as string | null;
+  }
+  if ("tz" in body) {
+    if (typeof body.tz !== "string" || !validZone(body.tz)) return invalid(c);
+    fields.tz = body.tz;
   }
   if (!Object.keys(fields).length) return invalid(c);
   const set = setClause(fields);

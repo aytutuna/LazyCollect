@@ -1,6 +1,6 @@
 import { FETCH_TIMEOUT_MS } from "./util";
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -32,4 +32,24 @@ export async function sendLoginEmail(env: Env, to: string, code: string, link: s
     throw new Error(`login email request failed: ${e instanceof Error ? e.name : "error"}`);
   }
   if (!res.ok) throw new Error(`login email rejected: HTTP ${res.status}`);
+}
+
+export type Outgoing = { from: string; to: string; replyTo?: string; subject: string; text: string; html?: string; headers?: Record<string, string> };
+
+// resolves to the provider's id for the message
+export async function sendMail(env: Env, m: Outgoing): Promise<string | null> {
+  let res: Response;
+  try {
+    res = await fetch(`${env.RESEND_BASE ?? "https://api.resend.com"}/emails`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ from: m.from, to: [m.to], reply_to: m.replyTo, subject: m.subject, text: m.text, html: m.html, headers: m.headers }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch (e) {
+    throw new Error(`email request failed: ${e instanceof Error ? e.name : "error"}`);
+  }
+  if (!res.ok) throw new Error(`email rejected: HTTP ${res.status}`);
+  const body = await res.json<{ id?: string }>().catch(() => null);
+  return body?.id ?? null;
 }
