@@ -5,11 +5,13 @@ import { clients } from "./clients";
 import { exportZip } from "./export";
 import { files } from "./files";
 import { firm, loadFirm } from "./firm";
+import { purgeExpired } from "./purge";
 import { requests } from "./requests";
 import { retention } from "./retention";
 import { runReminders } from "./reminders";
 import { sweepFiles } from "./sweep";
 import { templates } from "./templates";
+import { trash } from "./trash";
 import { unsubscribe } from "./unsubscribe";
 import { uploads } from "./upload";
 import { csrf } from "./csrf";
@@ -36,6 +38,7 @@ app.route("/api", client);
 app.route("/api", uploads);
 app.use("/api/firm", loadFirm);
 app.use("/api/retention", loadFirm);
+app.use("/api/trash", loadFirm);
 app.use("/api/clients/*", loadFirm);
 app.use("/api/templates/*", loadFirm);
 app.use("/api/requests/*", loadFirm);
@@ -46,6 +49,7 @@ app.route("/api", templates);
 app.route("/api", requests);
 app.route("/api", exportZip);
 app.route("/api", retention);
+app.route("/api", trash);
 app.route("/api", files);
 
 app.route("/u", unsubscribe);
@@ -66,6 +70,7 @@ export default {
       env.CONTROL.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
     ]);
     await sweepFiles(env, now);
+    await purgeExpired(env, now);
     await runReminders(env, now);
   },
 };

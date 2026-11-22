@@ -4,6 +4,8 @@ export const MINUTE = 60_000;
 export const FETCH_TIMEOUT_MS = 10_000;
 export const HOUR = 60 * MINUTE;
 export const DAY = 24 * HOUR;
+// how long a deleted request or client can be restored before the cron removes it
+export const RESTORE_WINDOW = 30 * DAY;
 
 function toHex(buf: ArrayBuffer): string {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
