@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { auth } from "./auth";
 import { client } from "./client";
 import { clients } from "./clients";
+import { exportZip } from "./export";
 import { files } from "./files";
 import { firm, loadFirm } from "./firm";
 import { requests } from "./requests";
@@ -43,6 +44,7 @@ app.route("/api", firm);
 app.route("/api", clients);
 app.route("/api", templates);
 app.route("/api", requests);
+app.route("/api", exportZip);
 app.route("/api", retention);
 app.route("/api", files);
 

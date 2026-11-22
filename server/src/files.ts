@@ -9,7 +9,7 @@ import { notFound } from "./validate";
 export const files = new Hono<AppEnv>();
 
 // RFC 6266: an ASCII fallback plus the UTF-8 form that modern browsers prefer
-function disposition(name: string): string {
+export function disposition(name: string): string {
   const ascii = name.replace(/[^\x20-\x7e]|["\%]/g, "_");
   const utf8 = encodeURIComponent(name).replace(/['()*]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
   return `attachment; filename="${ascii}"; filename*=UTF-8''${utf8}`;
