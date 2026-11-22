@@ -45,7 +45,7 @@ describe("zip helpers", () => {
   it("cleans names and keeps them apart", () => {
     expect(cleanName("../../etc/passwd", 80, "x")).toBe("_.._etc_passwd");
     expect(cleanName("  ..hidden\u0007\u0000name  ", 80, "x")).toBe("hidden__name");
-    expect(cleanName("a\b:c?", 80, "x")).toBe("a_b_c_");
+    expect(cleanName("a\\b:c?", 80, "x")).toBe("a_b_c_");
     expect(cleanName("...", 80, "item")).toBe("item");
     expect(cleanName("é".repeat(100), 10, "x")).toBe("é".repeat(10));
     expect(cleanName("name. ", 80, "x")).toBe("name");
