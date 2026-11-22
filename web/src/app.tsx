@@ -3,6 +3,7 @@ import { Link, Route, Switch, useRoute } from "wouter-preact";
 import { ApiError, get, onApiEvents, post } from "./api";
 import { setZone } from "./format";
 import { t } from "./i18n";
+import { Activity } from "./screens/activity";
 import { Clients } from "./screens/clients";
 import { FirmSetup, Settings } from "./screens/firm";
 import { NewRequest } from "./screens/new-request";
@@ -10,6 +11,7 @@ import { RequestPage } from "./screens/request-detail";
 import { Requests } from "./screens/requests";
 import { SignIn } from "./screens/signin";
 import { TemplatePage, Templates } from "./screens/templates";
+import { Trash } from "./screens/trash";
 import type { Me } from "./types";
 import { ErrorNote, Loading } from "./ui";
 
@@ -126,6 +128,14 @@ export function App() {
           <Route path="/settings">
             <Settings me={me} onSaved={reload} onSignOut={signOut} />
           </Route>
+          <Route path="/trash">
+            <Trash />
+          </Route>
+          {me.user.role === "owner" && (
+            <Route path="/activity">
+              <Activity />
+            </Route>
+          )}
           <Route>
             <p>{t("notfound")}</p>
           </Route>

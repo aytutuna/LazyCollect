@@ -1,5 +1,6 @@
 import { useState } from "preact/hooks";
-import { get, patch, useAction, useLoad } from "../api";
+import { Link } from "wouter-preact";
+import { get, patch, put, useAction, useLoad } from "../api";
 import { fmtDate } from "../format";
 import { t } from "../i18n";
 import type { Firm, Me } from "../types";
@@ -100,6 +101,43 @@ function planLine(firm: Me["firm"]): string {
   return t("settings.plan_ended");
 }
 
+function Retention({ canEdit }: { canEdit: boolean }) {
+  const { data, error, reload } = useLoad(() => get<{ years: number }>("/retention"));
+  const [saved, setSaved] = useState(false);
+  const { busy, error: failed, run } = useAction();
+
+  async function change(years: number) {
+    setSaved(false);
+    if (await run(() => put("/retention", { years }))) {
+      setSaved(true);
+      reload();
+    }
+  }
+
+  return (
+    <section class="narrow-form">
+      <h2>{t("settings.retention")}</h2>
+      <p class="muted">{t("settings.retention_hint")}</p>
+      {!data ? (
+        error ? <ErrorNote error={error} /> : <Loading />
+      ) : (
+        <>
+          {!canEdit && <p class="muted">{t("settings.retention_owner")}</p>}
+          <Field label={t("settings.retention_years")}>
+            <select disabled={!canEdit || busy} value={data.years} onChange={(e) => change(Number(e.currentTarget.value))}>
+              {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                <option value={n}>{t("settings.years", { n })}</option>
+              ))}
+            </select>
+          </Field>
+          <ErrorNote error={failed} />
+          {saved && <p class="ok">{t("saved")}</p>}
+        </>
+      )}
+    </section>
+  );
+}
+
 export function Settings({ me, onSaved, onSignOut }: { me: Me; onSaved: () => void; onSignOut: () => void }) {
   const { data, error } = useLoad(() => get<Firm>("/firm"));
   return (
@@ -116,6 +154,18 @@ export function Settings({ me, onSaved, onSignOut }: { me: Me; onSaved: () => vo
       <section class="narrow-form">
         <h2>{t("settings.firm")}</h2>
         {data ? <FirmForm firm={data} canEdit={me.user.role === "owner"} onSaved={onSaved} /> : error ? <ErrorNote error={error} /> : <Loading />}
+      </section>
+      <Retention canEdit={me.user.role === "owner"} />
+      <section>
+        <h2>{t("settings.more")}</h2>
+        <p>
+          <Link href="/trash">{t("settings.trash")}</Link>
+        </p>
+        {me.user.role === "owner" && (
+          <p>
+            <Link href="/activity">{t("settings.activity")}</Link>
+          </p>
+        )}
       </section>
     </>
   );

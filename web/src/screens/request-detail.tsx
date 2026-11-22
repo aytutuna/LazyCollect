@@ -1,9 +1,10 @@
 import { useState } from "preact/hooks";
 import { Link, useLocation } from "wouter-preact";
-import { ApiError, del, get, patch, post, useAction, useLoad } from "../api";
+import { ApiError, del, get, patch, post, put, useAction, useLoad } from "../api";
 import { fmtDate, fmtSize, fromInput, inDays, isLate, relative, toInput } from "../format";
 import { t } from "../i18n";
-import type { Client, Firm, Item, ItemWithFiles, LinkResult, Message, RequestDetail } from "../types";
+import type { ActivityRow, Client, Firm, Item, ItemWithFiles, LinkResult, Message, RequestDetail } from "../types";
+import { ActivityList } from "./activity";
 import { Badge, Check, Confirm, ErrorNote, Field, Loading, statusLabel, statusTone } from "../ui";
 
 const ITEM_TONES = { empty: "grey", submitted: "teal", approved: "green", rejected: "red" };
@@ -16,6 +17,7 @@ export function RequestPage({ id }: { id: string }) {
   const clients = useLoad(() => get<Client[]>("/clients"));
   const firm = useLoad(() => get<Firm>("/firm"));
   const sent = useLoad(() => get<Message[]>(`/requests/${id}/messages`), [id]);
+  const activity = useLoad(() => get<{ rows: ActivityRow[] }>(`/requests/${id}/activity`), [id]);
   const [emailIt, setEmailIt] = useState(true);
   const [mailNote, setMailNote] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -37,6 +39,7 @@ export function RequestPage({ id }: { id: string }) {
   const refresh = () => {
     reload();
     sent.reload();
+    activity.reload();
   };
   const received = req.items.filter((i) => i.status === "submitted" || i.status === "approved").length;
   const late = isLate(req.deadline) && editable;
@@ -75,6 +78,13 @@ export function RequestPage({ id }: { id: string }) {
 
   async function toggleReminders(on: boolean) {
     if (await act.run(() => patch(`/requests/${id}`, { reminders_on: on }))) reload();
+  }
+
+  async function toggleHold() {
+    if (await act.run(() => put(`/requests/${id}/hold`, { on: !req!.hold_at }))) {
+      reload();
+      activity.reload();
+    }
   }
 
   async function removeItem(item: Item) {
@@ -240,7 +250,24 @@ export function RequestPage({ id }: { id: string }) {
             </li>
           ))}
         </ul>
+        {req.items.some((i) => i.files.length > 0) && (
+          <p>
+            <a class="button" href={`/api/requests/${id}/export`} onClick={() => setTimeout(activity.reload, 1500)}>
+              {t("detail.download")}
+            </a>
+          </p>
+        )}
         {manage && (adding ? <ItemForm requestId={id} onSaved={saved} onCancel={() => setAdding(false)} /> : <button onClick={() => setAdding(true)}>{t("items.add")}</button>)}
+      </section>
+
+      <section>
+        <h2>{t("detail.activity")}</h2>
+        {req.hold_at ? <p>{t("detail.hold_on")}</p> : req.keep_until && <p class="muted">{t("detail.kept_until", { date: fmtDate(req.keep_until) })}</p>}
+        <p class="muted">{t("detail.hold_help")}</p>
+        <button disabled={act.busy} onClick={toggleHold}>
+          {req.hold_at ? t("detail.hold_release") : t("detail.hold_set")}
+        </button>
+        {activity.data && (activity.data.rows.length ? <ActivityList rows={activity.data.rows} /> : <p class="muted">{t("detail.activity_none")}</p>)}
       </section>
 
       <div class="actions">

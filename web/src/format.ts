@@ -18,6 +18,8 @@ const wall = (ms: number) => {
 
 export const fmtDate = (ms: number) => new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeZone: zone }).format(ms);
 
+export const fmtDateTime = (ms: number) => new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short", timeZone: zone }).format(ms);
+
 const dayNumber = (ms: number) => {
   const w = wall(ms);
   return Date.UTC(w.y, w.m - 1, w.d) / 86_400_000;

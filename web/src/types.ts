@@ -66,7 +66,26 @@ export type RequestDetail = {
   sent_at: number | null;
   reminders_on: boolean;
   next_reminder_at: number | null;
+  ended_at: number | null;
+  keep_until: number | null;
+  hold_at: number | null;
   items: ItemWithFiles[];
+};
+
+export type TrashRequest = { id: string; title: string; client_name: string; deleted_at: number; purge_at: number };
+
+export type TrashClient = { id: string; name: string; deleted_at: number; purge_at: number };
+
+export type ActivityRow = {
+  id: string;
+  at: number;
+  actor_type: "user" | "client" | "system";
+  actor: string | null;
+  action: string;
+  object_type: string;
+  object_id: string;
+  request_id: string | null;
+  client_id: string | null;
 };
 
 export type Message = { id: string; kind: "invite" | "reminder" | "deadline" | "rejected"; seq: number; status: "sending" | "sent" | "failed"; sent_at: number };
