@@ -32,7 +32,7 @@ exportZip.get("/requests/:id/export", async (c) => {
     .bind(firm.id, req.id)
     .all<{ id: string; item_id: string; r2_key: string; name: string; size: number; uploaded_at: number; label: string }>();
   if (!results.length) return c.json({ error: "no_files" }, 409);
-  if (results.length > MAX_ENTRIES || results.reduce((sum, f) => sum + f.size, 0) > MAX_BYTES) return c.json({ error: "too_big" }, 413);
+  if (results.length > MAX_ENTRIES || results.reduce((sum, f) => sum + f.size, 0) > MAX_BYTES) return c.json({ error: "export_too_big" }, 413);
 
   const region = firm.region as Region;
   const { bucket } = regionOf(c.env, region);
