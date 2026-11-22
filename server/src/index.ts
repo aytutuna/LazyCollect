@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { activity } from "./activity";
 import { auth } from "./auth";
 import { client } from "./client";
 import { clients } from "./clients";
@@ -39,6 +40,7 @@ app.route("/api", uploads);
 app.use("/api/firm", loadFirm);
 app.use("/api/retention", loadFirm);
 app.use("/api/trash", loadFirm);
+app.use("/api/activity", loadFirm);
 app.use("/api/clients/*", loadFirm);
 app.use("/api/templates/*", loadFirm);
 app.use("/api/requests/*", loadFirm);
@@ -50,6 +52,7 @@ app.route("/api", requests);
 app.route("/api", exportZip);
 app.route("/api", retention);
 app.route("/api", trash);
+app.route("/api", activity);
 app.route("/api", files);
 
 app.route("/u", unsubscribe);
