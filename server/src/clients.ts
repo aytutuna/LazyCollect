@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { audit } from "./audit";
 import { normalizeEmail } from "./auth";
 import type { AppEnv } from "./session";
+import { endNow } from "./status";
 import { randomId } from "./util";
 import { blank, invalid, locale, maybe, notFound, readBody, setClause, text } from "./validate";
 
@@ -135,18 +136,23 @@ clients.delete("/clients/:id", async (c) => {
   const now = Date.now();
   const found = await db.prepare("SELECT id FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL").bind(firmId, id).first();
   if (!found) return notFound(c);
-  await db.batch([
-    db.prepare("UPDATE clients SET deleted_at = ? WHERE firm_id = ? AND id = ? AND deleted_at IS NULL").bind(now, firmId, id),
+  const held = "NOT EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND client_id = ? AND hold_at IS NOT NULL AND deleted_at IS NULL)";
+  // the guard is repeated in each write so a hold set after the read still wins
+  const [, , res] = await db.batch([
     db
       .prepare(
-        `UPDATE links SET revoked_at = ? WHERE firm_id = ? AND revoked_at IS NULL
+        `UPDATE links SET revoked_at = ? WHERE firm_id = ? AND revoked_at IS NULL AND ${held}
          AND request_id IN (SELECT id FROM requests WHERE firm_id = ? AND client_id = ?)`,
       )
-      .bind(now, firmId, firmId, id),
+      .bind(now, firmId, firmId, id, firmId, id),
     db
-      .prepare("UPDATE requests SET status = 'closed', closed_at = ? WHERE firm_id = ? AND client_id = ? AND status IN ('draft', 'open')")
-      .bind(now, firmId, id),
-    audit(c, "client.delete", "client", id),
+      .prepare(`UPDATE requests SET status = 'closed', closed_at = ?, ${endNow} WHERE firm_id = ? AND client_id = ? AND status IN ('draft', 'open') AND ${held}`)
+      .bind(now, now, now, firmId, id, firmId, id),
+    db.prepare(`UPDATE clients SET deleted_at = ? WHERE firm_id = ? AND id = ? AND deleted_at IS NULL AND ${held}`).bind(now, firmId, id, firmId, id),
+    audit(c, "client.delete", "client", id, undefined, {
+      sql: "EXISTS (SELECT 1 FROM clients WHERE firm_id = ? AND id = ? AND deleted_at = ?)",
+      binds: [firmId, id, now],
+    }),
   ]);
-  return c.json({ ok: true });
+  return res.meta.changes ? c.json({ ok: true }) : c.json({ error: "legal_hold" }, 409);
 });

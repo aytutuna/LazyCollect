@@ -1,4 +1,4 @@
-import { Hono, type MiddlewareHandler } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { audit } from "./audit";
 import { isRegion, regionOf } from "./regions";
 import type { AppEnv, Firm } from "./session";
@@ -32,11 +32,15 @@ firm.get("/firm", (c) => {
   return c.json(profile);
 });
 
-firm.patch("/firm", async (c) => {
+export async function isOwner(c: Context<AppEnv>): Promise<boolean> {
   const user = await c.env.CONTROL.prepare("SELECT role FROM users WHERE id = ?")
     .bind(c.get("session")!.userId)
     .first<{ role: string }>();
-  if (user?.role !== "owner") return c.json({ error: "forbidden" }, 403);
+  return user?.role === "owner";
+}
+
+firm.patch("/firm", async (c) => {
+  if (!(await isOwner(c))) return c.json({ error: "forbidden" }, 403);
   const body = await readBody(c);
   if (!body) return invalid(c);
   const fields: Record<string, string | null> = {};

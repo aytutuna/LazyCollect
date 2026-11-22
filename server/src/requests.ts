@@ -5,7 +5,7 @@ import { LINK_GRACE, sealToken } from "./links";
 import { deliver, unsubUrl } from "./mail";
 import { regionOf, type Region } from "./regions";
 import { missingItems, senderName, sendersOf } from "./reminders";
-import { syncStatus } from "./status";
+import { endNow, syncStatus } from "./status";
 import { nextReminder } from "./tz";
 import type { AppEnv } from "./session";
 import { builtinTemplates, parseItem, parseItems, type Item } from "./templates";
@@ -14,14 +14,14 @@ import { invalid, maybe, notFound, readBody, setClause, text } from "./validate"
 
 export const requests = new Hono<AppEnv>();
 
-const COLS = "id, client_id, title, note, deadline, firm_name, status, sent_at, closed_at, created_at, reminders_on, next_reminder_at";
+const COLS = "id, client_id, title, note, deadline, firm_name, status, sent_at, closed_at, created_at, reminders_on, next_reminder_at, ended_at, keep_until, hold_at";
 const ITEM_COLS = "id, position, label, help, required, status, reject_note, reviewed_at";
 const MAX_ITEMS = 100;
 const MAX_AHEAD = 2 * 365 * DAY;
 
 type Req = { id: string; client_id: string; title: string; status: string; deadline: number; reminders_on: number };
 
-const findRequest = (c: Context<AppEnv>) =>
+export const findRequest = (c: Context<AppEnv>) =>
   c.get("db")
     .prepare("SELECT id, client_id, title, status, deadline, reminders_on FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
     .bind(c.get("firm").id, c.req.param("id"))
@@ -377,7 +377,9 @@ requests.post("/requests/:id/close", async (c) => {
       sql: "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status != 'closed')",
       binds: [firmId, req.id],
     }),
-    db.prepare("UPDATE requests SET status = 'closed', closed_at = ? WHERE firm_id = ? AND id = ? AND status != 'closed'").bind(now, firmId, req.id),
+    db
+      .prepare(`UPDATE requests SET status = 'closed', closed_at = ?, ${endNow} WHERE firm_id = ? AND id = ? AND status != 'closed'`)
+      .bind(now, now, now, firmId, req.id),
     db.prepare("UPDATE links SET revoked_at = ? WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL").bind(now, firmId, req.id),
   ]);
   return c.json({ ok: true });
@@ -389,15 +391,15 @@ requests.delete("/requests/:id", async (c) => {
   const db = c.get("db");
   const firmId = c.get("firm").id;
   const now = Date.now();
-  await db.batch([
-    audit(c, "request.delete", "request", req.id, undefined, {
-      sql: "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NULL)",
-      binds: [firmId, req.id],
-    }),
-    db.prepare("UPDATE requests SET deleted_at = ? WHERE firm_id = ? AND id = ? AND deleted_at IS NULL").bind(now, firmId, req.id),
-    db.prepare("UPDATE links SET revoked_at = ? WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL").bind(now, firmId, req.id),
+  const free = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NULL AND hold_at IS NULL)";
+  const [, res] = await db.batch([
+    audit(c, "request.delete", "request", req.id, undefined, { sql: free, binds: [firmId, req.id] }),
+    db.prepare("UPDATE requests SET deleted_at = ? WHERE firm_id = ? AND id = ? AND deleted_at IS NULL AND hold_at IS NULL").bind(now, firmId, req.id),
+    db
+      .prepare(`UPDATE links SET revoked_at = ? WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL AND EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NOT NULL)`)
+      .bind(now, firmId, req.id, firmId, req.id),
   ]);
-  return c.json({ ok: true });
+  return res.meta.changes ? c.json({ ok: true }) : c.json({ error: "legal_hold" }, 409);
 });
 
 requests.post("/requests/:id/link", async (c) => {
