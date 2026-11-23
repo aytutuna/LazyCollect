@@ -413,6 +413,8 @@
   "client.job_offline": "{name}: waiting for a connection",
   "client.job_failed": "{name} could not be uploaded.",
   "client.uploaded": "{name} uploaded.",
+  "client.files_removed": "Files that had not been sent yet were removed from this device.",
+  "client.items_gone": "Some files were removed from the waiting list because that item is no longer on the list.",
   "client.removed": "{name} removed.",
   "client.try_now": "Try now",
   "client.status_empty": "Nothing received yet.",

@@ -2,6 +2,7 @@ import { ApiError } from "./api";
 
 export const MAX_SIZE = 25 * 1024 * 1024;
 const LONG_EDGE = 2400;
+const STALL_MS = 60_000;
 
 export type Prepared = { blob: Blob; name: string; jpeg: boolean };
 
@@ -50,8 +51,19 @@ export function sendFile(url: string, file: Prepared, uploadId: string, onProgre
     xhr.setRequestHeader("X-Collect", "1");
     xhr.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
     xhr.setRequestHeader("Upload-Id", uploadId);
-    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+    // a connection that goes quiet is cut after a minute so the retry logic can take over
+    let stall: number;
+    const watch = () => {
+      clearTimeout(stall);
+      stall = window.setTimeout(() => xhr.abort(), STALL_MS);
+    };
+    xhr.upload.onprogress = (e) => {
+      watch();
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    };
+    xhr.upload.onload = watch;
     xhr.onload = () => {
+      clearTimeout(stall);
       if (xhr.status >= 200 && xhr.status < 300) return resolve();
       let code = "server_error";
       try {
@@ -61,7 +73,11 @@ export function sendFile(url: string, file: Prepared, uploadId: string, onProgre
       }
       reject(new ApiError(xhr.status, code));
     };
-    xhr.onerror = xhr.ontimeout = () => reject(new ApiError(0, "network"));
+    xhr.onerror = xhr.ontimeout = xhr.onabort = () => {
+      clearTimeout(stall);
+      reject(new ApiError(0, "network"));
+    };
+    watch();
     xhr.send(file.blob);
   });
 }

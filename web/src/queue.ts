@@ -24,6 +24,7 @@ const DB = "collect-uploads";
 const STORE = "jobs";
 const KEEP = 14 * 24 * 60 * 60 * 1000;
 const MAX_WAIT = 60;
+const MAX_AUTO = 6;
 
 function openDb(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
@@ -38,20 +39,14 @@ function openDb(): Promise<IDBDatabase | null> {
   });
 }
 
-function done<T>(req: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
 async function tokenKey(token: string): Promise<string> {
   const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)));
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 // A failure that waiting can fix: no connection, a busy server, a timeout.
-const transient = (e: unknown) => e instanceof ApiError && (e.status === 0 || e.status === 408 || e.status === 429 || e.status >= 500);
+// 409 busy: the first try of this file is still being stored on the server
+const transient = (e: unknown) => e instanceof ApiError && (e.status === 0 || e.status === 408 || e.status === 429 || e.status >= 500 || (e.status === 409 && e.code === "busy"));
 
 // Files wait here until the server has confirmed them. They are kept on the device (IndexedDB, under a hash of the link)
 // so a reload or an evicted tab picks up where it stopped, and in memory when the browser will not store them.
@@ -91,7 +86,35 @@ export class UploadQueue {
   private async store<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRequest<T>): Promise<T | null> {
     const db = await this.db;
     if (!db) return null;
-    return done(run(db.transaction(STORE, mode).objectStore(STORE)));
+    // a write counts once its transaction has committed; a quota abort rejects here
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, mode);
+      const req = run(tx.objectStore(STORE));
+      let result: T;
+      req.onsuccess = () => {
+        result = req.result;
+        if (mode === "readonly") resolve(result);
+      };
+      tx.oncomplete = () => resolve(result);
+      tx.onabort = tx.onerror = () => reject(tx.error ?? req.error);
+    });
+  }
+
+  // every stored file of this link and everything waiting in memory; returns how many there were
+  async forget(): Promise<number> {
+    for (const id of this.timers.keys()) this.wake(id);
+    let n = this.jobs.length;
+    this.jobs = [];
+    try {
+      const token = await this.key;
+      const ids = ((await this.store("readonly", (s) => s.index("token").getAllKeys(token))) ?? []) as string[];
+      n = Math.max(n, ids.length);
+      for (const id of ids) await this.store("readwrite", (s) => s.delete(id));
+    } catch {
+      // nothing more can be done with a store that will not open
+    }
+    this.emit();
+    return n;
   }
 
   async restore() {
@@ -199,9 +222,11 @@ export class UploadQueue {
 
   private failed(job: Job, error: unknown) {
     if (!transient(error)) return this.patch(job.id, { state: "failed", error });
-    const n = (this.attempts.get(job.id) ?? 0) + 1;
+    const n = (this.attempts.get(job.id) ?? 0) + (navigator.onLine ? 1 : 0);
     this.attempts.set(job.id, n);
     if (!navigator.onLine) return this.patch(job.id, { state: "retrying", error, retryIn: 0 });
+    // after about six tries the person decides: the Retry button takes over
+    if (n > MAX_AUTO) return this.patch(job.id, { state: "failed", error });
     const wait = Math.min(MAX_WAIT, 2 ** n) + Math.floor(Math.random() * 3);
     this.patch(job.id, { state: "retrying", error, retryIn: wait });
     this.timers.set(

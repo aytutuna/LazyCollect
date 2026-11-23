@@ -29,6 +29,18 @@ function announce(text: string) {
 let pendingFocus: string | null = null;
 const focusLater = (id: string) => (pendingFocus = id);
 
+// A result that arrives in the background must not take focus from someone typing or working on another item;
+// the live region still announces it.
+function mayMoveFocus(target: HTMLElement | null): boolean {
+  const here = document.activeElement as HTMLElement | null;
+  if (!here || here === document.body) return true;
+  if (here.matches("input, textarea, select")) return false;
+  const owner = target?.closest("li.item");
+  return owner ? owner.contains(here) : Boolean(here.closest("li.item"));
+}
+
+const isGone = (e: unknown) => e instanceof ApiError && (e.status === 404 || e.status === 410);
+
 let onUploaded: (job: Job) => void = () => {};
 const queue = new UploadQueue(token, sendJob(token), (job) => onUploaded(job));
 
@@ -108,7 +120,7 @@ function JobRow({ job, online }: { job: Job; online: boolean }) {
   );
 }
 
-function DontHave({ item, firm, onChange, onClose }: { item: ClientItem; firm: string; onChange: () => void; onClose: () => void }) {
+function DontHave({ item, firm, onChange, onClose, onCancel }: { item: ClientItem; firm: string; onChange: () => void; onClose: () => void; onCancel: () => void }) {
   const [reason, setReason] = useState("");
   const { busy, error, run } = useAction();
   const field = useRef<HTMLTextAreaElement>(null);
@@ -139,7 +151,7 @@ function DontHave({ item, firm, onChange, onClose }: { item: ClientItem; firm: s
         <button class="primary" disabled={busy}>
           {t("client.dont_have_save")}
         </button>
-        <button type="button" onClick={onClose}>
+        <button type="button" onClick={onCancel}>
           {t("cancel")}
         </button>
       </div>
@@ -166,10 +178,19 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
   const [preparing, setPreparing] = useState(false);
   const [combined, setCombined] = useState(0);
   const [asking, setAsking] = useState(false);
+  const [back, setBack] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
   const camera = useRef<HTMLInputElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const action = useAction();
   const open = item.status !== "approved";
+  // cancelling the form returns to the button that opened it
+  useEffect(() => {
+    if (back) {
+      trigger.current?.focus();
+      setBack(false);
+    }
+  }, [back]);
   const mine = jobs.filter((j) => j.itemId === item.id);
 
   async function pick(input: HTMLInputElement) {
@@ -278,7 +299,7 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
               ) : (
                 (item.status === "empty" || item.status === "rejected") &&
                 !asking && (
-                  <button class="quiet-link" aria-describedby={`label-${item.id}`} onClick={() => setAsking(true)}>
+                  <button ref={trigger} class="quiet-link" aria-describedby={`label-${item.id}`} onClick={() => setAsking(true)}>
                     {t("client.dont_have")}
                   </button>
                 )
@@ -288,7 +309,7 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
             <input ref={picker} type="file" accept="image/*,application/pdf" multiple hidden tabIndex={-1} onChange={(e) => pick(e.currentTarget)} />
           </>
         )}
-        {asking && <DontHave item={item} firm={firm} onChange={onChange} onClose={() => setAsking(false)} />}
+        {asking && <DontHave item={item} firm={firm} onChange={onChange} onClose={() => setAsking(false)} onCancel={() => { setAsking(false); setBack(true); }} />}
       </div>
     </li>
   );
@@ -359,6 +380,8 @@ function Page() {
   const jobs = useQueue();
   const [online, setOnline] = useState(navigator.onLine);
   const wasDone = useRef<boolean | null>(null);
+  const checked = useRef(new Set<string>());
+  const [removed, setRemoved] = useState(0);
   const doneHeading = useRef<HTMLHeadingElement>(null);
 
   onUploaded = (job) => {
@@ -385,6 +408,32 @@ function Page() {
     };
   }, []);
 
+  // the link is gone: nothing stored for it can ever be sent
+  useEffect(() => {
+    if (error && isGone(error)) queue.forget().then(setRemoved);
+  }, [error]);
+
+  // a failed upload with a 404 may mean the link was replaced; the page asks again to find out
+  useEffect(() => {
+    for (const job of jobs) {
+      if (job.state === "failed" && job.error instanceof ApiError && job.error.status === 404 && !checked.current.has(job.id)) {
+        checked.current.add(job.id);
+        reload();
+      }
+    }
+  }, [jobs]);
+
+  // files waiting for an item the account has since removed would never go anywhere
+  useEffect(() => {
+    if (!data || error) return;
+    const ids = new Set(data.items.map((i) => i.id));
+    const lost = jobs.filter((j) => !ids.has(j.itemId) && j.state !== "uploading");
+    if (lost.length) {
+      lost.forEach((j) => queue.remove(j.id));
+      announce(t("client.items_gone"));
+    }
+  }, [data, jobs]);
+
   const scope = data ? (data.items.some((i) => i.required) ? data.items.filter((i) => i.required) : data.items) : [];
   const received = scope.filter((i) => RECEIVED.includes(i.status)).length;
   const unavailable = scope.filter((i) => i.status === "unavailable").length;
@@ -392,13 +441,14 @@ function Page() {
 
   useEffect(() => {
     if (pendingFocus) {
-      document.getElementById(pendingFocus)?.focus();
+      const el = document.getElementById(pendingFocus);
+      if (el && mayMoveFocus(el)) el.focus();
       pendingFocus = null;
     }
     // the first look only records the state; after that, becoming finished moves focus to the message
     if (data) {
       if (wasDone.current === false && finished) {
-        doneHeading.current?.focus();
+        if (mayMoveFocus(null)) doneHeading.current?.focus();
         announce(t("client.all_done_title"));
       }
       wasDone.current = finished;
@@ -409,12 +459,13 @@ function Page() {
     if (data) document.title = `${data.title} - ${data.firm_name}`;
   }, [data?.title, data?.firm_name]);
 
-  if (error && !data) {
-    const gone = error instanceof ApiError && error.status === 404;
+  if (error && (!data || isGone(error))) {
+    const gone = isGone(error);
     return (
       <main class="client-page">
         <h1>{gone ? t("client.gone_title") : t("client.error_title")}</h1>
         <p>{gone ? t("client.gone") : t(error instanceof ApiError && error.status === 429 ? "error.rate_limited" : "client.error")}</p>
+        {gone && removed > 0 && <p>{t("client.files_removed")}</p>}
       </main>
     );
   }
