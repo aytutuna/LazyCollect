@@ -4,7 +4,7 @@ import { sendLoginEmail } from "./email";
 import { usable } from "./firm";
 import { htmlHeaders } from "./headers";
 import { isRegion, regionOf } from "./regions";
-import { DAY, MINUTE, hmac, randomCode, randomId, randomToken, sha256, ipPrefix, FETCH_TIMEOUT_MS } from "./util";
+import { DAY, MINUTE, hmac, keyLimited, randomCode, randomId, randomToken, sha256, ipPrefix, FETCH_TIMEOUT_MS } from "./util";
 
 export const auth = new Hono<AppEnv>();
 
@@ -36,12 +36,6 @@ async function turnstileOk(env: Env, token: unknown, ip: string | undefined): Pr
   if (!res.ok) return false;
   const body = await res.json<{ success?: boolean }>();
   return body.success === true;
-}
-
-export async function keyLimited(limiter: RateLimit | undefined, key: string): Promise<boolean> {
-  if (!limiter) throw new Error("rate limit binding is missing");
-  const { success } = await limiter.limit({ key });
-  return !success;
 }
 
 export async function rateLimited(env: Env, limiter: RateLimit | undefined, ip: string | undefined): Promise<boolean> {

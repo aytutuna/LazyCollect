@@ -1,10 +1,9 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { audit } from "./audit";
-import { keyLimited } from "./auth";
 import { isRegion, regionOf } from "./regions";
 import type { AppEnv, Firm } from "./session";
 import { validZone } from "./tz";
-import { DAY } from "./util";
+import { DAY, keyLimited } from "./util";
 import { invalid, maybe, readBody, setClause, text } from "./validate";
 
 export const firm = new Hono<AppEnv>();

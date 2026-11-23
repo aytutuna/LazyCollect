@@ -43,3 +43,9 @@ export function ipPrefix(ip: string): string {
   const groups = tail === undefined ? h : [...h, ...Array(8 - h.length - t.length).fill("0"), ...t];
   return groups.slice(0, 4).map((g) => g.toLowerCase().replace(/^0+(?=.)/, "")).join(":");
 }
+
+export async function keyLimited(limiter: RateLimit | undefined, key: string): Promise<boolean> {
+  if (!limiter) throw new Error("rate limit binding is missing");
+  const { success } = await limiter.limit({ key });
+  return !success;
+}

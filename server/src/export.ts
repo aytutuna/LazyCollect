@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { audit } from "./audit";
-import { keyLimited } from "./auth";
+import { keyLimited } from "./util";
 import { fileKey, decryptStream } from "./crypt";
 import { disposition } from "./files";
 import { firmDek } from "./keys";

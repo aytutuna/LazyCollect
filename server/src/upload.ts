@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { keyLimited, rateLimited } from "./auth";
+import { rateLimited } from "./auth";
 import { auditClient } from "./audit";
 import { findLink } from "./client";
 import { ByteSource, CHUNK, cipherLength, encryptStream, fileKey } from "./crypt";
@@ -7,7 +7,7 @@ import { firmDek } from "./keys";
 import { regionOf } from "./regions";
 import type { AppEnv } from "./session";
 import { syncStatus } from "./status";
-import { hmac, ipPrefix, randomId } from "./util";
+import { hmac, ipPrefix, keyLimited, randomId } from "./util";
 import { invalid, notFound } from "./validate";
 
 export const uploads = new Hono<AppEnv>();
