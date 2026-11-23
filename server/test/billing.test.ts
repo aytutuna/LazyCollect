@@ -221,6 +221,23 @@ describe("webhook", () => {
     expect((await env.CONTROL.prepare("SELECT COUNT(*) AS n FROM stripe_events").first<any>()).n).toBe(0);
   });
 
+  it("refuses a body that comes without a length", async () => {
+    const body = JSON.stringify({ id: "evt_nolen", type: "invoice.paid", data: { object: {} } });
+    const stream = new ReadableStream({
+      start(ctl) {
+        ctl.enqueue(new TextEncoder().encode(body));
+        ctl.close();
+      },
+    });
+    const res = await exports.default.fetch("https://collect.alazy.app/api/stripe/webhook", {
+      method: "POST",
+      headers: { "stripe-signature": await sign(body) },
+      body: stream,
+      duplex: "half",
+    } as RequestInit);
+    expect(res.status).toBe(411);
+  });
+
   it("rejects calls without a valid signature", async () => {
     const event = { id: "evt_1", type: "invoice.paid", data: { object: {} } };
     expect((await webhook(event, null)).status).toBe(400);

@@ -245,7 +245,10 @@ export const stripeWebhook = new Hono<AppEnv>();
 
 stripeWebhook.post("/stripe/webhook", async (c) => {
   if (!c.env.STRIPE_WEBHOOK_SECRET) throw new Error("STRIPE_WEBHOOK_SECRET is not set");
-  if (Number(c.req.header("Content-Length")) > MAX_BODY) return c.json({ error: "too_big" }, 413);
+  // Stripe always sends a length; without one the body would be buffered before any check
+  const length = c.req.header("Content-Length");
+  if (!length || !/^\d+$/.test(length)) return c.json({ error: "length_required" }, 411);
+  if (Number(length) > MAX_BODY) return c.json({ error: "too_big" }, 413);
   const raw = await c.req.text();
   if (raw.length > MAX_BODY) return c.json({ error: "too_big" }, 413);
   if (!(await verifySignature(raw, c.req.header("Stripe-Signature"), c.env.STRIPE_WEBHOOK_SECRET, Date.now()))) {
