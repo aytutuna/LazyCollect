@@ -213,15 +213,14 @@ stripeWebhook.post("/stripe/webhook", async (c) => {
   }
   if (typeof event?.id !== "string" || typeof event.type !== "string") return c.json({ error: "invalid" }, 400);
   if (!EVENTS.has(event.type)) return c.json({ ok: true });
-  const seen = await c.env.CONTROL.prepare("INSERT OR IGNORE INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)").bind(event.id, event.type, Date.now()).run();
-  if (!seen.meta.changes) return c.json({ ok: true });
+  if (await c.env.CONTROL.prepare("SELECT 1 FROM stripe_events WHERE id = ?").bind(event.id).first()) return c.json({ ok: true });
   try {
     await sync(c.env, event);
   } catch (e) {
-    // forget the event so Stripe's retry is processed instead of skipped as a duplicate
-    await c.env.CONTROL.prepare("DELETE FROM stripe_events WHERE id = ?").bind(event.id).run();
     console.error(e instanceof Error ? e.message : "error");
     return c.json({ error: "server_error" }, 500);
   }
+  // recorded only once it worked, so a killed Worker means a retry; syncing twice is harmless
+  await c.env.CONTROL.prepare("INSERT OR IGNORE INTO stripe_events (id, type, received_at) VALUES (?, ?, ?)").bind(event.id, event.type, Date.now()).run();
   return c.json({ ok: true });
 });

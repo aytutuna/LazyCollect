@@ -302,6 +302,19 @@ describe("webhook", () => {
     expect((await firmRow(cookie)).plan_status).toBe("canceled");
   });
 
+  it("records an event only after it was processed", async () => {
+    const { customer } = await subscribed();
+    stripeFake.sub("sub_1", customer);
+    const event = { id: "evt_rec", type: "customer.subscription.updated", data: { object: { id: "sub_1", customer } } };
+    const recorded = async () => (await env.CONTROL.prepare("SELECT COUNT(*) AS n FROM stripe_events WHERE id = 'evt_rec'").first<any>()).n;
+    stripeFake.failing = true;
+    expect((await webhook(event)).status).toBe(500);
+    expect(await recorded()).toBe(0);
+    stripeFake.failing = false;
+    expect((await webhook(event)).status).toBe(200);
+    expect(await recorded()).toBe(1);
+  });
+
   it("lets Stripe retry when fetching the subscription fails", async () => {
     const { cookie, customer } = await subscribed();
     stripeFake.sub("sub_1", customer);
