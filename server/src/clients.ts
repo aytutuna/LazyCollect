@@ -10,15 +10,15 @@ import { blank, invalid, locale, maybe, notFound, readBody, setClause, text } fr
 
 export const clients = new Hono<AppEnv>();
 
-const COLS = "id, name, email, phone, locale, email_ok_at, email_stop_at, sms_ok_at, consent_by, created_at";
-const MAX_CLIENTS = 10000;
+const COLS = "id, name, email, phone, reference, locale, email_ok_at, email_stop_at, sms_ok_at, consent_by, created_at";
+export const MAX_CLIENTS = 10000;
 const PHONE_RE = /^[\d\s()+.-]{7,40}$/;
 
 const CHANNELS = [["email_ok_at", "email"], ["sms_ok_at", "sms"]] as const;
 
 type ClientRow = { id: string; email: string | null; phone: string | null; email_ok_at: number | null; sms_ok_at: number | null; email_stop_at: number | null };
 
-function phone(v: unknown): string | null | undefined {
+export function phone(v: unknown): string | null | undefined {
   const p = maybe(v, 40);
   return p && !PHONE_RE.test(p) ? undefined : p;
 }
@@ -40,10 +40,10 @@ clients.get("/clients/search", async (c) => {
   const { results } = await c.get("db")
     .prepare(
       `SELECT ${COLS}, (SELECT COUNT(*) FROM requests r WHERE r.firm_id = clients.firm_id AND r.client_id = clients.id AND r.deleted_at IS NULL) AS requests
-       FROM clients WHERE firm_id = ? AND deleted_at IS NULL${q ? " AND (name LIKE ? ESCAPE '!' OR email LIKE ? ESCAPE '!' OR phone LIKE ? ESCAPE '!')" : ""}
+       FROM clients WHERE firm_id = ? AND deleted_at IS NULL${q ? " AND (name LIKE ? ESCAPE '!' OR email LIKE ? ESCAPE '!' OR phone LIKE ? ESCAPE '!' OR reference LIKE ? ESCAPE '!')" : ""}
        ORDER BY name COLLATE NOCASE, created_at, id LIMIT ${PAGE + 1} OFFSET ${offset}`,
     )
-    .bind(c.get("firm").id, ...(q ? [like, like, like] : []))
+    .bind(c.get("firm").id, ...(q ? [like, like, like, like] : []))
     .all();
   return c.json({ rows: results.slice(0, PAGE), next: results.length > PAGE ? offset + PAGE : null });
 });
@@ -54,8 +54,9 @@ clients.post("/clients", async (c) => {
   const name = text(body.name, 200);
   const email = blank(body.email) ? null : normalizeEmail(body.email);
   const tel = phone(body.phone);
+  const reference = maybe(body.reference, 100);
   const lang = body.locale === undefined ? "en" : locale(body.locale);
-  if (!name || (email === null && !blank(body.email)) || tel === undefined || !lang || typeof body.contact_ok !== "boolean") {
+  if (!name || (email === null && !blank(body.email)) || tel === undefined || reference === undefined || !lang || typeof body.contact_ok !== "boolean") {
     return invalid(c);
   }
   const userId = c.get("session")!.userId;
@@ -68,8 +69,8 @@ clients.post("/clients", async (c) => {
   const [res] = await db.batch([
     db
       .prepare(
-        `INSERT INTO clients (id, firm_id, name, email, phone, locale, email_ok_at, sms_ok_at, consent_by, created_by, created_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM clients WHERE firm_id = ?) < ${MAX_CLIENTS}`,
+        `INSERT INTO clients (id, firm_id, name, email, phone, reference, locale, email_ok_at, sms_ok_at, consent_by, created_by, created_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM clients WHERE firm_id = ?) < ${MAX_CLIENTS}`,
       )
       .bind(
         id,
@@ -77,6 +78,7 @@ clients.post("/clients", async (c) => {
         name,
         email,
         tel,
+        reference,
         lang,
         body.contact_ok && email ? now : null,
         body.contact_ok && tel ? now : null,
@@ -119,6 +121,11 @@ clients.patch("/clients/:id", async (c) => {
     const tel = phone(body.phone);
     if (tel === undefined) return invalid(c);
     fields.phone = tel;
+  }
+  if ("reference" in body) {
+    const reference = maybe(body.reference, 100);
+    if (reference === undefined) return invalid(c);
+    fields.reference = reference;
   }
   if ("locale" in body) {
     const lang = locale(body.locale);
