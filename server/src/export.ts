@@ -17,7 +17,7 @@ async function checklistText(db: D1Database, firmId: string, requestId: string):
   const { results } = await db
     .prepare(
       `SELECT label, status, reject_note, unavailable_note FROM items WHERE firm_id = ? AND request_id = ?
-       AND (status IN ('unavailable', 'waived') OR unavailable_note IS NOT NULL) ORDER BY position`,
+       AND (status IN ('unavailable', 'waived') OR unavailable_at IS NOT NULL) ORDER BY position`,
     )
     .bind(firmId, requestId)
     .all<{ label: string; status: string; reject_note: string | null; unavailable_note: string | null }>();
