@@ -288,6 +288,7 @@
   "detail.hold_help": "Nothing on a request on legal hold is deleted, and the request cannot be deleted.",
   "detail.hold_set": "Put on legal hold",
   "detail.hold_release": "Release hold",
+  "detail.records": "Records",
   "detail.activity": "Activity",
   "detail.activity_none": "Nothing recorded yet.",
 

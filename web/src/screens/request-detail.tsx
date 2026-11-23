@@ -269,7 +269,7 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
       </section>
 
       <section>
-        <h2>{t("detail.activity")}</h2>
+        <h2>{t("detail.records")}</h2>
         {req.hold_at ? <p>{t("detail.hold_on")}</p> : req.keep_until && <p class="muted">{t("detail.kept_until", { date: fmtDate(req.keep_until) })}</p>}
         <p class="muted">{t("detail.hold_help")}</p>
         {(!req.hold_at || owner) && (
@@ -277,6 +277,10 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
             {req.hold_at ? t("detail.hold_release") : t("detail.hold_set")}
           </button>
         )}
+      </section>
+
+      <section>
+        <h2>{t("detail.activity")}</h2>
         {activity.data && (activity.data.rows.length ? <ActivityList rows={activity.data.rows} /> : <p class="muted">{t("detail.activity_none")}</p>)}
       </section>
 
