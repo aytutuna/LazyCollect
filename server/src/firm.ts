@@ -56,7 +56,7 @@ function load(allowClosed: boolean): MiddlewareHandler<AppEnv> {
     if (!session) return c.json({ error: "unauthorized" }, 401);
     const row = await c.env.CONTROL.prepare(
       `SELECT id, name, legal_name, address, phone, province, tz, region, plan_status, trial_ends_at, current_period_end, past_due_since,
-         cancel_at_period_end, stripe_customer_id, stripe_subscription_id, closed_at FROM firms WHERE id = ?`,
+         cancel_at_period_end, stripe_customer_id, stripe_subscription_id, closed_at, require_passkeys FROM firms WHERE id = ?`,
     )
       .bind(session.firmId)
       .first<Firm>();

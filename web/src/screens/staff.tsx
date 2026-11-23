@@ -10,6 +10,7 @@ export function Staff({ me }: { me: Me }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [removing, setRemoving] = useState<Person | null>(null);
+  const [resetting, setResetting] = useState<Person | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const act = useAction();
 
@@ -43,6 +44,21 @@ export function Staff({ me }: { me: Me }) {
     }
   }
 
+  async function signOut(p: Person) {
+    setNote(null);
+    if (await act.run(() => post(`/staff/${p.id}/sign-out`))) {
+      setNote(t("staff.signed_out", { who: p.name ?? p.email }));
+      reload();
+    }
+  }
+
+  async function reset() {
+    if (await act.run(() => post(`/staff/${resetting!.id}/reset-passkeys`))) {
+      setResetting(null);
+      reload();
+    }
+  }
+
   return (
     <section class="narrow-form">
       <h2>{t("staff.title")}</h2>
@@ -51,7 +67,7 @@ export function Staff({ me }: { me: Me }) {
         error ? <ErrorNote error={error} /> : <Loading />
       ) : (
         <>
-          <ul class="files">
+          <ul class="files stack">
             {data.people.map((p) => (
               <li key={p.id}>
                 <span>
@@ -59,12 +75,27 @@ export function Staff({ me }: { me: Me }) {
                   <span class="muted">
                     {p.name ? `${p.email}, ` : ""}
                     {t(`staff.role_${p.role}`)}, {t("staff.joined", { date: fmtDate(p.created_at) })}
+                    <br />
+                    {p.passkeys ? t("staff.passkeys", { n: p.passkeys }) : t("staff.passkeys_none")},{" "}
+                    {p.sessions ? t("staff.sessions", { n: p.sessions }) : t("staff.sessions_none")}
                   </span>
                 </span>
                 {p.id !== me.user.id && (
-                  <button class="small" disabled={act.busy} onClick={() => setRemoving(p)}>
-                    {t("staff.remove")}
-                  </button>
+                  <span class="actions">
+                    {p.passkeys > 0 && (
+                      <button class="small" disabled={act.busy} onClick={() => setResetting(p)}>
+                        {t("staff.reset_passkeys")}
+                      </button>
+                    )}
+                    {p.sessions > 0 && (
+                      <button class="small" disabled={act.busy} onClick={() => signOut(p)}>
+                        {t("staff.sign_out")}
+                      </button>
+                    )}
+                    <button class="small" disabled={act.busy} onClick={() => setRemoving(p)}>
+                      {t("staff.remove")}
+                    </button>
+                  </span>
                 )}
               </li>
             ))}
@@ -102,13 +133,28 @@ export function Staff({ me }: { me: Me }) {
             <Field label={t("staff.name")} hint={t("staff.name_hint")}>
               <input maxLength={120} value={name} onInput={(e) => setName(e.currentTarget.value)} />
             </Field>
-            {!removing && <ErrorNote error={act.error} />}
+            {!removing && !resetting && <ErrorNote error={act.error} />}
             {note && <p class="ok">{note}</p>}
             <button class="primary" disabled={act.busy}>
               {t("staff.send")}
             </button>
           </form>
         </>
+      )}
+      {resetting && (
+        <Confirm
+          title={t("staff.reset_title", { who: resetting.name ?? resetting.email })}
+          body={t("staff.reset_body")}
+          confirm={t("staff.reset_passkeys")}
+          danger
+          busy={act.busy}
+          error={act.error}
+          onConfirm={reset}
+          onCancel={() => {
+            setResetting(null);
+            act.reset();
+          }}
+        />
       )}
       {removing && (
         <Confirm

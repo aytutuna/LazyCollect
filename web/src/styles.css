@@ -825,3 +825,7 @@ dialog.viewer[open] {
     max-height: 55%;
   }
 }
+
+.files.stack li {
+  flex-wrap: wrap;
+}

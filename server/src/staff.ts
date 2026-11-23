@@ -22,7 +22,13 @@ staff.get("/staff", async (c) => {
   const firmId = c.get("firm").id;
   const db = c.env.CONTROL;
   const [people, invites] = await db.batch([
-    db.prepare("SELECT id, email, name, role, created_at FROM users WHERE firm_id = ? AND disabled_at IS NULL ORDER BY created_at, id").bind(firmId),
+    db
+      .prepare(
+        `SELECT id, email, name, role, created_at, (SELECT COUNT(*) FROM sessions s WHERE s.user_id = users.id AND s.expires_at > ?) AS sessions,
+           (SELECT COUNT(*) FROM passkeys k WHERE k.user_id = users.id) AS passkeys
+         FROM users WHERE firm_id = ? AND disabled_at IS NULL ORDER BY created_at, id`,
+      )
+      .bind(Date.now(), firmId),
     db.prepare(`SELECT id, email, name, created_at, expires_at FROM invites WHERE firm_id = ? AND ${LIVE} ORDER BY created_at DESC, id`).bind(firmId),
   ]);
   return c.json({ people: people.results, invites: invites.results });
@@ -122,6 +128,31 @@ staff.delete("/staff/invites/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+staff.post("/staff/:id/sign-out", async (c) => {
+  const id = c.req.param("id");
+  const db = c.env.CONTROL;
+  if (!(await db.prepare("SELECT 1 FROM users WHERE id = ? AND firm_id = ? AND disabled_at IS NULL").bind(id, c.get("firm").id).first())) return notFound(c);
+  if (id === c.get("session")!.userId) return c.json({ error: "cannot_target_self" }, 409);
+  const res = await db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(id).run();
+  await audit(c, "staff.sign_out", "user", id, { count: res.meta.changes }).run();
+  return c.json({ ok: true });
+});
+
+// the person has to enrol again at the next sign-in if the account requires passkeys
+staff.post("/staff/:id/reset-passkeys", async (c) => {
+  const id = c.req.param("id");
+  const db = c.env.CONTROL;
+  if (!(await db.prepare("SELECT 1 FROM users WHERE id = ? AND firm_id = ? AND disabled_at IS NULL").bind(id, c.get("firm").id).first())) return notFound(c);
+  if (id === c.get("session")!.userId) return c.json({ error: "cannot_target_self" }, 409);
+  const [res] = await db.batch([
+    db.prepare("DELETE FROM passkeys WHERE user_id = ?").bind(id),
+    db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(id),
+    db.prepare("DELETE FROM pending_logins WHERE user_id = ?").bind(id),
+  ]);
+  await audit(c, "passkey.reset", "user", id, { count: res.meta.changes }).run();
+  return c.json({ ok: true });
+});
+
 staff.delete("/staff/:id", async (c) => {
   const id = c.req.param("id");
   const firmId = c.get("firm").id;
@@ -139,6 +170,8 @@ staff.delete("/staff/:id", async (c) => {
       )
       .bind(now, id, firmId, firmId),
     db.prepare("DELETE FROM sessions WHERE user_id = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND disabled_at = ?)").bind(id, id, now),
+    // a removed person who is invited back starts without the old passkeys
+    db.prepare("DELETE FROM passkeys WHERE user_id = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND disabled_at = ?)").bind(id, id, now),
   ]);
   if (!res.meta.changes) return c.json({ error: "last_owner" }, 409);
   await audit(c, "staff.remove", "user", id).run();

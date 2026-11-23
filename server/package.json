@@ -9,6 +9,7 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@simplewebauthn/server": "14.1.0",
     "hono": "4.13.19"
   },
   "devDependencies": {
