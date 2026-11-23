@@ -373,6 +373,46 @@ describe("reminders", () => {
     expect((await messages()).filter((m) => m.kind === "deadline")).toHaveLength(1);
   });
 
+  // a manual Remind now, written as the route does: seq from 1,000,000, any time
+  const manual = (reqId: string, kind: "reminder" | "deadline", sentAt: number) =>
+    env.DB_NA.prepare(
+      `INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at)
+       SELECT lower(hex(randomblob(16))), firm_id, id, client_id, 'email', ?2, 1000000, 1, 'x', 'sent', 1, ?3 FROM requests WHERE id = ?1`,
+    )
+      .bind(reqId, kind, sentAt)
+      .run();
+
+  it("lets a manual reminder hold off the deadline morning and the note after it", async () => {
+    const { cookie, req } = await ready();
+    const sent = mockOutbound();
+    await invite(cookie, req.id);
+    const morning = at(2027, 1, 20, 9);
+    await pin(req.id, morning, 3);
+    await manual(req.id, "reminder", morning - 2 * HOUR);
+    sent.length = 0;
+    await runReminders(env, morning);
+    expect(sent).toHaveLength(0);
+    expect((await requestRow(req.id)).next_reminder_at).toBeGreaterThan(morning);
+
+    // the same for the note: a manual reminder the evening before blocks it
+    await pin(req.id, at(2027, 1, 21, 9), 6);
+    await env.DB_NA.prepare("UPDATE messages SET sent_at = ? WHERE seq = 1000000").bind(at(2027, 1, 21, 9) - 5 * HOUR).run();
+    await runReminders(env, at(2027, 1, 21, 9));
+    expect(sent).toHaveLength(0);
+  });
+
+  it("sends no deadline note of its own after a manual one", async () => {
+    const { cookie, req } = await ready();
+    const sent = mockOutbound();
+    await invite(cookie, req.id);
+    await pin(req.id, at(2027, 1, 21, 9), 6);
+    await manual(req.id, "deadline", at(2027, 1, 20, 12));
+    sent.length = 0;
+    await runReminders(env, at(2027, 1, 21, 9));
+    expect(sent).toHaveLength(0);
+    expect((await requestRow(req.id)).next_reminder_at).toBeNull();
+  });
+
   it("retries a failed send twice and then moves on", async () => {
     const { cookie, req } = await ready();
     mockOutbound();

@@ -1,7 +1,7 @@
 import { sendMail } from "./email";
 import { usable } from "./firm";
 import { linkUrl } from "./links";
-import { deliver, stopHash, unsubUrl, type Missing } from "./mail";
+import { MANUAL_SEQ, deliver, stopHash, unsubUrl, type Missing } from "./mail";
 import { regionIds, regionOf, type Region } from "./regions";
 import { SPACING, dayOf, inHours, nextOpening, nextReminder, sameDay } from "./tz";
 import { DAY, HOUR, MINUTE } from "./util";
@@ -151,18 +151,26 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
     if (!reachable(r) || !canSend(sender, now)) return move(now + DAY);
     const tz = sender.tz;
     if (!inHours(now, tz)) return move(nextOpening(now, tz));
-    // a client hears from us at most once in 36 hours; the note after the deadline closes things out, and the deadline morning may follow the reminder two days before
+    // a client hears from us at most once in 36 hours; the note after the deadline closes things out, and the deadline morning may follow the reminder two days before.
+    // A manual Remind now holds off the next send of any kind, and a manual deadline note takes the place of the cron's.
     const kind = now >= r.deadline ? "deadline" : "reminder";
-    if (kind === "reminder") {
-      const recent = await db
-        .prepare(
-          `SELECT request_id, sent_at FROM messages WHERE firm_id = ? AND client_id = ? AND kind IN ('reminder', 'deadline') AND status IN ('sent', 'sending') AND sent_at > ?
-           ORDER BY sent_at DESC LIMIT 1`,
-        )
-        .bind(r.firm_id, r.client_id, now - SPACING)
-        .first<{ request_id: string; sent_at: number }>();
-      const morning = sameDay(dayOf(now, tz), dayOf(r.deadline, tz));
-      if (recent && !(recent.request_id === r.id && morning)) return move(nextOpening(recent.sent_at + SPACING - 1, tz));
+    if (kind === "deadline") {
+      const manual = await db
+        .prepare("SELECT 1 AS n FROM messages WHERE firm_id = ? AND request_id = ? AND kind = 'deadline' AND seq >= ? AND status IN ('sent', 'sending')")
+        .bind(r.firm_id, r.id, MANUAL_SEQ)
+        .first();
+      if (manual) return move(null);
+    }
+    const recent = await db
+      .prepare(
+        `SELECT request_id, sent_at, seq FROM messages WHERE firm_id = ? AND client_id = ? AND kind IN ('reminder', 'deadline') AND status IN ('sent', 'sending') AND sent_at > ?${kind === "deadline" ? " AND seq >= ?" : ""}
+         ORDER BY sent_at DESC LIMIT 1`,
+      )
+      .bind(r.firm_id, r.client_id, now - SPACING, ...(kind === "deadline" ? [MANUAL_SEQ] : []))
+      .first<{ request_id: string; sent_at: number; seq: number }>();
+    if (recent) {
+      const morning = kind === "reminder" && recent.seq < MANUAL_SEQ && recent.request_id === r.id && sameDay(dayOf(now, tz), dayOf(r.deadline, tz));
+      if (!morning) return move(nextOpening(recent.sent_at + SPACING - 1, tz));
     }
 
     const items = await missingItems(db, r.firm_id, r.id, false);
