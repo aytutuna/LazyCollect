@@ -33,6 +33,7 @@ export type Client = {
   name: string;
   email: string | null;
   phone: string | null;
+  reference: string | null;
   email_ok_at: number | null;
   email_stop_at: number | null;
   sms_ok_at: number | null;
@@ -85,6 +86,7 @@ export type RequestDetail = {
   deadline: number;
   status: string;
   sent_at: number | null;
+  first_opened_at: number | null;
   reminders_on: boolean;
   next_reminder_at: number | null;
   ended_at: number | null;
@@ -138,4 +140,45 @@ export type ClientView = {
   contact: { name: string | null; email: string | null; phone: string | null; address: string | null } | null;
   notes: Note[];
   items: ClientItem[];
+};
+
+export type ImportResult = { rows: { status: "new" | "update" | "skip"; reason?: string }[]; counts: { new: number; update: number; skip: number } };
+
+export type Batch = {
+  id: string;
+  title: string;
+  source_kind: "template" | "request" | "repeat";
+  source_name: string | null;
+  deadline: number | null;
+  reminders_on: boolean;
+  send_at: number;
+  status: "scheduled" | "sending" | "done" | "cancelled";
+  total: number;
+  limited_at: number | null;
+  created_at: number;
+  finished_at: number | null;
+  pending: number;
+  sent: number;
+  no_email: number;
+  skipped: number;
+  failed: number;
+  cancelled: number;
+  opened: number;
+  complete: number;
+  review: number;
+};
+
+export type BatchRow = {
+  request_id: string;
+  client_id: string;
+  client_name: string;
+  email: string | null;
+  state: "pending" | "sent" | "no_email" | "skipped" | "failed" | "cancelled";
+  reason: string | null;
+  sent_at: number | null;
+  title: string;
+  status: string;
+  deadline: number;
+  first_opened_at: number | null;
+  to_review: number;
 };
