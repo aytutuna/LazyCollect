@@ -4,6 +4,7 @@ import { usable } from "./firm";
 import { LINK_GRACE, sealToken } from "./links";
 import { addressStopped, deliver, hasRoom, unsubUrl } from "./mail";
 import { regionOf, type Region } from "./regions";
+import { listRequests } from "./search";
 import { missingItems, senderName, sendersOf } from "./reminders";
 import { endNow, syncStatus } from "./status";
 import { nextReminder } from "./tz";
@@ -116,25 +117,7 @@ async function loadRequest(c: Context<AppEnv>, id: string) {
   };
 }
 
-requests.get("/requests", async (c) => {
-  const { results } = await c.get("db")
-    .prepare(
-      `SELECT r.id, r.client_id, cl.name AS client_name, r.title, r.deadline, r.status, r.sent_at, r.created_at,
-         COALESCE(SUM(i.status = 'empty'), 0) AS empty,
-         COALESCE(SUM(i.status = 'submitted'), 0) AS submitted,
-         COALESCE(SUM(i.status = 'approved'), 0) AS approved,
-         COALESCE(SUM(i.status = 'rejected'), 0) AS rejected
-       FROM requests r
-       JOIN clients cl ON cl.firm_id = r.firm_id AND cl.id = r.client_id AND cl.deleted_at IS NULL
-       LEFT JOIN items i ON i.firm_id = r.firm_id AND i.request_id = r.id
-       WHERE r.firm_id = ? AND r.deleted_at IS NULL
-       GROUP BY r.id
-       ORDER BY r.created_at DESC, r.rowid DESC`,
-    )
-    .bind(c.get("firm").id)
-    .all();
-  return c.json(results);
-});
+requests.get("/requests", listRequests);
 
 requests.get("/requests/:id", async (c) => {
   const req = await findRequest(c);

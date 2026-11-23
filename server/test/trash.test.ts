@@ -12,7 +12,7 @@ describe("recently deleted", () => {
     expect(first.requests).toHaveLength(1);
     expect(first.requests[0]).toMatchObject({ id: req.id, title: "2025 taxes", client_name: "Amy" });
     expect(first.requests[0].purge_at).toBe(first.requests[0].deleted_at + RESTORE_WINDOW);
-    expect(await (await api("/api/requests", { cookie })).json()).toEqual([]);
+    expect((await (await api("/api/requests", { cookie })).json<any>()).rows).toEqual([]);
 
     await api(`/api/clients/${req.client_id}`, { method: "DELETE", cookie });
     const both = await (await api("/api/trash", { cookie })).json<any>();
@@ -40,7 +40,7 @@ describe("restore", () => {
     expect(row.closed_at).toBeGreaterThan(0);
     expect(row.keep_until).toBeGreaterThan(row.ended_at);
     expect((await env.DB_NA.prepare("SELECT revoked_at FROM links").first<any>())!.revoked_at).toBeGreaterThan(0);
-    expect((await (await api("/api/requests", { cookie })).json<any[]>()).map((r) => r.id)).toEqual([req.id]);
+    expect((await (await api("/api/requests", { cookie })).json<any>()).rows.map((r: any) => r.id)).toEqual([req.id]);
     expect((await api(`/api/requests/${req.id}/restore`, { method: "POST", cookie })).status).toBe(404);
     expect((await env.DB_NA.prepare("SELECT action FROM audit WHERE action = 'request.restore'").all()).results).toHaveLength(1);
   });

@@ -86,7 +86,7 @@ describe("deleted client", () => {
     expect((await api(path)).status).toBe(200);
     expect((await api(`/api/clients/${clientId}`, { method: "DELETE", cookie })).status).toBe(200);
     expect((await api(path)).status).toBe(404);
-    expect(await (await api("/api/requests", { cookie })).json()).toEqual([]);
+    expect((await (await api("/api/requests", { cookie })).json<any>()).rows).toEqual([]);
     const row = await env.DB_NA.prepare("SELECT status, closed_at FROM requests WHERE id = ?").bind(req.id).first<any>();
     expect(row.status).toBe("closed");
     expect(row.closed_at).toBeGreaterThan(0);

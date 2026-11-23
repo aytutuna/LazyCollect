@@ -34,7 +34,7 @@ describe("tenant isolation", () => {
       expect([method, path, (await send(path, method, body)).status]).toEqual([method, path, 404]);
     }
 
-    expect(await (await api("/api/requests", { cookie })).json()).toEqual([]);
+    expect((await (await api("/api/requests", { cookie })).json<any>()).rows).toEqual([]);
     const clients = await (await api("/api/clients", { cookie })).json<any[]>();
     expect(clients.map((c) => c.id)).toEqual([b.client.id]);
     const own = await (await api("/api/templates", { cookie })).json<any[]>();

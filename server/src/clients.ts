@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { audit } from "./audit";
 import { normalizeEmail } from "./auth";
 import { stopHash } from "./mail";
+import { PAGE, likeOf, offsetOf, queryOf } from "./search";
 import type { AppEnv } from "./session";
 import { endNow } from "./status";
 import { randomId } from "./util";
@@ -28,6 +29,23 @@ clients.get("/clients", async (c) => {
     .bind(c.get("firm").id)
     .all();
   return c.json(results);
+});
+
+// the Clients page: a search and 50 at a time; the pickers elsewhere still take the whole list above
+clients.get("/clients/search", async (c) => {
+  const q = queryOf(c);
+  const offset = offsetOf(c);
+  if (q === undefined || offset === undefined) return invalid(c);
+  const like = likeOf(q);
+  const { results } = await c.get("db")
+    .prepare(
+      `SELECT ${COLS}, (SELECT COUNT(*) FROM requests r WHERE r.firm_id = clients.firm_id AND r.client_id = clients.id AND r.deleted_at IS NULL) AS requests
+       FROM clients WHERE firm_id = ? AND deleted_at IS NULL${q ? " AND (name LIKE ? ESCAPE '!' OR email LIKE ? ESCAPE '!' OR phone LIKE ? ESCAPE '!')" : ""}
+       ORDER BY name COLLATE NOCASE, created_at, id LIMIT ${PAGE + 1} OFFSET ${offset}`,
+    )
+    .bind(c.get("firm").id, ...(q ? [like, like, like] : []))
+    .all();
+  return c.json({ rows: results.slice(0, PAGE), next: results.length > PAGE ? offset + PAGE : null });
 });
 
 clients.post("/clients", async (c) => {

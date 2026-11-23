@@ -72,7 +72,7 @@ describe("requests", () => {
     await make(cookie, { client_id: client.id, title: "Second", deadline: inDays(7) });
     await env.DB_NA.prepare("UPDATE items SET status = 'submitted' WHERE request_id = ? AND position = 0").bind(first.id).run();
     await env.DB_NA.prepare("UPDATE items SET status = 'approved' WHERE request_id = ? AND position = 1").bind(first.id).run();
-    const list = await (await api("/api/requests", { cookie })).json<any[]>();
+    const list = (await (await api("/api/requests", { cookie })).json<any>()).rows as any[];
     expect(list.map((r) => r.title)).toEqual(["Second", "First"]);
     expect(list[0]).toMatchObject({ empty: 0, submitted: 0, approved: 0, rejected: 0, client_name: "Amy" });
     expect(list[1]).toMatchObject({ empty: 1, submitted: 1, approved: 1, rejected: 0 });
@@ -82,7 +82,7 @@ describe("requests", () => {
     const { cookie, client } = await setup();
     const r = await (await make(cookie, { client_id: client.id, title: "A", deadline: inDays(7) })).json<any>();
     await env.DB_NA.prepare("UPDATE requests SET deleted_at = 1 WHERE id = ?").bind(r.id).run();
-    expect(await (await api("/api/requests", { cookie })).json()).toEqual([]);
+    expect((await (await api("/api/requests", { cookie })).json<any>()).rows).toEqual([]);
     expect((await api(`/api/requests/${r.id}`, { cookie })).status).toBe(404);
   });
 
@@ -272,7 +272,7 @@ describe("request delete", () => {
     const { url } = await (await api(`/api/requests/${id}/link`, { method: "POST", cookie })).json<any>();
     expect((await api(`/api/requests/${id}`, { method: "DELETE", cookie })).status).toBe(200);
     expect((await api(`/api/requests/${id}`, { cookie })).status).toBe(404);
-    expect(await (await api("/api/requests", { cookie })).json()).toEqual([]);
+    expect((await (await api("/api/requests", { cookie })).json<any>()).rows).toEqual([]);
     expect((await api(`/api/c/${url.split("/c/")[1]}`)).status).toBe(404);
     const link = await env.DB_NA.prepare("SELECT revoked_at FROM links").first<any>();
     expect(link.revoked_at).toBeGreaterThan(0);
