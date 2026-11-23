@@ -10,6 +10,7 @@
   "delete": "Delete",
   "notfound": "This page does not exist.",
   "progress": "Received {done} of {total}",
+  "plan.ended_member": "The plan has ended, so new links and deadline changes are paused. Ask the account owner to subscribe.",
   "plan.ended": "Your plan has ended. New links and deadline changes are paused. Subscribe in Settings to turn them back on.",
   "plan.past_due": "Your last payment did not go through. Update your payment details in Settings by {date} to keep sending links.",
 
@@ -54,6 +55,7 @@
   "error.has_upload": "This item already has a file, so it cannot be removed.",
   "error.too_many_items": "A request can have up to 100 items.",
   "error.firm_profile": "Add your name or business name in Settings first.",
+  "error.plan_member": "The plan has ended. Ask the account owner to subscribe.",
   "error.plan": "Your plan has ended. Subscribe in Settings to send new links or change deadlines.",
   "error.billing": "We could not reach the payment service. Try again in a moment.",
   "error.subscribed": "This account already has a subscription. Use Manage billing instead.",
@@ -153,6 +155,7 @@
   "settings.close_confirm": "Close account",
   "closed.title": "This account is closed",
   "closed.body": "Its records are deleted on {date}. Until then you can reopen it. The subscription ended when the account was closed, so you will need to subscribe again.",
+  "closed.body_held": "Its records were deleted on {date}, except those on legal hold. Because some are still held, you can still reopen the account. The subscription ended when it was closed, so you will need to subscribe again.",
   "closed.reopen": "Reopen account",
   "closed.member": "Ask the owner of the account to reopen it.",
   "settings.firm": "Your details",

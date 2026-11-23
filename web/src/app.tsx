@@ -14,7 +14,7 @@ import { SignIn } from "./screens/signin";
 import { TemplatePage, Templates } from "./screens/templates";
 import { Trash } from "./screens/trash";
 import type { Me } from "./types";
-import { ErrorNote, Loading } from "./ui";
+import { ErrorNote, Loading, setOwner } from "./ui";
 
 function NavLink({ href, children }: { href: string; children: string }) {
   const [active] = useRoute(href === "/" ? "/" : `${href}/*?`);
@@ -36,6 +36,7 @@ export function App() {
     try {
       const found = await get<Me>("/me");
       setZone(found.firm.tz);
+      setOwner(found.user.role === "owner");
       setMe(found);
       return found;
     } catch (e) {
@@ -112,7 +113,7 @@ export function App() {
       </header>
       {(ended || pastDue) && (
         <div class="banner" role="status">
-          {ended ? t("plan.ended") : t("plan.past_due", { date: fmtDate((me.firm.past_due_since ?? 0) + 7 * 86_400_000) })}
+          {ended ? t(me.user.role === "owner" ? "plan.ended" : "plan.ended_member") : t("plan.past_due", { date: fmtDate((me.firm.past_due_since ?? 0) + 7 * 86_400_000) })}
         </div>
       )}
       {notice}

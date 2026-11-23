@@ -3,9 +3,16 @@ import { useEffect, useRef } from "preact/hooks";
 import { ApiError } from "./api";
 import { t } from "./i18n";
 
+// members get a different line for a plan that has ended, since only the owner can subscribe
+let owner = true;
+
+export function setOwner(v: boolean) {
+  owner = v;
+}
+
 export function errorText(e: unknown): string {
   const code = e instanceof ApiError ? e.code : "server_error";
-  const key = `error.${code}`;
+  const key = code === "plan" && !owner ? "error.plan_member" : `error.${code}`;
   const text = t(key);
   return text === key ? t("error.server_error") : text;
 }

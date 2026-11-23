@@ -134,7 +134,7 @@ export function Closed({ me, onReopened, onSignOut }: { me: Me; onReopened: () =
     <main class="narrow">
       <h1 class="brand">{t("app.name")}</h1>
       <h2>{t("closed.title")}</h2>
-      <p>{t("closed.body", { date: fmtDate(me.firm.closed_at! + 30 * 86_400_000) })}</p>
+      <p>{t(me.firm.closed_at! + 30 * 86_400_000 > Date.now() ? "closed.body" : "closed.body_held", { date: fmtDate(me.firm.closed_at! + 30 * 86_400_000) })}</p>
       {!owner && <p class="muted">{t("closed.member")}</p>}
       <ErrorNote error={error} />
       <p class="actions">
