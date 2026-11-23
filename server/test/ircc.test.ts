@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { describe, expect, it } from "vitest";
 import { builtinTemplates } from "../src/templates";
 import { api, inDays, setup } from "./helpers";

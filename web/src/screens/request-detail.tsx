@@ -7,6 +7,7 @@ import type { ActivityRow, Client, Firm, Item, ItemWithFiles, LinkResult, Messag
 import { ActivityList } from "./activity";
 import { Why } from "../reasons";
 import { ExampleField } from "./example-field";
+import { IrccDialog } from "./ircc-dialog";
 import { QuestionFields, newItem, toPayload, type EditItem, type Parent } from "./items-editor";
 import { Review } from "./review";
 import { Thread } from "./thread";
@@ -35,6 +36,7 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
   const [url, setUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [viewing, setViewing] = useState<string | null>(null);
+  const [ircc, setIrcc] = useState(false);
   const [reminded, setReminded] = useState<string | null>(null);
   const nudge = useAction();
   const act = useAction((e) => e instanceof ApiError && e.status === 409 && reload());
@@ -363,7 +365,8 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
           <p>
             <button disabled={act.busy} onClick={download}>
               {t("detail.download")}
-            </button>
+            </button>{" "}
+            <button onClick={() => setIrcc(true)}>{t("ircc.button")}</button>
           </p>
         )}
         {manage && (adding ? <ItemForm requestId={id} parents={parentsOfRequest(req.items)} onSaved={saved} onCancel={() => setAdding(false)} /> : <button onClick={() => setAdding(true)}>{t("items.add")}</button>)}
@@ -397,6 +400,7 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
         </button>
       </div>
 
+      {ircc && <IrccDialog req={req} clientName={clientName} onClose={() => setIrcc(false)} />}
       {viewing && <Viewer req={req} startId={viewing} onClose={() => setViewing(null)} onChanged={refresh} />}
 
       {ask === "link" && (

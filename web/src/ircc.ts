@@ -47,13 +47,15 @@ const ascii = (s: string) =>
     .replace(/[̀-ͯ]/g, "")
     .replace(/['’]/g, "");
 
-const words = (s: string, max: number) => {
+export const words = (s: string, max: number) => {
   const out: string[] = [];
   let len = 0;
   for (const w of ascii(s).split(/[^A-Za-z0-9]+/).filter(Boolean)) {
     if (len + w.length + (out.length ? 1 : 0) > max) {
       // one very long word is cut rather than dropped
       if (!out.length) out.push(w.slice(0, max));
+      // a cut that ends on a joining word reads badly
+      while (out.length > 1 && /^(and|or|of|the|for|to|a|in|on)$/i.test(out[out.length - 1])) out.pop();
       break;
     }
     len += w.length + (out.length ? 1 : 0);

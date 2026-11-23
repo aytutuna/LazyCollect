@@ -6,13 +6,16 @@ import { ZipWriter, crc32 } from "./zip";
 // a 1x1 JPEG padded with comment segments up to the size a real photo would have
 const TINY = Uint8Array.from(atob("/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA="), (c) => c.charCodeAt(0));
 function jpeg(size: number): Uint8Array {
-  const pad: number[][] = [];
-  for (let left = Math.max(0, size - TINY.length); left > 4; ) {
-    const n = Math.min(left, 65_000);
-    pad.push([0xff, 0xfe, ((n - 2) >> 8) & 0xff, (n - 2) & 0xff, ...new Array(n - 4).fill(0)]);
-    left -= n;
+  const out = new Uint8Array(Math.max(size, TINY.length));
+  out.set(TINY.subarray(0, 2));
+  let at = 2;
+  while (out.length - at - (TINY.length - 2) > 4) {
+    const n = Math.min(out.length - at - (TINY.length - 2), 65_000);
+    out.set([0xff, 0xfe, ((n - 2) >> 8) & 0xff, (n - 2) & 0xff], at);
+    at += n;
   }
-  return Uint8Array.from([...TINY.slice(0, 2), ...pad.flat(), ...TINY.slice(2)]);
+  out.set(TINY.subarray(2), at);
+  return out;
 }
 
 // bytes grow with the pixel count and the quality, as they do for a real page
@@ -90,6 +93,10 @@ describe("irccName", () => {
     expect(irccName("Résumé — José O'Neil", "", new Set())).toBe("Resume-Jose-ONeil.pdf");
     expect(irccName("Provincial attestation letter (PAL or TAL)", "", new Set())).toBe("Provincial-attestation-letter.pdf");
     expect(irccName("Host's status & address / copy", "", new Set())).toBe("Hosts-status-address-copy.pdf");
+  });
+
+  it("does not end the document part on a joining word", () => {
+    expect(irccName("Previous diplomas and transcripts", "Amira Haddad", new Set())).toBe("Previous-diplomas-Amira-Haddad.pdf");
   });
 
   it("stays under 50 characters", () => {
