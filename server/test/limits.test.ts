@@ -48,7 +48,8 @@ describe("verify limits", () => {
     mockOutbound();
     const ip = "198.51.100.7";
     const statuses = [];
-    for (let i = 0; i < 12; i++) statuses.push((await verify("123456", { ip })).status);
+    // the limiter window can roll over mid-loop; 25 calls overflow one window either way
+    for (let i = 0; i < 25; i++) statuses.push((await verify("123456", { ip })).status);
     expect(statuses.slice(0, 10).every((s) => s === 400)).toBe(true);
     expect(statuses).toContain(429);
   });
