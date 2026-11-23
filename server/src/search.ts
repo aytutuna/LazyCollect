@@ -1,5 +1,6 @@
 import type { Context } from "hono";
-import { visible } from "./questions";
+import { expiring, today } from "./expiry";
+import { validTo, visible } from "./questions";
 import type { AppEnv } from "./session";
 import { DAY } from "./util";
 import { invalid } from "./validate";
@@ -8,7 +9,7 @@ export const PAGE = 50;
 const MAX_OFFSET = 100_000;
 const MAX_QUERY = 100;
 
-export const VIEWS = ["to_review", "waiting", "overdue", "due_soon", "all", "done"] as const;
+export const VIEWS = ["to_review", "waiting", "expiring", "overdue", "due_soon", "all", "done"] as const;
 type View = (typeof VIEWS)[number];
 
 const STATUSES = ["draft", "open", "complete", "expired", "closed"];
@@ -40,6 +41,7 @@ export function queryOf(c: Context<AppEnv>): string | undefined {
 const WHEN = (now: number): Record<Exclude<View, "all">, { sql: string; binds: number[] }> => ({
   to_review: { sql: "status IN ('open', 'complete') AND (submitted > 0 OR unavailable > 0 OR unanswered > 0)", binds: [] },
   waiting: { sql: "status = 'open' AND missing > 0", binds: [] },
+  expiring: { sql: "status IN ('open', 'complete') AND expiring > 0", binds: [] },
   overdue: { sql: "status = 'open' AND deadline < ?", binds: [now] },
   due_soon: { sql: "status = 'open' AND deadline >= ? AND deadline < ?", binds: [now, now + 7 * DAY] },
   done: { sql: "status IN ('complete', 'closed')", binds: [] },
@@ -74,6 +76,8 @@ export async function listRequests(c: Context<AppEnv>) {
     conds.push("(cl.name LIKE ? ESCAPE '!' OR cl.email LIKE ? ESCAPE '!' OR r.title LIKE ? ESCAPE '!')");
     binds.push(like, like, like);
   }
+  const dated = today(now, c.get("firm").tz);
+  const flagged = expiring("i", "r", dated);
   const grouped = (withActivity: boolean) =>
     `SELECT r.id, r.client_id, cl.name AS client_name, r.title, r.deadline, r.status, r.sent_at, r.created_at,
        COALESCE(SUM(i.status = 'empty' AND ${visible("i")}), 0) AS empty,
@@ -84,6 +88,8 @@ export async function listRequests(c: Context<AppEnv>) {
        COALESCE(SUM(i.status = 'waived' AND ${visible("i")}), 0) AS waived,
        (SELECT COUNT(*) FROM notes n WHERE n.firm_id = r.firm_id AND n.request_id = r.id AND n.author = 'client'
          AND n.created_at > COALESCE((SELECT MAX(created_at) FROM notes WHERE firm_id = r.firm_id AND request_id = r.id AND author = 'user'), 0)) AS unanswered,
+       COALESCE(SUM(${flagged}), 0) AS expiring,
+       MIN(CASE WHEN ${flagged} THEN ${validTo("i")} END) AS expiring_on,
        COALESCE(SUM(i.required = 1 AND i.status IN ('empty', 'rejected') AND ${visible("i")}), 0) AS missing${
          withActivity
            ? `, NULLIF(MAX(COALESCE(MAX(i.reviewed_at), 0), COALESCE((SELECT MAX(f.uploaded_at) FROM files f WHERE f.firm_id = r.firm_id AND f.request_id = r.id AND f.state = 'live' AND f.deleted_at IS NULL), 0), COALESCE(MAX(i.unavailable_at), 0), COALESCE(MAX(i.answer_at), 0), COALESCE((SELECT MAX(n.created_at) FROM notes n WHERE n.firm_id = r.firm_id AND n.request_id = r.id), 0)), 0) AS last_at`

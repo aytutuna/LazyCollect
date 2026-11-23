@@ -6,7 +6,8 @@ import { t } from "./i18n";
 import { UploadQueue, sendJob, type Job } from "./queue";
 import { Example, FixList, exampleSrc } from "./reasons";
 import type { ClientItem, ClientView, Note } from "./types";
-import { Badge, LegalLink, Loading, errorText } from "./ui";
+import { groupByPerson, roleName } from "./people";
+import { Badge, Field, LegalLink, Loading, errorText } from "./ui";
 import { MAX_SIZE, combineToPdf, prepareImage, type Prepared } from "./upload";
 import "./styles.css";
 
@@ -160,6 +161,32 @@ function DontHave({ item, firm, onChange, onClose, onCancel }: { item: ClientIte
   );
 }
 
+// the date of a document, next to its upload; it saves when the field is left
+function Dates({ item, onChange }: { item: ClientItem; onChange: () => void }) {
+  const issue = item.expiry_rule === "issue";
+  const stored = (issue ? item.issued_on : item.expires_on) ?? "";
+  const [value, setValue] = useState(stored);
+  const { error, run } = useAction();
+  useEffect(() => setValue(stored), [stored]);
+
+  async function save() {
+    if (value === stored) return;
+    if (await run(() => put(`${base}/items/${item.id}/dates`, { [issue ? "issued_on" : "expires_on"]: value || null }))) {
+      announce(t("date.saved"));
+      onChange();
+    }
+  }
+
+  return (
+    <>
+      <Field label={t(issue ? "date.issued" : "date.expires")} hint={issue ? t("date.issued_hint", { n: item.valid_months ?? 0 }) : undefined}>
+        <input type="date" min="1900-01-01" max="2100-12-31" value={value} onInput={(e) => setValue(e.currentTarget.value)} onBlur={save} />
+      </Field>
+      <Alert error={error} />
+    </>
+  );
+}
+
 function statusText(item: ClientItem, firm: string): string {
   switch (item.status) {
     case "approved":
@@ -305,6 +332,7 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
         {mine.map((job) => (
           <JobRow key={job.id} job={job} online={online} />
         ))}
+        {open && item.expiry_rule && <Dates item={item} onChange={onChange} />}
         {preparing && <p class="muted">{t("client.preparing")}</p>}
         {combined > 0 && <p class="muted">{t("client.combined", { n: combined })}</p>}
         <Alert error={action.error} />
@@ -525,6 +553,44 @@ function ItemList({ items, firm, jobs, online, onChange, save }: { items: Client
   );
 }
 
+// what is asked of each person under their name, with how far they have got
+function Checklist({ items, firm, jobs, online, onChange, save, people }: { items: ClientItem[]; firm: string; jobs: Job[]; online: boolean; onChange: () => void; save: Save; people: ClientView["people"] }) {
+  const list = (of: ClientItem[], nested: boolean) => {
+    const optional = of.filter((i) => !i.required);
+    return (
+      <>
+        <ItemList items={of.filter((i) => i.required)} firm={firm} jobs={jobs} online={online} onChange={onChange} save={save} />
+        {optional.length > 0 && (
+          <>
+            {nested ? <h4 class="optional">{t("client.optional")}</h4> : <h3 class="optional">{t("client.optional")}</h3>}
+            <ItemList items={optional} firm={firm} jobs={jobs} online={online} onChange={onChange} save={save} />
+          </>
+        )}
+      </>
+    );
+  };
+  const groups = groupByPerson(items, people);
+  if (groups.length === 0 || (groups.length === 1 && !groups[0].person)) return list(items, false);
+  return (
+    <>
+      {groups.map(({ person, items: of }) => {
+        const scope = of.some((i) => i.required) ? of.filter((i) => i.required) : of;
+        const done = scope.filter((i) => RECEIVED.includes(i.status)).length;
+        return (
+          <section class="person" key={person?.position ?? "general"} aria-labelledby={`person-${person?.position ?? "general"}`}>
+            <h3 id={`person-${person?.position ?? "general"}`}>{person ? person.name : t("client.general")}</h3>
+            <p class="muted">
+              {person && `${roleName(person.role)}, `}
+              {t("client.person_progress", { done, total: scope.length })}
+            </p>
+            {list(of, true)}
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
 function Thread({ firm, notes, onChange }: { firm: string; notes: Note[]; onChange: () => void }) {
   const [body, setBody] = useState("");
   const [sent, setSent] = useState(false);
@@ -685,7 +751,6 @@ function Page() {
   };
 
   const firm = data.firm_name;
-  const optional = data.items.filter((i) => !i.required);
   const contact = data.contact && (data.contact.email || data.contact.phone || data.contact.address) ? data.contact : null;
   return (
     <main class="client-page">
@@ -733,13 +798,7 @@ function Page() {
 
       <section aria-labelledby="checklist-title">
         <h2 id="checklist-title">{t("client.checklist")}</h2>
-        <ItemList items={data.items.filter((i) => i.required)} firm={firm} jobs={jobs} online={online} onChange={reload} save={save} />
-        {optional.length > 0 && (
-          <>
-            <h3 class="optional">{t("client.optional")}</h3>
-            <ItemList items={optional} firm={firm} jobs={jobs} online={online} onChange={reload} save={save} />
-          </>
-        )}
+        <Checklist items={data.items} people={data.people ?? []} firm={firm} jobs={jobs} online={online} onChange={reload} save={save} />
       </section>
 
       <Thread firm={firm} notes={data.notes} onChange={reload} />

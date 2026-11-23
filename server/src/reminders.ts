@@ -1,4 +1,5 @@
 import { sendMail } from "./email";
+import { asked } from "./expand";
 import { usable } from "./firm";
 import { linkUrl } from "./links";
 import { MANUAL_SEQ, deliver, stopHash, unsubUrl, type Missing } from "./mail";
@@ -46,12 +47,15 @@ export const canSend = (s: Sender | undefined, now: number): s is Sender & { add
 export async function missingItems(db: D1Database, firmId: string, requestId: string, onlyRejected: boolean): Promise<Missing[]> {
   const { results } = await db
     .prepare(
-      `SELECT label, required, reject_note, reject_reasons FROM items i WHERE firm_id = ? AND request_id = ? AND ${visible("i")}
-       AND status IN (${onlyRejected ? "'rejected'" : "'empty', 'rejected'"}) ORDER BY required DESC, position`,
+      `SELECT label, required, reject_note, reject_reasons,
+         (SELECT name FROM people WHERE firm_id = i.firm_id AND request_id = i.request_id AND position = i.person_pos) AS person
+       FROM items i WHERE firm_id = ? AND request_id = ? AND ${visible("i")}
+       AND status IN (${onlyRejected ? "'rejected'" : "'empty', 'rejected'"}) ORDER BY required DESC, COALESCE(person_pos, -1), position`,
     )
     .bind(firmId, requestId)
-    .all<{ label: string; required: number; reject_note: string | null; reject_reasons: string | null }>();
-  return results.map((i) => ({ ...i, required: i.required === 1 }));
+    .all<{ label: string; required: number; reject_note: string | null; reject_reasons: string | null; person: string | null }>();
+  // "Passport (Amira Haddad)", with a person's items together
+  return results.map(({ person, ...i }) => ({ ...i, label: asked(i.label, person), required: i.required === 1 }));
 }
 
 type Row = {

@@ -9,7 +9,26 @@ const TEXT_LEN = 500;
 const LONG_TEXT_LEN = 5000;
 
 export type ShowIf = { item: number; value: string };
-export type Item = { label: string; help?: string; required: boolean; kind?: Kind; options?: string[]; show_if?: ShowIf; example?: string };
+
+// who an item is for when it is asked once for each person on a request
+export const FILTERS = ["everyone", "adults", "spouse", "children", "principal"] as const;
+export type Filter = (typeof FILTERS)[number];
+
+export type Item = {
+  label: string;
+  help?: string;
+  required: boolean;
+  kind?: Kind;
+  options?: string[];
+  show_if?: ShowIf;
+  example?: string;
+  per_person?: Filter;
+  // the date asked for: the day the document expires, or the day it was issued and how many months it counts for
+  expiry?: "expiry" | "issue";
+  valid_months?: number;
+  // the client says whether it is in English or French, and a translation is asked for when it is not
+  translation?: boolean;
+};
 
 // what a conditional item may hang on
 const PARENTS: Kind[] = ["yesno", "choice", "multi"];
@@ -46,6 +65,34 @@ export function parseKind(o: Record<string, unknown>): Pick<Item, "kind" | "opti
 
 type Parent = { kind: string; options: string[] | null; conditional: boolean };
 
+type Tags = Pick<Item, "per_person" | "expiry" | "valid_months" | "translation">;
+
+// per_person, expiry and translation belong to items that are always shown; undefined when invalid
+export function parseTags(o: Record<string, unknown>, kind: string, conditional: boolean): Tags | undefined {
+  const tags: Tags = {};
+  if (o.per_person !== undefined) {
+    const filter = FILTERS.find((f) => f === o.per_person);
+    if (!filter || conditional || PARENTS.includes(kind as Kind)) return undefined;
+    tags.per_person = filter;
+  }
+  if (o.expiry !== undefined) {
+    if (kind !== "file" || (o.expiry !== "expiry" && o.expiry !== "issue")) return undefined;
+    tags.expiry = o.expiry;
+  }
+  const months = o.valid_months;
+  if (months !== undefined) {
+    if (tags.expiry !== "issue" || !Number.isInteger(months) || (months as number) < 1 || (months as number) > 120) return undefined;
+    tags.valid_months = months as number;
+  } else if (tags.expiry === "issue") {
+    return undefined;
+  }
+  if (o.translation !== undefined) {
+    if (typeof o.translation !== "boolean" || (o.translation && (kind !== "file" || conditional))) return undefined;
+    if (o.translation) tags.translation = true;
+  }
+  return tags;
+}
+
 // a condition must point at an earlier, unconditional yes/no or choice item and at a value it can have
 export function conditionOk(show_if: ShowIf, parent: Parent | undefined): boolean {
   if (!parent || parent.conditional || !PARENTS.includes(parent.kind as Kind)) return false;
@@ -56,7 +103,7 @@ export function checkConditions(items: Item[]): boolean {
   return items.every((i, at) => {
     if (!i.show_if) return true;
     const p = items[i.show_if.item];
-    return i.show_if.item < at && conditionOk(i.show_if, p && { kind: p.kind ?? "file", options: p.options ?? null, conditional: Boolean(p.show_if) });
+    return i.show_if.item < at && conditionOk(i.show_if, p && { kind: p.kind ?? "file", options: p.options ?? null, conditional: Boolean(p.show_if || p.per_person) });
   });
 }
 
@@ -97,11 +144,18 @@ export const visible = (a: string) =>
      AND p.position = ${a}.show_if_pos AND p.answer IS NOT NULL
      AND CASE WHEN p.kind = 'multi' THEN EXISTS (SELECT 1 FROM json_each(p.answer) WHERE value = ${a}.show_if_value) ELSE p.answer = ${a}.show_if_value END))`;
 
-type Row = { required: number; hidden?: number; options_json: string | null; reject_reasons?: string | null; answer: string | null; kind: string };
+// a calendar date as the table keeps it; null clears one, undefined is not one
+export const parseDay = (v: unknown) => (v === null || v === "" ? null : (parseAnswer("date", null, v) as string | undefined));
 
-export function presentItem<T extends Row>({ options_json, reject_reasons, hidden, ...i }: T) {
+// SQL: the last day a document with a date is good for, from the rule the item uses; NULL until the date is given
+export const validTo = (a: string) => `CASE ${a}.expiry_rule WHEN 'expiry' THEN ${a}.expires_on WHEN 'issue' THEN date(${a}.issued_on, '+' || ${a}.valid_months || ' months') END`;
+
+type Row = { required: number; hidden?: number; translation?: number; options_json: string | null; reject_reasons?: string | null; answer: string | null; kind: string };
+
+export function presentItem<T extends Row>({ options_json, reject_reasons, hidden, translation, ...i }: T) {
   return {
     ...i,
+    ...(translation === undefined ? {} : { translation: translation === 1 }),
     reject_reasons: reject_reasons ? (JSON.parse(reject_reasons) as string[]) : [],
     required: i.required === 1,
     ...(hidden === undefined ? {} : { hidden: hidden === 1 }),
@@ -112,4 +166,5 @@ export function presentItem<T extends Row>({ options_json, reject_reasons, hidde
 
 // the columns the account sees on an item
 export const ITEM_COLS = `id, position, label, help, required, status, reject_note, reject_reasons, reviewed_at, unavailable_note, kind, example, options_json, show_if_pos, show_if_value, answer, answer_at,
+  person_pos, label_base, for_pos, companion, translation, expiry_rule, valid_months, expires_on, issued_on, ${validTo("items")} AS valid_to,
   NOT ${visible("items")} AS hidden`;

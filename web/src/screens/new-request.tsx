@@ -7,6 +7,7 @@ import type { Client, RequestDetail, Template } from "../types";
 import { ErrorNote, Field, Loading } from "../ui";
 import { ClientForm } from "./clients";
 import { ItemsEditor, newItem, toEditItems, toPayload, type EditItem } from "./items-editor";
+import { PeopleDrafts, newDraft, toPeople, type Draft } from "./people";
 
 export function NewRequest() {
   const [, go] = useLocation();
@@ -20,6 +21,8 @@ export function NewRequest() {
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
   const [deadline, setDeadline] = useState(toInput(inDays(14)));
+  const [people, setPeople] = useState<Draft[]>([]);
+  const [validUntil, setValidUntil] = useState("");
   const { busy, error, run } = useAction();
 
   function pickTemplate(id: string) {
@@ -31,6 +34,8 @@ export function NewRequest() {
     }
     setItems(toEditItems(found.items));
     if (!title) setTitle(found.name);
+    // a checklist for each person starts with the client as the principal applicant
+    if (found.items.some((i) => i.per_person) && people.length === 0) setPeople([newDraft("principal", clients.data?.find((c) => c.id === clientId)?.name ?? "")]);
   }
 
   useEffect(() => {
@@ -46,6 +51,8 @@ export function NewRequest() {
         note,
         deadline: fromInput(deadline),
         items: toPayload(items),
+        people: toPeople(people),
+        ...(validUntil ? { valid_until: validUntil } : {}),
       });
       go(`/requests/${created.id}`);
     });
@@ -103,6 +110,13 @@ export function NewRequest() {
         </section>
 
         <section>
+          <h2>{t("people.title")}</h2>
+          <p class="muted">{t("people.new_hint")}</p>
+          <PeopleDrafts drafts={people} onChange={setPeople} />
+          {toPeople(people).length === 0 && items.some((i) => i.perPerson) && <p class="muted">{t("people.new_waiting")}</p>}
+        </section>
+
+        <section>
           <h2>{t("new.checklist")}</h2>
           <Field label={t("new.template")}>
             <select value={templateId} onChange={(e) => pickTemplate(e.currentTarget.value)}>
@@ -121,6 +135,11 @@ export function NewRequest() {
               </optgroup>
             </select>
           </Field>
+          {items.some((i) => i.expiry) && (
+            <Field label={t("detail.valid_until")} hint={t("detail.valid_until_hint")}>
+              <input type="date" min="1900-01-01" max="2100-12-31" value={validUntil} onInput={(e) => setValidUntil(e.currentTarget.value)} />
+            </Field>
+          )}
           <ItemsEditor items={items} onChange={setItems} />
         </section>
 

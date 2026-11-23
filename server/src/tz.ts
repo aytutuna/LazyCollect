@@ -89,3 +89,11 @@ export function nextReminder(after: number, deadline: number, tz: string, first:
   const before = candidates.filter((t) => t < deadline);
   return before.length ? Math.min(...before) : atHour(addDays(last, 1), QUIET_START, tz);
 }
+
+export const isoDay = (d: Day) => `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
+
+// how far the zone's wall clock is ahead of UTC at an instant
+export function offsetAt(ms: number, tz: string): number {
+  const l = local(ms, tz);
+  return Date.UTC(l.y, l.m - 1, l.d, l.h, l.min) - ms;
+}

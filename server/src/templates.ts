@@ -16,7 +16,7 @@ import t2YearEnd from "../templates/t2-year-end";
 import { audit } from "./audit";
 import type { AppEnv } from "./session";
 import { ownsExamples, parseExample } from "./examples";
-import { parseKind, checkConditions, type Item } from "./questions";
+import { parseKind, parseTags, checkConditions, type Item } from "./questions";
 import { randomId } from "./util";
 import { exampleGone, invalid, locale, maybe, notFound, readBody, setClause, text } from "./validate";
 
@@ -53,8 +53,9 @@ export function parseItem(v: unknown): Item | undefined {
   if (!label || help === undefined || (o.required !== undefined && typeof o.required !== "boolean")) return undefined;
   const kind = parseKind(o);
   const example = parseExample(o.example);
-  if (!kind || example === undefined) return undefined;
-  return { label, ...(help ? { help } : {}), required: o.required ?? true, ...kind, ...(example ? { example } : {}) };
+  const tags = kind && parseTags(o, kind.kind ?? "file", Boolean(kind.show_if));
+  if (!kind || !tags || example === undefined) return undefined;
+  return { label, ...(help ? { help } : {}), required: o.required ?? true, ...kind, ...(example ? { example } : {}), ...tags };
 }
 
 export function parseItems(v: unknown): Item[] | undefined {

@@ -1,6 +1,8 @@
 import { Hono, type Context } from "hono";
 import { audit } from "./audit";
-import { itemColumns, itemsFromRequests, itemsFromTemplate, nextYearTitle } from "./copy";
+import { insertRows, itemColumns, itemsFromRequests, nextYearTitle, peopleFromRequests } from "./copy";
+import { MAX_ITEMS, expandItems } from "./expand";
+import { today } from "./expiry";
 import { usable } from "./firm";
 import { linkUrl } from "./links";
 import { addressStopped, deliver, hasRoom, unsubUrl } from "./mail";
@@ -39,7 +41,7 @@ function localTime(v: string, tz: string): number | null {
   return atHour({ y, m: mo, d }, h, tz) + min * MINUTE;
 }
 
-type Plan = { id: string; client_id: string; title: string; note: string | null; deadline: number; reminders_on: number; src: string | null; position: number; state: string; reason: string | null };
+type Plan = { id: string; client_id: string; title: string; note: string | null; deadline: number; reminders_on: number; src: string | null; again?: 1; position: number; state: string; reason: string | null };
 
 const hexIds = (v: unknown): string[] | undefined =>
   Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string" && /^[0-9a-f]{32}$/.test(x)) ? [...new Set(v as string[])] : undefined;
@@ -122,7 +124,7 @@ batches.post("/batches", async (c) => {
       if (next <= now) return c.json({ error: "repeat_deadline_passed" }, 400);
       if (next <= sendAt) return c.json({ error: "deadline_before_send" }, 400);
       if (deadline(next) === undefined) return invalid(c);
-      plans.push({ id: randomId(), client_id: r.client_id, title: nextYearTitle(r.title).slice(0, 200), note: r.note, deadline: next, reminders_on: body.reminders_on ? 1 : 0, src: r.id });
+      plans.push({ id: randomId(), client_id: r.client_id, title: nextYearTitle(r.title).slice(0, 200), note: r.note, deadline: next, reminders_on: body.reminders_on ? 1 : 0, src: r.id, again: 1 });
     }
   } else {
     due = deadline(body.deadline) ?? null;
@@ -172,6 +174,9 @@ batches.post("/batches", async (c) => {
   if (made + plans.length > MAX_BATCH_PER_DAY) return c.json({ error: "batch_limit" }, 429);
 
   const columns = kind === "template" ? [] : await itemColumns(db);
+  // a template's items for each person wait for people the new requests do not have yet
+  const expanded = expandItems(items, [], today(now, firm.tz).today);
+  if (expanded.rows.length > MAX_ITEMS) return invalid(c);
   const rows: Plan[] = plans.map((p, position) => {
     const ok = mailable.get(p.client_id);
     return { ...p, position, state: ok ? "pending" : "no_email", reason: ok ? null : "no_email" };
@@ -190,14 +195,21 @@ batches.post("/batches", async (c) => {
     stmts.push(
       db
         .prepare(
-          `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, reminders_on, created_by, created_at)
+          `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, reminders_on, created_by, created_at, per_person_json, valid_until)
            SELECT json_extract(value, '$.id'), ?1, json_extract(value, '$.client_id'), json_extract(value, '$.title'), json_extract(value, '$.note'), json_extract(value, '$.deadline'),
-             json_extract(value, '$.reminders_on'), ?2, ?3 FROM json_each(?4) WHERE EXISTS (SELECT 1 FROM batches WHERE firm_id = ?1 AND id = ?5)`,
+             json_extract(value, '$.reminders_on'), ?2, ?3,
+             CASE WHEN json_extract(value, '$.src') IS NULL THEN ?6 ELSE (SELECT per_person_json FROM requests WHERE firm_id = ?1 AND id = json_extract(value, '$.src')) END,
+             CASE WHEN json_extract(value, '$.again') = 1 THEN (SELECT date(valid_until, '+1 year') FROM requests WHERE firm_id = ?1 AND id = json_extract(value, '$.src')) END
+           FROM json_each(?4) WHERE EXISTS (SELECT 1 FROM batches WHERE firm_id = ?1 AND id = ?5)`,
         )
-        .bind(firm.id, userId, now, JSON.stringify(chunk), batchId),
-      kind === "template"
-        ? itemsFromTemplate(db, firm.id, chunk.map((p) => p.id), items)
-        : itemsFromRequests(db, firm.id, columns, chunk.map((p) => ({ id: p.id, src: p.src! }))),
+        .bind(firm.id, userId, now, JSON.stringify(chunk), batchId, expanded.perPerson.length ? JSON.stringify(expanded.perPerson) : null),
+      ...(kind === "template"
+        ? [insertRows(db, firm.id, chunk.map((p) => p.id), expanded.rows)]
+        : [
+            // a repeat is the same people a year on; a copy for other clients keeps only what is asked of everyone
+            ...(kind === "repeat" ? [peopleFromRequests(db, firm.id, chunk.map((p) => ({ id: p.id, src: p.src! })), now)] : []),
+            itemsFromRequests(db, firm.id, columns, chunk.map((p) => ({ id: p.id, src: p.src! })), kind === "repeat"),
+          ]),
       db
         .prepare(
           `INSERT INTO batch_items (firm_id, batch_id, request_id, client_id, position, state, reason)

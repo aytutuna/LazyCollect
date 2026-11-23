@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import type { Kind, TemplateItem } from "../types";
+import type { Filter, Kind, TemplateItem } from "../types";
 import { Check, Field } from "../ui";
 import { ExampleField } from "./example-field";
 
@@ -16,6 +16,12 @@ export type EditItem = {
   // the key of the item this one depends on, and the answer that shows it
   showKey: number | null;
   showValue: string;
+  // asked once for each person this describes; empty for the whole request
+  perPerson: Filter | "";
+  // the date asked for, and for an issue date how many months it counts for
+  expiry: "" | "expiry" | "issue";
+  months: string;
+  translation: boolean;
 };
 
 // what another item can hang its condition on
@@ -23,11 +29,12 @@ export type Parent = { key: number; label: string; kind: Kind; options: string[]
 
 const KINDS: Kind[] = ["file", "yesno", "text", "longtext", "number", "date", "choice", "multi"];
 const CHOICES: Kind[] = ["choice", "multi"];
+const FILTERS: Filter[] = ["everyone", "adults", "spouse", "children", "principal"];
 const PARENTS: Kind[] = ["yesno", "choice", "multi"];
 
 let keys = 0;
 
-export const newItem = (): EditItem => ({ key: ++keys, label: "", help: "", required: true, example: "", kind: "file", options: "", showKey: null, showValue: "" });
+export const newItem = (): EditItem => ({ key: ++keys, label: "", help: "", required: true, example: "", kind: "file", options: "", showKey: null, showValue: "", perPerson: "", expiry: "", months: "6", translation: false });
 
 export function toEditItems(items: TemplateItem[]): EditItem[] {
   const made: EditItem[] = items.map((i) => ({
@@ -40,6 +47,10 @@ export function toEditItems(items: TemplateItem[]): EditItem[] {
     options: (i.options ?? []).join("\n"),
     showKey: null,
     showValue: i.show_if?.value ?? "",
+    perPerson: i.per_person ?? "",
+    expiry: i.expiry ?? "",
+    months: String(i.valid_months ?? 6),
+    translation: i.translation ?? false,
   }));
   items.forEach((i, at) => {
     if (i.show_if) made[at].showKey = made[i.show_if.item]?.key ?? null;
@@ -60,6 +71,9 @@ export function toPayload(items: EditItem[]) {
       ...(i.kind === "file" ? {} : { kind: i.kind }),
       ...(CHOICES.includes(i.kind) ? { options: lines(i.options) } : {}),
       ...(at >= 0 ? { show_if: { item: at, value: i.showValue } } : {}),
+      ...(i.perPerson && at < 0 && !PARENTS.includes(i.kind) ? { per_person: i.perPerson } : {}),
+      ...(i.kind === "file" && i.expiry ? { expiry: i.expiry, ...(i.expiry === "issue" ? { valid_months: Number(i.months) || 6 } : {}) } : {}),
+      ...(i.kind === "file" && i.translation && at < 0 ? { translation: true } : {}),
     };
   });
 }
@@ -68,7 +82,7 @@ export const asParent = (i: EditItem): Parent => ({ key: i.key, label: i.label.t
 
 // Earlier items that can be asked about: a yes/no or choice item that is not itself conditional.
 export function parentsOf(items: EditItem[], index: number): Parent[] {
-  return items.slice(0, index).filter((p) => PARENTS.includes(p.kind) && p.showKey === null).map(asParent);
+  return items.slice(0, index).filter((p) => PARENTS.includes(p.kind) && p.showKey === null && !p.perPerson).map(asParent);
 }
 
 const valuesOf = (p: Parent) => (p.kind === "yesno" ? ["yes", "no"] : p.options);
@@ -124,6 +138,42 @@ export function QuestionFields({ item, parents, dependedOn, onChange }: FieldsPr
   );
 }
 
+// who an item is asked of, the date it asks for, and whether it may need a translation
+export function TagFields({ item, onChange }: { item: EditItem; onChange: (patch: Partial<EditItem>) => void }) {
+  const plain = item.showKey === null;
+  return (
+    <>
+      {plain && !PARENTS.includes(item.kind) && (
+        <Field label={t("items.for")}>
+          <select value={item.perPerson} onChange={(e) => onChange({ perPerson: e.currentTarget.value as Filter | "" })}>
+            <option value="">{t("items.for.none")}</option>
+            {FILTERS.map((f) => (
+              <option value={f}>{t(`items.for.${f}`)}</option>
+            ))}
+          </select>
+        </Field>
+      )}
+      {item.kind === "file" && (
+        <>
+          <Field label={t("items.dates")}>
+            <select value={item.expiry} onChange={(e) => onChange({ expiry: e.currentTarget.value as EditItem["expiry"] })}>
+              <option value="">{t("items.dates.none")}</option>
+              <option value="expiry">{t("items.dates.expiry")}</option>
+              <option value="issue">{t("items.dates.issue")}</option>
+            </select>
+          </Field>
+          {item.expiry === "issue" && (
+            <Field label={t("items.months")}>
+              <input type="number" required min={1} max={120} value={item.months} onInput={(e) => onChange({ months: e.currentTarget.value })} />
+            </Field>
+          )}
+          {plain && <Check label={t("items.translation")} checked={item.translation} onChange={(translation) => onChange({ translation })} />}
+        </>
+      )}
+    </>
+  );
+}
+
 export function ItemsEditor({ items, onChange }: { items: EditItem[]; onChange: (items: EditItem[]) => void }) {
   const set = (next: EditItem[]) => onChange(tidy(next));
   const change = (key: number, patch: Partial<EditItem>) => set(items.map((i) => (i.key === key ? { ...i, ...patch } : i)));
@@ -146,6 +196,7 @@ export function ItemsEditor({ items, onChange }: { items: EditItem[]; onChange: 
           </Field>
           <ExampleField value={item.example} onChange={(example) => change(item.key, { example })} />
           <QuestionFields item={item} parents={parentsOf(items, index)} dependedOn={items.some((i) => i.showKey === item.key)} onChange={(patch) => change(item.key, patch)} />
+          <TagFields item={item} onChange={(patch) => change(item.key, patch)} />
           <Check label={t("items.required")} checked={item.required} onChange={(required) => change(item.key, { required })} />
           <div class="row-actions">
             <button type="button" class="small" disabled={index === 0} onClick={() => move(index, -1)}>
