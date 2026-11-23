@@ -136,6 +136,20 @@ export async function claimStaffMail(env: Env, db: D1Database, firmId: string, n
   return res.meta.changes === 1 ? id : null;
 }
 
+// A look before a link is rotated for an email; deliver still guards the slot itself for parallel sends.
+export async function hasRoom(env: Env, db: D1Database, firmId: string, requestId: string, now = Date.now()): Promise<boolean> {
+  const paid = await env.CONTROL.prepare("SELECT stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<{ stripe_subscription_id: string | null }>();
+  const r = (await db
+    .prepare(
+      `SELECT (SELECT COUNT(*) FROM messages WHERE firm_id = ?1 AND status IN ('sent', 'sending') AND sent_at > ?3)
+         + (SELECT COUNT(*) FROM staff_mail WHERE firm_id = ?1 AND sent_at > ?3) AS day,
+       (SELECT COUNT(*) FROM messages WHERE firm_id = ?1 AND request_id = ?2 AND kind = 'invite' AND status IN ('sent', 'sending') AND sent_at > ?3) AS invites`,
+    )
+    .bind(firmId, requestId, now - DAY)
+    .first<{ day: number; invites: number }>())!;
+  return r.day < dailyCap(paid?.stripe_subscription_id) && r.invites < INVITES_PER_REQUEST;
+}
+
 // The row goes in as 'sending' before the provider is called; the unique key lets only one run claim a slot.
 export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now()): Promise<{ outcome: Outcome; seq: number }> {
   const { db, firmId, requestId, kind } = slot;

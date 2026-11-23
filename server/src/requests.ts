@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { usable } from "./firm";
 import { LINK_GRACE, sealToken } from "./links";
-import { deliver, stopHash, unsubUrl } from "./mail";
+import { deliver, hasRoom, stopHash, unsubUrl } from "./mail";
 import { regionOf, type Region } from "./regions";
 import { missingItems, senderName, sendersOf } from "./reminders";
 import { endNow, syncStatus } from "./status";
@@ -432,6 +432,8 @@ requests.post("/requests/:id/link", async (c) => {
     if (client.email_stop_at) return c.json({ error: "client_unsubscribed" }, 400);
     const stopped = await db.prepare("SELECT 1 FROM email_stops WHERE firm_id = ? AND email_hash = ?").bind(firm.id, await stopHash(c.env, client.email)).first();
     if (stopped) return c.json({ error: "client_unsubscribed" }, 400);
+    // before the link is rotated, so a refusal leaves the client's working link alone
+    if (!(await hasRoom(c.env, db, firm.id, req.id, now))) return c.json({ error: "email_limit" }, 429);
     invitee = { name: client.name, email: client.email };
   }
 
@@ -488,8 +490,7 @@ requests.post("/requests/:id/link", async (c) => {
       now,
     );
     if (outcome === "sent") return c.json({ url, emailed: true });
-    // the link above is already made, so it comes back for the person to share another way
-    if (outcome === "capped") return c.json({ error: "email_limit", url }, 429);
+    // a parallel send took the last slot after the check above; the link is made, so it comes back to share another way
   } catch (e) {
     console.error(e instanceof Error ? e.message : "error");
   }

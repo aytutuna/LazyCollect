@@ -654,15 +654,22 @@ describe("email caps", () => {
       .bind(requestId, clientId, sentAt, from)
       .run();
 
-  it("allows three invites per request in 24 hours, then answers 429 with the link", async () => {
+  it("allows three invites per request in 24 hours, then answers 429 and leaves the link alone", async () => {
     const { cookie, req } = await ready();
     const sent = mockOutbound();
-    for (let i = 0; i < 3; i++) expect((await invite(cookie, req.id)).status).toBe(200);
+    let live = "";
+    for (let i = 0; i < 3; i++) {
+      const res = await invite(cookie, req.id);
+      expect(res.status).toBe(200);
+      live = (await res.json<any>()).url;
+    }
     const res = await invite(cookie, req.id);
     expect(res.status).toBe(429);
     const body = await res.json<any>();
     expect(body.error).toBe("email_limit");
-    expect(body.url).toContain("/c/na_");
+    expect(body.url).toBeUndefined();
+    // nothing was rotated, so the link the client has still opens
+    expect((await api(`/api/c/${live.split("/c/")[1]}`)).status).toBe(200);
     expect(sent).toHaveLength(3);
     expect((await messages()).filter((m) => m.kind === "invite")).toHaveLength(3);
     const old = Date.now() - 25 * HOUR;
