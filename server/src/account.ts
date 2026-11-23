@@ -3,6 +3,7 @@ import { deleteCookie } from "hono/cookie";
 import { audit } from "./audit";
 import { endSubscription } from "./billing";
 import { isOwner } from "./firm";
+import { stopHash } from "./mail";
 import { emptyPrefix, purgeRequest, reasonOf } from "./purge";
 import { regionIds, regionOf, type Region } from "./regions";
 import type { AppEnv } from "./session";
@@ -124,12 +125,26 @@ async function purgeFirm(env: Env, id: string, regionId: string, now: number) {
   for (const req of results) await purgeRequest(db, bucket, req, reasonOf(req), now, now).catch(log);
 
   const left = await db.prepare("SELECT COUNT(*) AS n FROM requests WHERE firm_id = ?").bind(id).first<{ n: number }>();
-  // TODO: requests on legal hold are kept, and with them the clients, key and users they need. A person has to release
-  // them or hand the records over before the rest of the account can go.
+
+  // Requests on legal hold keep their clients, files, audit trail, key and the users who can reopen the account. Everything
+  // else goes now, whether or not a hold is left, so a hold doesn't keep the rest of the account's data alive.
+  if (row.stripe_customer_id) {
+    await dropCustomer(env, row.stripe_customer_id);
+    await env.CONTROL.prepare("UPDATE firms SET stripe_customer_id = NULL WHERE id = ?").bind(id).run();
+  }
+  await env.CONTROL.prepare("DELETE FROM invites WHERE firm_id = ?").bind(id).run();
+  await db.batch([
+    db.prepare("DELETE FROM staff_mail WHERE firm_id = ?").bind(id),
+    db.prepare("DELETE FROM templates WHERE firm_id = ?").bind(id),
+    db.prepare("DELETE FROM clients WHERE firm_id = ? AND NOT EXISTS (SELECT 1 FROM requests WHERE firm_id = clients.firm_id AND client_id = clients.id)").bind(id),
+  ]);
+  // the stops are keyed hashes, so the ones to keep are worked out from the addresses still on file
+  const kept = await db.prepare("SELECT email FROM clients WHERE firm_id = ? AND email IS NOT NULL").bind(id).all<{ email: string }>();
+  const hashes = await Promise.all(kept.results.map((c) => stopHash(env, c.email)));
+  await db.prepare("DELETE FROM email_stops WHERE firm_id = ? AND email_hash NOT IN (SELECT value FROM json_each(?))").bind(id, JSON.stringify(hashes)).run();
   if (left!.n > 0) return;
 
   await emptyPrefix(bucket, `f/${id}/`);
-  if (row.stripe_customer_id) await dropCustomer(env, row.stripe_customer_id);
   await db.batch([
     db
       .prepare(
@@ -140,16 +155,13 @@ async function purgeFirm(env: Env, id: string, regionId: string, now: number) {
       .bind(randomId(), id, id, id, now, id),
     db.prepare("DELETE FROM audit WHERE firm_id = ?").bind(id),
     db.prepare("DELETE FROM clients WHERE firm_id = ?").bind(id),
-    db.prepare("DELETE FROM templates WHERE firm_id = ?").bind(id),
     db.prepare("DELETE FROM firm_settings WHERE firm_id = ?").bind(id),
     db.prepare("DELETE FROM email_stops WHERE firm_id = ?").bind(id),
-    db.prepare("DELETE FROM staff_mail WHERE firm_id = ?").bind(id),
   ]);
   // the wrapped key goes with the firm row, which is what makes anything left in the bucket unreadable
   await env.CONTROL.batch([
     env.CONTROL.prepare("DELETE FROM login_codes WHERE email IN (SELECT email FROM users WHERE firm_id = ?)").bind(id),
     env.CONTROL.prepare("DELETE FROM sessions WHERE firm_id = ?").bind(id),
-    env.CONTROL.prepare("DELETE FROM invites WHERE firm_id = ?").bind(id),
     env.CONTROL.prepare("DELETE FROM users WHERE firm_id = ?").bind(id),
     env.CONTROL.prepare("DELETE FROM firms WHERE id = ?").bind(id),
   ]);

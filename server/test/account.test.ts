@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { purgeClosed } from "../src/account";
 import { purgeExpired } from "../src/purge";
 import { canSend } from "../src/reminders";
+import { stopHash } from "../src/mail";
 import { DAY } from "../src/util";
 import { addMember, api, firmRow, inDays, login, mockOutbound, openRequest, pdf, upload } from "./helpers";
 import { stripeFake } from "./stripe-fake";
@@ -309,6 +310,51 @@ describe("purge of a closed account", () => {
     expect(row.dek_wrapped).toBeTruthy();
     expect(await count(env.CONTROL, "users", firm.id)).toBe(1);
     expect((await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM deletion_log WHERE kind = 'firm'").first<any>())!.n).toBe(0);
+  });
+
+  it("purges what the held requests do not need, once, and finishes when the hold is released", async () => {
+    const { cookie, req, firm } = await withUpload();
+    const kept = (await (await api("/api/clients", { cookie })).json<any[]>())[0];
+    const solo = await (await api("/api/clients", { method: "POST", cookie, body: { name: "Bo", email: "bo@mail.test", contact_ok: true } })).json<any>();
+    await api("/api/templates", { method: "POST", cookie, body: { name: "Mine", items: [{ label: "ID", required: true }] } });
+    mockOutbound();
+    await api("/api/staff/invites", { method: "POST", cookie, body: { email: "new@mail.test" } });
+    const stop = (email: string) =>
+      stopHash(env, email).then((h) => env.DB_NA.prepare("INSERT INTO email_stops (firm_id, email_hash, stopped_at) VALUES (?, ?, 1)").bind(firm.id, h).run());
+    await stop(kept.email);
+    await stop("bo@mail.test");
+    await env.CONTROL.prepare("UPDATE firms SET stripe_customer_id = 'cus_h'").run();
+    await api(`/api/requests/${req.id}/hold`, { method: "PUT", cookie, body: { on: true } });
+    await close(cookie);
+    await ageClose(31);
+
+    await purgeClosed(env);
+    await purgeClosed(env);
+
+    expect(await count(env.DB_NA, "templates", firm.id)).toBe(0);
+    expect(await count(env.CONTROL, "invites", firm.id)).toBe(0);
+    expect(await count(env.DB_NA, "staff_mail", firm.id)).toBe(0);
+    const clients = await env.DB_NA.prepare("SELECT id FROM clients WHERE firm_id = ?").bind(firm.id).all<any>();
+    expect(clients.results).toEqual([{ id: kept.id }]);
+    expect(solo.id).not.toBe(kept.id);
+    const stops = await env.DB_NA.prepare("SELECT email_hash FROM email_stops WHERE firm_id = ?").bind(firm.id).all<any>();
+    expect(stops.results).toEqual([{ email_hash: await stopHash(env, kept.email) }]);
+    expect(stripeFake.gone.has("cus_h")).toBe(true);
+    expect(stripeFake.calls.filter((c) => c.method === "DELETE" && c.path === "/v1/customers/cus_h")).toHaveLength(1);
+    expect((await env.CONTROL.prepare("SELECT dek_wrapped, stripe_customer_id FROM firms WHERE id = ?").bind(firm.id).first<any>())).toEqual({ dek_wrapped: expect.any(String), stripe_customer_id: null });
+    expect(await count(env.CONTROL, "users", firm.id)).toBe(1);
+    expect(await count(env.DB_NA, "files", firm.id)).toBe(1);
+    expect(await count(env.DB_NA, "audit", firm.id)).toBeGreaterThan(0);
+
+    // released and still closed: the next run takes the rest
+    await env.DB_NA.prepare("UPDATE requests SET hold_at = NULL").run();
+    await purgeClosed(env);
+    expect(await env.CONTROL.prepare("SELECT 1 FROM firms WHERE id = ?").bind(firm.id).first()).toBeNull();
+    expect(await count(env.DB_NA, "requests", firm.id)).toBe(0);
+    expect(await count(env.DB_NA, "clients", firm.id)).toBe(0);
+    expect(await count(env.DB_NA, "audit", firm.id)).toBe(0);
+    expect((await env.FILES_NA.list({ prefix: `f/${firm.id}/` })).objects).toHaveLength(0);
+    expect(stripeFake.calls.filter((c) => c.method === "DELETE" && c.path === "/v1/customers/cus_h")).toHaveLength(1);
   });
 
   it("leaves other accounts alone", async () => {
