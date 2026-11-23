@@ -9,12 +9,12 @@ import type { RequestCounts, RequestRow } from "../types";
 import { Badge, ErrorNote, Field, Loading, statusLabel, statusTone } from "../ui";
 
 const STATUSES = ["draft", "open", "complete", "expired", "closed"];
-const VIEWS = ["to_review", "waiting", "overdue", "due_soon", "all"] as const;
+const VIEWS = ["to_review", "waiting", "expiring", "overdue", "due_soon", "all"] as const;
 type View = (typeof VIEWS)[number];
 const SORTS = ["newest", "deadline", "activity"];
 
 // the order that suits each tab until the person picks another
-const SORT_FOR: Record<View, string> = { to_review: "activity", waiting: "deadline", overdue: "deadline", due_soon: "deadline", all: "newest" };
+const SORT_FOR: Record<View, string> = { to_review: "activity", waiting: "deadline", expiring: "deadline", overdue: "deadline", due_soon: "deadline", all: "newest" };
 
 type Extra = { counts: RequestCounts | null; client: { id: string; name: string } | null };
 
@@ -203,6 +203,7 @@ function Progress({ r }: { r: RequestRow }) {
       {r.submitted > 0 && <Badge tone="teal">{t("requests.to_review_n", { n: r.submitted })}</Badge>}
       {r.unavailable > 0 && <Badge tone="amber">{t("requests.unavailable_n", { n: r.unavailable })}</Badge>}
       {r.unanswered > 0 && <Badge tone="amber">{t("requests.unanswered_n", { n: r.unanswered })}</Badge>}
+      {r.expiring > 0 && r.expiring_on && <Badge tone="amber">{t("requests.expiring_n", { n: r.expiring, date: fmtDate(Date.parse(`${r.expiring_on}T12:00:00Z`)) })}</Badge>}
     </>
   );
 }

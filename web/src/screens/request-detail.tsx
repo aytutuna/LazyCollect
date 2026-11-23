@@ -7,7 +7,9 @@ import type { ActivityRow, Client, Firm, Item, ItemWithFiles, LinkResult, Messag
 import { ActivityList } from "./activity";
 import { Why } from "../reasons";
 import { ExampleField } from "./example-field";
-import { QuestionFields, newItem, toPayload, type EditItem, type Parent } from "./items-editor";
+import { QuestionFields, TagFields, newItem, toPayload, type EditItem, type Parent } from "./items-editor";
+import { PeopleSection } from "./people";
+import { groupByPerson, roleName } from "../people";
 import { Review } from "./review";
 import { Thread } from "./thread";
 import { Unavailable } from "./unavailable";
@@ -53,6 +55,9 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
   };
   // an item hidden by an answer is not part of the count
   const shown = req.items.filter((i) => !i.hidden);
+  const groups = groupByPerson(req.items, req.people);
+  const grouped = groups.some((g) => g.person);
+  const dated = req.items.some((i) => i.expiry_rule);
   const received = shown.filter((i) => i.status === "submitted" || i.status === "approved" || i.status === "waived").length;
   const late = isLate(req.deadline) && editable;
   const lastEmail = sent.data?.find((m) => m.status === "sent");
@@ -178,6 +183,12 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
               </dd>
               <dt>{t("requests.progress")}</dt>
               <dd>{t("progress", { done: received, total: shown.length })}</dd>
+              {dated && (
+                <>
+                  <dt>{t("detail.valid_until")}</dt>
+                  <dd>{req.valid_until_set ? fmtDay(req.valid_until) : t("detail.valid_until_value", { date: fmtDay(req.valid_until) })}</dd>
+                </>
+              )}
               {req.sent_at && (
                 <>
                   <dt>{t("detail.opened_label")}</dt>
@@ -287,6 +298,8 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
         </section>
       )}
 
+      <PeopleSection req={req} editable={editable} onChange={refresh} />
+
       <section>
         <div class="head">
           <h2>{t("detail.items")}</h2>
@@ -296,69 +309,87 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
             </button>
           )}
         </div>
-        <ul class="items">
-          {req.items.map((item) => (
-            <li key={item.id}>
-              <div class="main">
-                {editingItem === item.id ? (
-                  <ItemForm requestId={id} item={item} onSaved={saved} onCancel={() => setEditingItem(null)} />
-                ) : (
-                  <>
-                    <div class="line">
-                      <span>
-                        <strong>{item.label}</strong> {!item.required && <span class="muted">({t("items.optional")})</span>}
-                      </span>
-                      <Badge tone={ITEM_TONES[item.status]}>{t(`item.${item.status}`)}</Badge>
-                    </div>
-                    {item.help && <div class="muted">{item.help}</div>}
-                    {item.show_if_pos !== null && <p class="muted">{condition(req.items, item)}</p>}
-                    {item.hidden && <p class="muted">{t("items.hidden")}</p>}
-                    {item.kind !== "file" && (
-                      <p class="answer">
-                        <strong>{t("detail.answer")}:</strong> {answerText(item) || <span class="muted">{t("detail.no_answer")}</span>}
-                      </p>
-                    )}
-                    {item.status === "rejected" && <Why item={item} />}
-                    {item.example && <p class="muted">{t("example.has")}</p>}
-                    {item.status === "unavailable" && (req.status === "open" || req.status === "complete") && <Unavailable requestId={id} item={item} onDone={reload} />}
-                    {item.status === "waived" && item.unavailable_note && <p class="muted">{t("detail.unavailable_reason", { note: item.unavailable_note })}</p>}
-                    {item.files.length > 0 && (
-                      <ul class="files">
-                        {item.files.map((f) => (
-                          <li key={f.id}>
-                            <span class="name">
-                              <button class="link" aria-label={t("viewer.open", { name: f.name })} onClick={() => setViewing(f.id)}>
-                                {f.name}
-                              </button>{" "}
-                              <span class="muted">({fmtSize(f.size)})</span>
-                              {f.sent_back_at && <span class="tag">{t("detail.sent_back")}</span>}
+        {groups.map(({ person, items: of }) => {
+          const shown = of.filter((i) => !i.hidden);
+          return (
+            <div key={person?.position ?? "general"}>
+              {grouped && (
+                <h3 class="person-head">
+                  {person ? person.name : t("client.general")}
+                  <span class="muted">
+                    {" "}
+                    {person ? `${roleName(person.role)}: ` : ""}
+                    {t("progress", { done: shown.filter((i) => i.status === "submitted" || i.status === "approved" || i.status === "waived").length, total: shown.length })}
+                  </span>
+                </h3>
+              )}
+              <ul class="items">
+                {of.map((item) => (
+                  <li key={item.id}>
+                    <div class="main">
+                      {editingItem === item.id ? (
+                        <ItemForm requestId={id} item={item} onSaved={saved} onCancel={() => setEditingItem(null)} />
+                      ) : (
+                        <>
+                          <div class="line">
+                            <span>
+                              <strong>{item.label}</strong> {!item.required && <span class="muted">({t("items.optional")})</span>}
                             </span>
-                            <a class="small-link" href={`/api/files/${f.id}`}>
-                              {t("viewer.download")}
-                            </a>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {item.status === "submitted" && (req.status === "open" || req.status === "complete") && <Review requestId={id} item={item} onDone={reload} />}
-                    {manage && (
-                      <div class="row-actions">
-                        <button class="small" onClick={() => setEditingItem(item.id)}>
-                          {t("edit")}
-                        </button>
-                        {item.status === "empty" && (
-                          <button class="small quiet" disabled={act.busy} onClick={() => removeItem(item)}>
-                            {t("items.remove")}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
+                            <Badge tone={ITEM_TONES[item.status]}>{t(`item.${item.status}`)}</Badge>
+                          </div>
+                          {item.help && <div class="muted">{item.help}</div>}
+                      {item.expiry_rule && <Dates item={item} target={item.expiry_rule === "issue" ? toInput(req.deadline) : req.valid_until} />}
+                          {item.show_if_pos !== null && <p class="muted">{condition(req.items, item)}</p>}
+                          {item.hidden && <p class="muted">{t("items.hidden")}</p>}
+                          {item.kind !== "file" && (
+                            <p class="answer">
+                              <strong>{t("detail.answer")}:</strong> {answerText(item) || <span class="muted">{t("detail.no_answer")}</span>}
+                            </p>
+                          )}
+                          {item.status === "rejected" && <Why item={item} />}
+                          {item.example && <p class="muted">{t("example.has")}</p>}
+                          {item.status === "unavailable" && (req.status === "open" || req.status === "complete") && <Unavailable requestId={id} item={item} onDone={reload} />}
+                          {item.status === "waived" && item.unavailable_note && <p class="muted">{t("detail.unavailable_reason", { note: item.unavailable_note })}</p>}
+                          {item.files.length > 0 && (
+                            <ul class="files">
+                              {item.files.map((f) => (
+                                <li key={f.id}>
+                                  <span class="name">
+                                    <button class="link" aria-label={t("viewer.open", { name: f.name })} onClick={() => setViewing(f.id)}>
+                                      {f.name}
+                                    </button>{" "}
+                                    <span class="muted">({fmtSize(f.size)})</span>
+                                    {f.sent_back_at && <span class="tag">{t("detail.sent_back")}</span>}
+                                  </span>
+                                  <a class="small-link" href={`/api/files/${f.id}`}>
+                                    {t("viewer.download")}
+                                  </a>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          {item.status === "submitted" && (req.status === "open" || req.status === "complete") && <Review requestId={id} item={item} onDone={reload} />}
+                          {manage && (
+                            <div class="row-actions">
+                              <button class="small" onClick={() => setEditingItem(item.id)}>
+                                {t("edit")}
+                              </button>
+                              {item.status === "empty" && (
+                                <button class="small quiet" disabled={act.busy} onClick={() => removeItem(item)}>
+                                  {t("items.remove")}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
         {req.items.some((i) => i.files.length > 0) && (
           <p>
             <button disabled={act.busy} onClick={download}>
@@ -416,6 +447,7 @@ function DetailsForm({ req, onSaved, onCancel }: { req: RequestDetail; onSaved: 
   const [title, setTitle] = useState(req.title);
   const [note, setNote] = useState(req.note ?? "");
   const [deadline, setDeadline] = useState(toInput(req.deadline));
+  const [validUntil, setValidUntil] = useState(req.valid_until_set ? req.valid_until : "");
   const { busy, error, run } = useAction();
 
   async function submit(e: Event) {
@@ -424,6 +456,7 @@ function DetailsForm({ req, onSaved, onCancel }: { req: RequestDetail; onSaved: 
     if (title !== req.title) body.title = title;
     if (note !== (req.note ?? "")) body.note = note;
     if (deadline !== toInput(req.deadline)) body.deadline = fromInput(deadline);
+    if (validUntil !== (req.valid_until_set ? req.valid_until : "")) body.valid_until = validUntil || null;
     if (!Object.keys(body).length || (await run(() => patch(`/requests/${req.id}`, body)))) onSaved();
   }
 
@@ -437,6 +470,9 @@ function DetailsForm({ req, onSaved, onCancel }: { req: RequestDetail; onSaved: 
       </Field>
       <Field label={t("new.deadline")}>
         <input type="date" required min={deadline === toInput(req.deadline) ? undefined : toInput(Date.now())} max={toInput(inDays(729))} value={deadline} onInput={(e) => setDeadline(e.currentTarget.value)} />
+      </Field>
+      <Field label={t("detail.valid_until")} hint={t("detail.valid_until_hint")}>
+        <input type="date" min="1900-01-01" max="2100-12-31" value={validUntil} onInput={(e) => setValidUntil(e.currentTarget.value)} />
       </Field>
       <ErrorNote error={error} />
       <div class="actions">
@@ -453,7 +489,30 @@ function DetailsForm({ req, onSaved, onCancel }: { req: RequestDetail; onSaved: 
 
 // an item can hang a condition on any unconditional yes/no or choice item already in the request; its position is its key here
 const parentsOfRequest = (items: Item[]): Parent[] =>
-  items.filter((i) => i.show_if_pos === null && (i.kind === "yesno" || i.kind === "choice" || i.kind === "multi")).map((i) => ({ key: i.position, label: i.label, kind: i.kind, options: i.options ?? [] }));
+  items.filter((i) => i.show_if_pos === null && i.person_pos === null && (i.kind === "yesno" || i.kind === "choice" || i.kind === "multi")).map((i) => ({ key: i.position, label: i.label, kind: i.kind, options: i.options ?? [] }));
+
+const fmtDay = (d: string) => fmtDate(Date.parse(`${d}T12:00:00Z`));
+
+// the date a document was given, what is made of it, and a flag when it falls short; target is the date it has to last to
+function Dates({ item, target }: { item: Item; target: string }) {
+  const given = item.expiry_rule === "issue" ? item.issued_on : item.expires_on;
+  return (
+    <>
+      <p class="muted flag">
+        {!given
+          ? t("detail.no_date")
+          : item.expiry_rule === "issue"
+            ? t("detail.good_until", { date: fmtDay(item.valid_to!), issued: fmtDay(given), n: item.valid_months ?? 0 })
+            : t("detail.expires", { date: fmtDay(given) })}
+      </p>
+      {item.expiry_flag && (
+        <p class="flag">
+          <Badge tone={item.expiry_flag === "soon" ? "amber" : "red"}>{item.expiry_flag === "short" ? t("flag.short", { date: fmtDay(target) }) : t(`flag.${item.expiry_flag}`)}</Badge>
+        </p>
+      )}
+    </>
+  );
+}
 
 function answerText(item: Item): string {
   const a = item.answer;
@@ -470,14 +529,24 @@ function condition(items: Item[], item: Item): string {
 
 // An existing item changes only its wording; a new one can also be a question that depends on an earlier item, named by its position.
 function ItemForm({ requestId, item, parents, onSaved, onCancel }: { requestId: string; item?: Item; parents?: Parent[]; onSaved: () => void; onCancel: () => void }) {
-  const [edit, setEdit] = useState<EditItem>(() => ({ ...newItem(), label: item?.label ?? "", help: item?.help ?? "", required: item?.required ?? true, example: item?.example ?? "" }));
+  const [expires, setExpires] = useState(item?.expires_on ?? "");
+  const [issued, setIssued] = useState(item?.issued_on ?? "");
+  const [months, setMonths] = useState(String(item?.valid_months ?? 6));
+  const [edit, setEdit] = useState<EditItem>(() => ({ ...newItem(), label: item?.label_base ?? item?.label ?? "", help: item?.help ?? "", required: item?.required ?? true, example: item?.example ?? "" }));
   const { busy, error, run } = useAction();
 
   async function submit(e: Event) {
     e.preventDefault();
     const [added] = toPayload([{ ...edit, showKey: null }]);
     const body = item
-      ? { label: edit.label, help: edit.help, required: edit.required, example: edit.example || null }
+      ? {
+          label: edit.label,
+          help: edit.help,
+          required: edit.required,
+          example: edit.example || null,
+          ...(item.expiry_rule && { [item.expiry_rule === "issue" ? "issued_on" : "expires_on"]: (item.expiry_rule === "issue" ? issued : expires) || null }),
+          ...(item.expiry_rule === "issue" && { valid_months: Number(months) || item.valid_months }),
+        }
       : { ...added, ...(edit.showKey === null ? {} : { show_if: { item: edit.showKey, value: edit.showValue } }) };
     const call = item ? () => patch(`/requests/${requestId}/items/${item.id}`, body) : () => post(`/requests/${requestId}/items`, body);
     if (await run(call)) onSaved();
@@ -494,6 +563,22 @@ function ItemForm({ requestId, item, parents, onSaved, onCancel }: { requestId: 
       </Field>
       <ExampleField value={edit.example} onChange={(example) => change({ example })} />
       {!item && <QuestionFields item={edit} parents={parents ?? []} dependedOn={false} onChange={change} />}
+      {!item && <TagFields item={edit} onChange={change} />}
+      {item?.expiry_rule === "expiry" && (
+        <Field label={t("date.expires")}>
+          <input type="date" min="1900-01-01" max="2100-12-31" value={expires} onInput={(e) => setExpires(e.currentTarget.value)} />
+        </Field>
+      )}
+      {item?.expiry_rule === "issue" && (
+        <>
+          <Field label={t("date.issued")}>
+            <input type="date" min="1900-01-01" max="2100-12-31" value={issued} onInput={(e) => setIssued(e.currentTarget.value)} />
+          </Field>
+          <Field label={t("items.months")}>
+            <input type="number" required min={1} max={120} value={months} onInput={(e) => setMonths(e.currentTarget.value)} />
+          </Field>
+        </>
+      )}
       <Check label={t("items.required")} checked={edit.required} onChange={(required) => change({ required })} />
       <ErrorNote error={error} />
       <div class="row-actions">
