@@ -20,7 +20,7 @@ export function useUrlParams() {
 export function useSearchBox(value: string, commit: (v: string) => void) {
   const [typed, setTyped] = useState(value);
   const timer = useRef<number | undefined>(undefined);
-  useEffect(() => setTyped(value), [value]);
+  useEffect(() => setTyped((cur) => (cur.trim() === value ? cur : value)), [value]);
   useEffect(() => () => clearTimeout(timer.current), []);
   return [
     typed,
