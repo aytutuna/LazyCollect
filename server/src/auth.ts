@@ -3,6 +3,7 @@ import { createSession, endSession, type AppEnv } from "./session";
 import { sendLoginEmail } from "./email";
 import { usable } from "./firm";
 import { htmlHeaders } from "./headers";
+import { isRegion, regionOf } from "./regions";
 import { DAY, MINUTE, hmac, randomCode, randomId, randomToken, sha256, ipPrefix, FETCH_TIMEOUT_MS } from "./util";
 
 export const auth = new Hono<AppEnv>();
@@ -211,7 +212,7 @@ auth.get("/me", async (c) => {
   if (!session) return c.json({ error: "unauthorized" }, 401);
   const row = await c.env.CONTROL.prepare(
     `SELECT u.id, u.email, u.name, u.role, f.id AS firm_id, f.name AS firm_name, f.tz, f.plan_status, f.trial_ends_at,
-       f.current_period_end, f.past_due_since, f.cancel_at_period_end, f.stripe_subscription_id IS NOT NULL AS subscribed, f.closed_at
+       f.current_period_end, f.past_due_since, f.cancel_at_period_end, f.stripe_subscription_id IS NOT NULL AS subscribed, f.closed_at, f.region
      FROM users u JOIN firms f ON f.id = u.firm_id WHERE u.id = ?`,
   )
     .bind(session.userId)
@@ -230,8 +231,14 @@ auth.get("/me", async (c) => {
       cancel_at_period_end: number;
       subscribed: number;
       closed_at: number | null;
+      region: string;
     }>();
   if (!row) return c.json({ error: "unauthorized" }, 401);
+  // a closed account that still holds records on legal hold can be reopened after the 30 days
+  const held =
+    row.closed_at !== null && isRegion(row.region)
+      ? Boolean(await regionOf(c.env, row.region).db.prepare("SELECT 1 FROM requests WHERE firm_id = ? AND hold_at IS NOT NULL AND deleted_at IS NULL").bind(row.firm_id).first())
+      : false;
   return c.json({
     user: { id: row.id, email: row.email, name: row.name, role: row.role },
     firm: {
@@ -245,6 +252,7 @@ auth.get("/me", async (c) => {
       cancel_at_period_end: row.cancel_at_period_end === 1,
       subscribed: row.subscribed === 1,
       closed_at: row.closed_at,
+      held,
       usable: usable(row, Date.now()),
     },
   });

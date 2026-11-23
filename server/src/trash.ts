@@ -15,7 +15,7 @@ trash.get("/trash", async (c) => {
     .prepare(
       `SELECT r.id, r.title, cl.name AS client_name, r.deleted_at, r.deleted_reason, r.deleted_at + ? AS purge_at FROM requests r
        JOIN clients cl ON cl.firm_id = r.firm_id AND cl.id = r.client_id
-       WHERE r.firm_id = ? AND r.deleted_at > ? AND r.purging_at IS NULL ORDER BY r.deleted_at DESC, r.rowid DESC`,
+       WHERE r.firm_id = ? AND r.deleted_at > ? AND r.purging_at IS NULL AND r.deleted_with_account = 0 ORDER BY r.deleted_at DESC, r.rowid DESC`,
     )
     .bind(RESTORE_WINDOW, firmId, since)
     .all();
@@ -33,13 +33,13 @@ trash.post("/requests/:id/restore", async (c) => {
   const id = c.req.param("id");
   const now = Date.now();
   const gone = await db
-    .prepare("SELECT client_id FROM requests WHERE firm_id = ? AND id = ? AND deleted_at > ?")
+    .prepare("SELECT client_id FROM requests WHERE firm_id = ? AND id = ? AND deleted_at > ? AND deleted_with_account = 0")
     .bind(firmId, id, now - RESTORE_WINDOW)
     .first<{ client_id: string }>();
   if (!gone) return notFound(c);
   const alive = await db.prepare("SELECT 1 FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL").bind(firmId, gone.client_id).first();
   if (!alive) return c.json({ error: "client_deleted" }, 409);
-  const open = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND deleted_at > ? AND purging_at IS NULL)";
+  const open = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND deleted_at > ? AND purging_at IS NULL AND deleted_with_account = 0)";
   // a request the retention period took starts a fresh clock, so the next run does not take it again
   // the same goes for any request whose clock has already run out, or the next run would retire it again
   const years = `COALESCE((SELECT retention_years FROM firm_settings WHERE firm_id = requests.firm_id), ${DEFAULT_YEARS}) * ${YEAR}`;
@@ -51,7 +51,7 @@ trash.post("/requests/:id/restore", async (c) => {
         `UPDATE requests SET deleted_at = NULL, deleted_reason = NULL, status = 'closed', closed_at = COALESCE(closed_at, ?1), next_reminder_at = NULL,
            ended_at = ${start},
            keep_until = ${start} + ${years}
-         WHERE firm_id = ?2 AND id = ?3 AND deleted_at > ?4 AND purging_at IS NULL`,
+         WHERE firm_id = ?2 AND id = ?3 AND deleted_at > ?4 AND purging_at IS NULL AND deleted_with_account = 0`,
       )
       .bind(now, firmId, id, now - RESTORE_WINDOW),
   ]);

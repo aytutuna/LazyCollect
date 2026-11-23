@@ -93,6 +93,12 @@ async function each<T>(rows: T[], fn: (row: T) => Promise<unknown>) {
   }
 }
 
+// the sender list was read before the loop; a close or a lapse in between must still stop the email
+async function stillUsable(env: Env, firmId: string, now: number) {
+  const f = await env.CONTROL.prepare("SELECT plan_status, trial_ends_at, past_due_since, closed_at FROM firms WHERE id = ?").bind(firmId).first<Parameters<typeof usable>[0]>();
+  return Boolean(f && usable(f, now));
+}
+
 async function remindPass(env: Env, region: Region, db: D1Database, now: number) {
   const { results } = await db
     .prepare(
@@ -131,6 +137,7 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
 
     const items = await missingItems(db, r.firm_id, r.id, false);
     if (!items.length) return move(null);
+    if (!(await stillUsable(env, r.firm_id, now))) return move(now + DAY);
     const slot = { db, firmId: r.firm_id, requestId: r.id, clientId: r.client_id, kind, seq: r.seq + 1 } as const;
     const { outcome } = await deliver(
       env,
@@ -182,6 +189,7 @@ async function rejectedPass(env: Env, region: Region, db: D1Database, now: numbe
     if (!inHours(now, sender.tz)) return;
     const items = await missingItems(db, r.firm_id, r.id, true);
     if (!items.length) return clear();
+    if (!(await stillUsable(env, r.firm_id, now))) return clear();
     const { outcome } = await deliver(
       env,
       { db, firmId: r.firm_id, requestId: r.id, clientId: r.client_id, kind: "rejected", seq: r.seq + 1 },

@@ -10,7 +10,7 @@ type Reason = "deleted" | "retention" | "closed";
 type Target = { id: string; firm_id: string; deleted_reason?: string | null; deleted_with_account?: number };
 
 // the request's own reason for going; the column is separate because deleted_reason's check can't be widened without rebuilding the table
-const reasonOf = (r: Target): Reason => (r.deleted_reason === "retention" ? "retention" : r.deleted_with_account ? "closed" : "deleted");
+export const reasonOf = (r: Target): Reason => (r.deleted_reason === "retention" ? "retention" : r.deleted_with_account ? "closed" : "deleted");
 
 // A request is only retired once it is closed or its link has run out, so a live link is never cut. Takes the time once.
 export const FINISHED = `ended_at IS NOT NULL AND hold_at IS NULL AND deleted_at IS NULL AND purging_at IS NULL

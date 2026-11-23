@@ -325,3 +325,59 @@ describe("purge of a closed account", () => {
     expect((await env.CONTROL.prepare("SELECT dek_wrapped FROM firms WHERE id = ?").bind(b.firm.id).first<any>())!.dek_wrapped).toBeTruthy();
   });
 });
+
+describe("closing details", () => {
+  it("ends a subscription Stripe still has live, whatever the plan says", async () => {
+    const { cookie } = await openRequest();
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'canceled', stripe_customer_id = 'cus_1', stripe_subscription_id = 'sub_1'").run();
+    stripeFake.sub("sub_1", "cus_1", { status: "unpaid" });
+    expect((await close(cookie)).status).toBe(200);
+    expect(stripeFake.subs.get("sub_1")!.status).toBe("canceled");
+  });
+
+  it("says whether held records are why a closed account can still be reopened", async () => {
+    const { cookie, req } = await openRequest();
+    expect((await (await api("/api/me", { cookie })).json<any>()).firm.held).toBe(false);
+    await api(`/api/requests/${req.id}/hold`, { method: "PUT", cookie, body: { on: true } });
+    await close(cookie);
+    const again = await login();
+    expect((await (await api("/api/me", { cookie: again })).json<any>()).firm.held).toBe(true);
+    await env.DB_NA.prepare("UPDATE requests SET hold_at = NULL").run();
+    expect((await (await api("/api/me", { cookie: again })).json<any>()).firm.held).toBe(false);
+  });
+
+  it("drops the customer at Stripe, and carries on when it is gone already", async () => {
+    const a = await withUpload("a@firm.test");
+    await env.CONTROL.prepare("UPDATE firms SET stripe_customer_id = 'cus_a'").run();
+    await close(a.cookie);
+    await ageClose(31);
+    await purgeClosed(env);
+    expect(stripeFake.gone.has("cus_a")).toBe(true);
+    expect(await env.CONTROL.prepare("SELECT 1 FROM firms WHERE id = ?").bind(a.firm.id).first()).toBeNull();
+
+    const b = await withUpload("b@firm.test");
+    await env.CONTROL.prepare("UPDATE firms SET stripe_customer_id = 'cus_a'").run();
+    await close(b.cookie);
+    await ageClose(31);
+    await purgeClosed(env);
+    expect(await env.CONTROL.prepare("SELECT 1 FROM firms WHERE id = ?").bind(b.firm.id).first()).toBeNull();
+  });
+
+  it("logs a request that was deleted earlier under its own reason", async () => {
+    const { cookie, req, firm } = await withUpload();
+    expect((await api(`/api/requests/${req.id}`, { method: "DELETE", cookie })).status).toBe(200);
+    await close(cookie);
+    await ageClose(31);
+    await purgeClosed(env);
+    const log = await env.DB_NA.prepare("SELECT reason FROM deletion_log WHERE firm_id = ? AND kind = 'request'").bind(firm.id).first<any>();
+    expect(log.reason).toBe("deleted");
+  });
+
+  it("never offers a request taken with the account for restoring", async () => {
+    const { cookie, req } = await openRequest();
+    await env.DB_NA.prepare("UPDATE requests SET deleted_at = ?, deleted_with_account = 1").bind(Date.now()).run();
+    expect((await (await api("/api/trash", { cookie })).json<any>()).requests).toEqual([]);
+    expect((await api(`/api/requests/${req.id}/restore`, { method: "POST", cookie })).status).toBe(404);
+    expect((await env.DB_NA.prepare("SELECT deleted_at FROM requests").first<any>()).deleted_at).not.toBeNull();
+  });
+});

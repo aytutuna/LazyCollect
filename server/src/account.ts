@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { deleteCookie } from "hono/cookie";
 import { audit } from "./audit";
+import { endSubscription } from "./billing";
 import { isOwner } from "./firm";
-import { emptyPrefix, purgeRequest } from "./purge";
+import { emptyPrefix, purgeRequest, reasonOf } from "./purge";
 import { regionIds, regionOf, type Region } from "./regions";
 import type { AppEnv } from "./session";
 import { StripeError, stripe } from "./stripe";
@@ -30,19 +31,21 @@ account.post("/account/close", async (c) => {
 
   // a retry after a failure further down finds the account closed already and carries on from the stored time
   const at = firm.closed_at ?? now;
-  if (!firm.closed_at && firm.stripe_subscription_id && firm.plan_status !== "canceled") {
+  if (!firm.closed_at && firm.stripe_subscription_id) {
     // first, so a failure here leaves the account open instead of closed and still billed
-    const id = encodeURIComponent(firm.stripe_subscription_id);
     try {
-      await stripe(c.env, "DELETE", `/v1/subscriptions/${id}`);
+      await endSubscription(c.env, firm.stripe_subscription_id);
     } catch (e) {
-      const ended = await stripe<{ status: string }>(c.env, "GET", `/v1/subscriptions/${id}`).then((s) => s.status === "canceled", () => false);
-      if (!ended && !(e instanceof StripeError && e.status === 404)) {
-        log(e);
-        return c.json({ error: "billing" }, 502);
-      }
+      log(e);
+      return c.json({ error: "billing" }, 502);
     }
   }
+  // links go dark with revoked_at = closed_at, which is how a reopen finds the ones to bring back; they go before the
+  // account is marked closed, so a failure leaves an open account with dead links, which a retry can finish
+  await db.batch([
+    db.prepare("UPDATE links SET revoked_at = ? WHERE firm_id = ? AND revoked_at IS NULL").bind(at, firm.id),
+    ...(firm.closed_at ? [] : [audit(c, "account.close", "firm", firm.id)]),
+  ]);
   await c.env.CONTROL.prepare(
     `UPDATE firms SET closed_at = ?, cancel_at_period_end = 0,
        plan_status = CASE WHEN stripe_subscription_id IS NOT NULL THEN 'canceled' ELSE plan_status END
@@ -50,11 +53,6 @@ account.post("/account/close", async (c) => {
   )
     .bind(at, firm.id)
     .run();
-  // links go dark with revoked_at = closed_at, which is how a reopen finds the ones to bring back
-  await db.batch([
-    db.prepare("UPDATE links SET revoked_at = ? WHERE firm_id = ? AND revoked_at IS NULL").bind(at, firm.id),
-    audit(c, "account.close", "firm", firm.id),
-  ]);
   await c.env.CONTROL.prepare("DELETE FROM sessions WHERE firm_id = ?").bind(firm.id).run();
   deleteCookie(c, "__Host-lc_session", { path: "/", secure: true });
   return c.json({ ok: true });
@@ -68,7 +66,7 @@ account.post("/account/reopen", async (c) => {
   const db = c.get("db");
   // past the window only an account whose held records are still there can come back; without them nothing is left to reopen
   const expired = firm.closed_at <= now - CLOSE_WINDOW;
-  const held = (await db.prepare("SELECT 1 FROM requests WHERE firm_id = ? AND hold_at IS NOT NULL").bind(firm.id).first()) ? 1 : 0;
+  const held = (await db.prepare("SELECT 1 FROM requests WHERE firm_id = ? AND hold_at IS NOT NULL AND deleted_at IS NULL").bind(firm.id).first()) ? 1 : 0;
   if (expired && !held) return c.json({ error: "expired" }, 409);
   // links first: it can be repeated, while a failure after the account is open again could not be retried
   await db.batch([
@@ -83,7 +81,24 @@ account.post("/account/reopen", async (c) => {
   return c.json({ ok: true });
 });
 
-type Req = { id: string; firm_id: string };
+const missing = (e: unknown) => e instanceof StripeError && e.status === 404;
+
+// Anything still billing the customer stops, then the customer goes, so no name or email is left at Stripe.
+async function dropCustomer(env: Env, customer: string) {
+  const subs = await stripe<{ data: { id: string; status: string }[] }>(env, "GET", "/v1/subscriptions", { customer, status: "all", limit: 10 }).catch((e) => {
+    if (missing(e)) return null;
+    throw e;
+  });
+  if (!subs) return;
+  for (const s of subs.data) {
+    if (s.status !== "canceled" && s.status !== "incomplete_expired") await stripe(env, "DELETE", `/v1/subscriptions/${encodeURIComponent(s.id)}`);
+  }
+  await stripe(env, "DELETE", `/v1/customers/${encodeURIComponent(customer)}`).catch((e) => {
+    if (!missing(e)) throw e;
+  });
+}
+
+type Req = { id: string; firm_id: string; deleted_reason: string | null; deleted_with_account: number };
 
 // Requests go through the usual purge, so objects and rows leave in the same order and the same logs are written. The account's
 // own rows and key go last, so a run that stops halfway is finished by the next one.
@@ -99,12 +114,12 @@ async function purgeFirm(env: Env, id: string, regionId: string, now: number) {
   await db.prepare("UPDATE requests SET deleted_at = ?, deleted_with_account = 1 WHERE firm_id = ? AND deleted_at IS NULL AND hold_at IS NULL").bind(now, id).run();
   const { results } = await db
     .prepare(
-      `SELECT id, firm_id FROM requests WHERE firm_id = ? AND hold_at IS NULL AND (purging_at IS NULL OR purging_at < ?)
+      `SELECT id, firm_id, deleted_reason, deleted_with_account FROM requests WHERE firm_id = ? AND hold_at IS NULL AND (purging_at IS NULL OR purging_at < ?)
        AND (purge_failed_at IS NULL OR purge_failed_at < ?) ORDER BY COALESCE(purge_failed_at, 0), created_at LIMIT ?`,
     )
     .bind(id, now - HOUR, now - HOUR, BUDGET)
     .all<Req>();
-  for (const req of results) await purgeRequest(db, bucket, req, "closed", now, now).catch(log);
+  for (const req of results) await purgeRequest(db, bucket, req, reasonOf(req), now, now).catch(log);
 
   const left = await db.prepare("SELECT COUNT(*) AS n FROM requests WHERE firm_id = ?").bind(id).first<{ n: number }>();
   // TODO: requests on legal hold are kept, and with them the clients, key and users they need. A person has to release
@@ -112,13 +127,7 @@ async function purgeFirm(env: Env, id: string, regionId: string, now: number) {
   if (left!.n > 0) return;
 
   await emptyPrefix(bucket, `f/${id}/`);
-  // anything still billing the customer must stop before the firm row, and with it the link to the customer, is gone
-  if (row.stripe_customer_id) {
-    const subs = await stripe<{ data: { id: string; status: string }[] }>(env, "GET", "/v1/subscriptions", { customer: row.stripe_customer_id, status: "all", limit: 10 });
-    for (const s of subs.data) {
-      if (s.status !== "canceled" && s.status !== "incomplete_expired") await stripe(env, "DELETE", `/v1/subscriptions/${encodeURIComponent(s.id)}`);
-    }
-  }
+  if (row.stripe_customer_id) await dropCustomer(env, row.stripe_customer_id);
   await db.batch([
     db
       .prepare(
