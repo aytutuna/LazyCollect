@@ -118,7 +118,7 @@ batches.post("/batches", async (c) => {
     await loadClients([...new Set(results.map((r) => r.client_id))]);
     for (const r of results) {
       const next = plusYear(r.deadline, firm.tz);
-      if (next <= now) return c.json({ error: "deadline_passed" }, 400);
+      if (next <= now) return c.json({ error: "repeat_deadline_passed" }, 400);
       if (deadline(next) === undefined) return invalid(c);
       plans.push({ id: randomId(), client_id: r.client_id, title: nextYearTitle(r.title).slice(0, 200), note: r.note, deadline: next, reminders_on: body.reminders_on ? 1 : 0, src: r.id });
     }

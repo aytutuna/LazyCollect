@@ -161,7 +161,7 @@ describe("repeating many requests", () => {
     const { cookie, ids } = await prepared();
     await env.DB_NA.prepare("UPDATE requests SET deadline = ? WHERE id = ?").bind(Date.now() - 400 * DAY, ids[1]).run();
     const res = await api("/api/batches", { method: "POST", cookie, body: { request_ids: ids, title: "Repeat", reminders_on: true } });
-    expect([res.status, (await res.json<any>()).error]).toEqual([400, "deadline_passed"]);
+    expect([res.status, (await res.json<any>()).error]).toEqual([400, "repeat_deadline_passed"]);
     expect((await q("SELECT COUNT(*) AS n FROM requests"))[0].n).toBe(2);
     expect(await q("SELECT 1 FROM batches")).toHaveLength(0);
   });
