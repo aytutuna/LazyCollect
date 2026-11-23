@@ -21,7 +21,7 @@ export function CameraView({ detector, onCapture, onUnavailable, say }: { detect
   const video = useRef<HTMLVideoElement>(null);
   const [dims, setDims] = useState<[number, number]>([4, 3]);
   const [seen, setSeen] = useState<Seen | null>(null);
-  const [state, setState] = useState<"starting" | "searching" | "found" | "hold" | "manual">("starting");
+  const [state, setState] = useState<"starting" | "loading" | "searching" | "found" | "hold" | "manual">("starting");
   const [auto, setAuto] = useState(true);
   const live = useRef({ auto: true, seen: null as Seen | null, busy: false });
   live.current.auto = auto;
@@ -115,7 +115,10 @@ export function CameraView({ detector, onCapture, onUnavailable, say }: { detect
         await media.getVideoTracks()[0].applyConstraints({ advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] }).catch(() => {});
         video.current!.srcObject = media;
         await video.current!.play();
+        // the picture and the shutter work while the page finder loads
+        setState("loading");
         const model = await detector.ready;
+        if (!alive) return;
         setState(model ? "searching" : "manual");
         if (model) tick();
       } catch (e) {
@@ -154,7 +157,7 @@ export function CameraView({ detector, onCapture, onUnavailable, say }: { detect
       </div>
       <p class="scan-status">{seen?.issues.length ? seen.issues.map((i) => t(`scan.issue_${i}`)).join(" ") : t(`scan.state_${state}`)}</p>
       <label class="check">
-        <input type="checkbox" checked={auto} disabled={state === "manual"} onChange={(e) => setAuto(e.currentTarget.checked)} />
+        <input type="checkbox" checked={auto} disabled={state === "manual" || state === "loading" || state === "starting"} onChange={(e) => setAuto(e.currentTarget.checked)} />
         <span>{t("scan.auto")}</span>
       </label>
       <div class="shutter">

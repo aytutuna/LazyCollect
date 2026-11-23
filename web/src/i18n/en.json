@@ -863,6 +863,7 @@
   "scan.close": "Close",
   "scan.camera_label": "Camera view",
   "scan.state_starting": "Starting the camera",
+  "scan.state_loading": "Getting page detection ready. You can take the photo now.",
   "scan.state_searching": "Looking for the page. A plain, darker surface works best.",
   "scan.state_found": "Page found",
   "scan.state_hold": "Hold still",
