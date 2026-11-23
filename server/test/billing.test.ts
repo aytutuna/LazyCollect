@@ -204,9 +204,23 @@ describe("signature", () => {
     expect(await verifySignature(body, `${stamp},${v1(good)},${v1(stale)}`, secret, now)).toBe(true);
     expect(await verifySignature(body, `${stamp},${v1(stale)},v1=${"0".repeat(64)}`, secret, now)).toBe(false);
   });
+
+  it("looks only at the first three v1 signatures", async () => {
+    const good = await sign(body, secret, now);
+    const [stamp, v1] = good.split(",");
+    const junk = `v1=${"0".repeat(64)}`;
+    expect(await verifySignature(body, `${stamp},${junk},${junk},${v1}`, secret, now)).toBe(true);
+    expect(await verifySignature(body, `${stamp},${junk},${junk},${junk},${v1}`, secret, now)).toBe(false);
+  });
 });
 
 describe("webhook", () => {
+  it("refuses a body over 512 KB before looking at the signature", async () => {
+    const event = { id: "evt_big", type: "invoice.paid", pad: "x".repeat(513 * 1024) };
+    expect((await webhook(event)).status).toBe(413);
+    expect((await env.CONTROL.prepare("SELECT COUNT(*) AS n FROM stripe_events").first<any>()).n).toBe(0);
+  });
+
   it("rejects calls without a valid signature", async () => {
     const event = { id: "evt_1", type: "invoice.paid", data: { object: {} } };
     expect((await webhook(event, null)).status).toBe(400);
@@ -422,20 +436,6 @@ describe("double payment", () => {
     expect((await firmRow(cookie)).stripe_subscription_id).toBe("sub_1");
   });
 
-  it("refunds nothing for a trial", async () => {
-    await twoSubs("trialing", Math.floor(Date.now() / 1000) + 86_400);
-    expect(stripeFake.subs.get("sub_2")!.status).toBe("canceled");
-    expect(refunds()).toHaveLength(0);
-  });
-
-  it("refunds a subscription paid after the account was closed", async () => {
-    const { customer } = await subscribed();
-    await env.CONTROL.prepare("UPDATE firms SET closed_at = 5").run();
-    stripeFake.sub("sub_9", customer, { latest_invoice: "in_9" });
-    stripeFake.payments.set("in_9", [{ status: "paid", payment: { payment_intent: "pi_9" } }]);
-    await webhook({ id: "evt_9", type: "checkout.session.completed", data: { object: { mode: "subscription", customer, subscription: "sub_9" } } });
-    expect(stripeFake.subs.get("sub_9")!.status).toBe("canceled");
-    expect(refunds()[0].form.payment_intent).toBe("pi_9");
   it("keeps the duplicate alive when the refund fails, and finishes on the retry", async () => {
     const { customer } = await subscribed();
     stripeFake.sub("sub_1", customer);
@@ -457,6 +457,20 @@ describe("double payment", () => {
     expect(stripeFake.subs.get("sub_2")!.status).toBe("canceled");
   });
 
+  it("refunds nothing for a trial", async () => {
+    await twoSubs("trialing", Math.floor(Date.now() / 1000) + 86_400);
+    expect(stripeFake.subs.get("sub_2")!.status).toBe("canceled");
+    expect(refunds()).toHaveLength(0);
+  });
+
+  it("refunds a subscription paid after the account was closed", async () => {
+    const { customer } = await subscribed();
+    await env.CONTROL.prepare("UPDATE firms SET closed_at = 5").run();
+    stripeFake.sub("sub_9", customer, { latest_invoice: "in_9" });
+    stripeFake.payments.set("in_9", [{ status: "paid", payment: { payment_intent: "pi_9" } }]);
+    await webhook({ id: "evt_9", type: "checkout.session.completed", data: { object: { mode: "subscription", customer, subscription: "sub_9" } } });
+    expect(stripeFake.subs.get("sub_9")!.status).toBe("canceled");
+    expect(refunds()[0].form.payment_intent).toBe("pi_9");
   });
 
   it("ends a leftover subscription that Stripe still has live when subscribing again", async () => {

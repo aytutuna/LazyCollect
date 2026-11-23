@@ -132,6 +132,8 @@ billing.post("/billing/portal", async (c) => {
 
 const encoder = new TextEncoder();
 const HEX = /^[0-9a-f]{64}$/i;
+const MAX_SIGNATURES = 3;
+const MAX_BODY = 512 * 1024;
 
 // Stripe-Signature is `t=<seconds>,v1=<hex>[,v1=<hex>...]`, an HMAC-SHA256 of `<t>.<raw body>`
 export async function verifySignature(body: string, header: string | undefined, secret: string, now: number, tolerance = 5 * MINUTE): Promise<boolean> {
@@ -144,7 +146,7 @@ export async function verifySignature(body: string, header: string | undefined, 
     const k = part.slice(0, at).trim();
     const v = part.slice(at + 1).trim();
     if (k === "t") stamp = Number(v);
-    else if (k === "v1" && HEX.test(v)) sigs.push(v);
+    else if (k === "v1" && HEX.test(v) && sigs.length < MAX_SIGNATURES) sigs.push(v);
   }
   if (!Number.isFinite(stamp) || Math.abs(now - stamp * 1000) > tolerance) return false;
   const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
@@ -243,7 +245,9 @@ export const stripeWebhook = new Hono<AppEnv>();
 
 stripeWebhook.post("/stripe/webhook", async (c) => {
   if (!c.env.STRIPE_WEBHOOK_SECRET) throw new Error("STRIPE_WEBHOOK_SECRET is not set");
+  if (Number(c.req.header("Content-Length")) > MAX_BODY) return c.json({ error: "too_big" }, 413);
   const raw = await c.req.text();
+  if (raw.length > MAX_BODY) return c.json({ error: "too_big" }, 413);
   if (!(await verifySignature(raw, c.req.header("Stripe-Signature"), c.env.STRIPE_WEBHOOK_SECRET, Date.now()))) {
     return c.json({ error: "invalid" }, 400);
   }
