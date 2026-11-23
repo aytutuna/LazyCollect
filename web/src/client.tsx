@@ -4,7 +4,7 @@ import { ApiError, del, get, useAction, useLoad } from "./api";
 import { fmtDate, fmtSize, isLate, relative, setZone } from "./format";
 import { t } from "./i18n";
 import type { ClientItem, ClientView } from "./types";
-import { Badge, ErrorNote, Loading } from "./ui";
+import { Badge, ErrorNote, LegalLink, Loading } from "./ui";
 import { MAX_SIZE, combineToPdf, prepareImage, sendFile, type Prepared } from "./upload";
 import "./styles.css";
 
@@ -198,7 +198,9 @@ function Page() {
           </button>
         </p>
       )}
-      <p class="muted">{t("client.privacy", { firm: data.firm_name })}</p>
+      <p class="muted">
+        {t("client.privacy", { firm: data.firm_name })} <LegalLink page="privacy">{t("legal.privacy")}</LegalLink>
+      </p>
       <section>
         <h2>{t("client.checklist")}</h2>
         <p class="muted">{t("progress", { done: received, total: data.items.length })}</p>

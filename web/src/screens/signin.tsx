@@ -2,7 +2,7 @@ import { useState } from "preact/hooks";
 import { ApiError, post, useAction } from "../api";
 import { t } from "../i18n";
 import { Turnstile } from "../turnstile";
-import { ErrorNote, Field } from "../ui";
+import { ErrorNote, Field, LegalLink } from "../ui";
 
 export function SignIn({ onDone }: { onDone: () => Promise<unknown> }) {
   const [step, setStep] = useState<"email" | "code">("email");
@@ -55,6 +55,11 @@ export function SignIn({ onDone }: { onDone: () => Promise<unknown> }) {
           <button class="primary" disabled={busy || !token}>
             {t("signin.send")}
           </button>
+          <p class="muted">
+            {t("signin.agree_before")} <LegalLink page="terms">{t("legal.terms")}</LegalLink> {t("signin.agree_between")}{" "}
+            <LegalLink page="privacy">{t("legal.privacy")}</LegalLink>
+            .
+          </p>
         </form>
       ) : (
         <form onSubmit={verify}>

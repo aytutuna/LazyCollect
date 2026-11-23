@@ -92,6 +92,12 @@
   "error.upload_id_used": "That upload was already removed. Choose the file again.",
 
   "signin.title": "Sign in",
+  "legal.terms": "Terms of use",
+  "legal.privacy": "Privacy policy",
+  "legal.dpa": "Data processing terms",
+  "legal.subprocessors": "Subprocessors",
+  "signin.agree_before": "By continuing you agree to the",
+  "signin.agree_between": "and the",
   "signin.intro": "Enter your email and we will send you a sign-in code. New here? The same step creates your account.",
   "signin.email": "Email",
   "signin.send": "Send code",

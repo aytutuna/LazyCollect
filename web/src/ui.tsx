@@ -31,6 +31,14 @@ export function Loading() {
   return <p class="muted">{t("loading")}</p>;
 }
 
+export function LegalLink({ page, children }: { page: "terms" | "privacy" | "dpa" | "subprocessors"; children: ComponentChildren }) {
+  return (
+    <a href={`https://alazy.app/collect/${page}.html`} target="_blank" rel="noopener">
+      {children}
+    </a>
+  );
+}
+
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ComponentChildren }) {
   return (
     <label class="field">

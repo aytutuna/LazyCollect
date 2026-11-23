@@ -3,7 +3,7 @@ import { Link } from "wouter-preact";
 import { get, patch, put, useAction, useLoad } from "../api";
 import { t } from "../i18n";
 import type { Firm, Me } from "../types";
-import { Confirm, ErrorNote, Field, Loading } from "../ui";
+import { Confirm, ErrorNote, Field, LegalLink, Loading } from "../ui";
 import { CloseAccount, Plan } from "./billing";
 import { Staff } from "./staff";
 
@@ -200,6 +200,11 @@ export function Settings({ me, onSaved, onRefresh, onSignOut, onClosed }: { me: 
             <Link href="/activity">{t("settings.activity")}</Link>
           </p>
         )}
+        <p class="muted">
+          <LegalLink page="terms">{t("legal.terms")}</LegalLink> · <LegalLink page="privacy">{t("legal.privacy")}</LegalLink> ·{" "}
+          <LegalLink page="dpa">{t("legal.dpa")}</LegalLink> · <LegalLink page="subprocessors">{t("legal.subprocessors")}</LegalLink> ·{" "}
+          <a href="mailto:support@alazy.app">support@alazy.app</a>
+        </p>
       </section>
       {me.user.role === "owner" && <CloseAccount name={me.firm.name!} onClosed={onClosed} />}
     </>
