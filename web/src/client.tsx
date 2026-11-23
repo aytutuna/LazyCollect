@@ -182,6 +182,8 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
   const [back, setBack] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const [Scanner, setScanner] = useState<typeof import("./scan/Scanner").Scanner | null>(null);
+  const [scanFailed, setScanFailed] = useState(false);
+  const camera = useRef<HTMLInputElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const action = useAction();
   const open = item.status !== "approved";
@@ -229,6 +231,18 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
     }
     setPreparing(false);
     await queue.add(item.id, ready);
+  }
+
+  // when the scanner cannot load (a bad connection), the phone's own camera app takes the photo instead
+  function openScanner() {
+    setScanFailed(false);
+    import("./scan/Scanner")
+      .then((m) => setScanner(() => m.Scanner))
+      .catch(() => {
+        setScanFailed(true);
+        announce(t("scan.load_failed"));
+        camera.current?.click();
+      });
   }
 
   async function remove(id: string, name: string) {
@@ -294,11 +308,19 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
         {preparing && <p class="muted">{t("client.preparing")}</p>}
         {combined > 0 && <p class="muted">{t("client.combined", { n: combined })}</p>}
         <Alert error={action.error} />
+        {scanFailed && (
+          <p class="error" role="alert">
+            {t("scan.load_failed")}{" "}
+            <button class="link" onClick={() => location.reload()}>
+              {t("scan.reload")}
+            </button>
+          </p>
+        )}
 
         {open && (
           <>
             <div class="row-actions buttons">
-              <button class="primary" disabled={preparing} aria-describedby={`label-${item.id}`} onClick={() => import("./scan/Scanner").then((m) => setScanner(() => m.Scanner))}>
+              <button class="primary" disabled={preparing} aria-describedby={`label-${item.id}`} onClick={openScanner}>
                 {t("scan.open")}
               </button>
               <button disabled={preparing} aria-describedby={`label-${item.id}`} onClick={() => picker.current?.click()}>
@@ -317,6 +339,7 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
                 )
               )}
             </div>
+            <input ref={camera} type="file" accept="image/*" capture="environment" hidden tabIndex={-1} onChange={(e) => pick(e.currentTarget)} />
             <input ref={picker} type="file" accept="image/*,application/pdf" multiple hidden tabIndex={-1} onChange={(e) => pick(e.currentTarget)} />
           </>
         )}

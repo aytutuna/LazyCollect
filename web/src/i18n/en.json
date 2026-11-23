@@ -913,6 +913,8 @@
   "detail.opened_label": "Opened",
 
   "scan.open": "Scan",
+  "scan.load_failed": "The scanner could not load. You can take the photo with your phone's camera app, or reload the page to try again.",
+  "scan.reload": "Reload",
   "scan.title": "Scan: {label}",
   "scan.close": "Close",
   "scan.camera_label": "Camera view",
