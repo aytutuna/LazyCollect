@@ -4,7 +4,7 @@ import { get, patch, put, useAction, useLoad } from "../api";
 import { fmtDate } from "../format";
 import { t } from "../i18n";
 import type { Firm, Me } from "../types";
-import { ErrorNote, Field, Loading } from "../ui";
+import { Confirm, ErrorNote, Field, Loading } from "../ui";
 
 const ZONES = ["America/St_Johns", "America/Halifax", "America/Toronto", "America/Winnipeg", "America/Regina", "America/Edmonton", "America/Vancouver"];
 const PROVINCES = ["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"];
@@ -104,14 +104,32 @@ function planLine(firm: Me["firm"]): string {
 function Retention({ canEdit }: { canEdit: boolean }) {
   const { data, error, reload } = useLoad(() => get<{ years: number }>("/retention"));
   const [saved, setSaved] = useState(false);
-  const { busy, error: failed, run } = useAction();
+  const [years, setYears] = useState<number | null>(null);
+  const [moving, setMoving] = useState<number | null>(null);
+  const { busy, error: failed, run, reset } = useAction();
+  const chosen = years ?? data?.years ?? 7;
 
-  async function change(years: number) {
+  async function save() {
     setSaved(false);
-    if (await run(() => put("/retention", { years }))) {
+    if (await run(() => put("/retention", { years: chosen }))) {
+      setMoving(null);
       setSaved(true);
       reload();
     }
+  }
+
+  // a shorter period can retire requests at once, so say how many first
+  async function submit(e: Event) {
+    e.preventDefault();
+    if (chosen < data!.years) {
+      let count = 0;
+      if (!(await run(async () => (count = (await get<{ count: number }>(`/retention/impact?years=${chosen}`)).count)))) return;
+      if (count > 0) {
+        setMoving(count);
+        return;
+      }
+    }
+    await save();
   }
 
   return (
@@ -123,15 +141,37 @@ function Retention({ canEdit }: { canEdit: boolean }) {
       ) : (
         <>
           {!canEdit && <p class="muted">{t("settings.retention_owner")}</p>}
-          <Field label={t("settings.retention_years")}>
-            <select disabled={!canEdit || busy} value={data.years} onChange={(e) => change(Number(e.currentTarget.value))}>
-              {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-                <option value={n}>{t("settings.years", { n })}</option>
-              ))}
-            </select>
-          </Field>
-          <ErrorNote error={failed} />
-          {saved && <p class="ok">{t("saved")}</p>}
+          <form onSubmit={submit}>
+            <Field label={t("settings.retention_years")}>
+              <select disabled={!canEdit} value={chosen} onChange={(e) => setYears(Number(e.currentTarget.value))}>
+                {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                  <option value={n}>{t("settings.years", { n })}</option>
+                ))}
+              </select>
+            </Field>
+            {moving === null && <ErrorNote error={failed} />}
+            {saved && <p class="ok">{t("saved")}</p>}
+            {canEdit && (
+              <button class="primary" disabled={busy || chosen === data.years}>
+                {t("settings.retention_save")}
+              </button>
+            )}
+          </form>
+          {moving !== null && (
+            <Confirm
+              title={t("settings.retention_confirm_title")}
+              body={t("settings.retention_confirm_body", { n: moving, years: chosen })}
+              confirm={t("settings.retention_confirm")}
+              danger
+              busy={busy}
+              error={failed}
+              onConfirm={save}
+              onCancel={() => {
+                setMoving(null);
+                reset();
+              }}
+            />
+          )}
         </>
       )}
     </section>

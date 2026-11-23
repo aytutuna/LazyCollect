@@ -39,7 +39,8 @@ export function Trash() {
                     <span>
                       <strong>{r.title}</strong>{" "}
                       <span class="muted">
-                        {r.client_name}, {t("trash.removed", { date: fmtDate(r.purge_at) })}
+                        {r.client_name}, {r.deleted_reason === "retention" ? `${t("trash.retention")}, ` : ""}
+                        {t("trash.removed", { date: fmtDate(r.purge_at) })}
                       </span>
                     </span>
                     <button class="small" disabled={act.busy} onClick={() => restore("requests", r.id)}>

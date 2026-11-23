@@ -11,7 +11,7 @@ const ITEM_TONES = { empty: "grey", submitted: "teal", approved: "green", reject
 
 type Ask = "link" | "close" | "delete" | null;
 
-export function RequestPage({ id }: { id: string }) {
+export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
   const [, go] = useLocation();
   const { data: req, error, reload } = useLoad(() => get<RequestDetail>(`/requests/${id}`), [id]);
   const clients = useLoad(() => get<Client[]>("/clients"));
@@ -84,6 +84,14 @@ export function RequestPage({ id }: { id: string }) {
     if (await act.run(() => put(`/requests/${id}/hold`, { on: !req!.hold_at }))) {
       reload();
       activity.reload();
+    }
+  }
+
+  // ask first, so a refusal shows here instead of replacing the page with an error
+  async function download() {
+    if (await act.run(() => get(`/requests/${id}/export?check=1`))) {
+      window.location.href = `/api/requests/${id}/export`;
+      setTimeout(activity.reload, 1500);
     }
   }
 
@@ -252,9 +260,9 @@ export function RequestPage({ id }: { id: string }) {
         </ul>
         {req.items.some((i) => i.files.length > 0) && (
           <p>
-            <a class="button" href={`/api/requests/${id}/export`} onClick={() => setTimeout(activity.reload, 1500)}>
+            <button disabled={act.busy} onClick={download}>
               {t("detail.download")}
-            </a>
+            </button>
           </p>
         )}
         {manage && (adding ? <ItemForm requestId={id} onSaved={saved} onCancel={() => setAdding(false)} /> : <button onClick={() => setAdding(true)}>{t("items.add")}</button>)}
@@ -264,9 +272,11 @@ export function RequestPage({ id }: { id: string }) {
         <h2>{t("detail.activity")}</h2>
         {req.hold_at ? <p>{t("detail.hold_on")}</p> : req.keep_until && <p class="muted">{t("detail.kept_until", { date: fmtDate(req.keep_until) })}</p>}
         <p class="muted">{t("detail.hold_help")}</p>
-        <button disabled={act.busy} onClick={toggleHold}>
-          {req.hold_at ? t("detail.hold_release") : t("detail.hold_set")}
-        </button>
+        {(!req.hold_at || owner) && (
+          <button disabled={act.busy} onClick={toggleHold}>
+            {req.hold_at ? t("detail.hold_release") : t("detail.hold_set")}
+          </button>
+        )}
         {activity.data && (activity.data.rows.length ? <ActivityList rows={activity.data.rows} /> : <p class="muted">{t("detail.activity_none")}</p>)}
       </section>
 

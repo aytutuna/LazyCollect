@@ -72,7 +72,7 @@ export type RequestDetail = {
   items: ItemWithFiles[];
 };
 
-export type TrashRequest = { id: string; title: string; client_name: string; deleted_at: number; purge_at: number };
+export type TrashRequest = { id: string; title: string; client_name: string; deleted_at: number; deleted_reason: "retention" | null; purge_at: number };
 
 export type TrashClient = { id: string; name: string; deleted_at: number; purge_at: number };
 

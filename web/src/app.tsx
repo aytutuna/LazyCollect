@@ -114,7 +114,7 @@ export function App() {
           <Route path="/new">
             <NewRequest />
           </Route>
-          <Route path="/requests/:id">{(params) => <RequestPage key={params.id} id={params.id} />}</Route>
+          <Route path="/requests/:id">{(params) => <RequestPage key={params.id} id={params.id} owner={me.user.role === "owner"} />}</Route>
           <Route path="/clients">
             <Clients />
           </Route>
