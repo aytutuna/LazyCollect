@@ -1,5 +1,6 @@
 import { LINK_GRACE } from "./links";
 import { regionIds, regionOf } from "./regions";
+import { DEFAULT_YEARS, YEAR } from "./status";
 import { HOUR, RESTORE_WINDOW, randomId } from "./util";
 
 // requests purged per region per run; a client's requests count against the same budget
@@ -117,6 +118,19 @@ async function purgeClient(db: D1Database, bucket: R2Bucket, client: Target, bud
   ]);
 }
 
+// An open request whose link has run out is finished too: its retention clock starts then, as it does on close or completion.
+async function startClocks(db: D1Database, now: number) {
+  const ends = `deadline + ${LINK_GRACE}`;
+  await db
+    .prepare(
+      `UPDATE requests SET ended_at = ${ends},
+         keep_until = ${ends} + COALESCE((SELECT retention_years FROM firm_settings WHERE firm_id = requests.firm_id), ${DEFAULT_YEARS}) * ${YEAR}
+       WHERE rowid IN (SELECT rowid FROM requests WHERE status = 'open' AND ended_at IS NULL AND deleted_at IS NULL AND ${ends} <= ? LIMIT ${RETENTION_BATCH})`,
+    )
+    .bind(now)
+    .run();
+}
+
 // retention only moves a request to Recently deleted; the purge below takes it after the restore window
 async function retire(db: D1Database, now: number) {
   const { results } = await db
@@ -155,6 +169,7 @@ export async function purgeExpired(env: Env, now = Date.now()) {
   for (const id of regionIds) {
     try {
       const { db, bucket } = regionOf(env, id);
+      await startClocks(db, now).catch(log);
       await retire(db, now).catch(log);
 
       const budget = { left: BUDGET };

@@ -180,6 +180,11 @@ requests.patch("/requests/:id", async (c) => {
   if (req.status !== "draft" && ("reminders_on" in fields || "deadline" in fields)) {
     fields.next_reminder_at = on && due > now ? nextReminder(now, due, c.get("firm").tz, true) : null;
   }
+  // an open request's clock only runs once its link has expired, so a later deadline stops it
+  if (typeof fields.deadline === "number" && req.status === "open") {
+    fields.ended_at = null;
+    fields.keep_until = null;
+  }
   const set = setClause(fields);
   const stmts = [db.prepare(`UPDATE requests SET ${set.sql} WHERE firm_id = ? AND id = ?`).bind(...set.values, firmId, req.id)];
   // a later deadline would otherwise leave the live link expiring early

@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { purgeExpired } from "../src/purge";
 import { sweepFiles } from "../src/sweep";
 import { YEAR } from "../src/status";
 import { DAY } from "../src/util";
@@ -71,6 +72,55 @@ describe("retention", () => {
     const staff = await login("staff@firm.test");
     expect((await api("/api/retention", { method: "PUT", cookie: staff, body: { years: 2 } })).status).toBe(403);
     expect((await api("/api/retention", { cookie: staff })).status).toBe(200);
+  });
+});
+
+describe("expired requests", () => {
+  const GRACE = 30 * DAY;
+  const lapse = (days: number) => env.DB_NA.prepare("UPDATE requests SET deadline = ?").bind(Date.now() - days * DAY).run();
+
+  it("start their clock when the link runs out, from the firm's retention", async () => {
+    const { cookie } = await openRequest();
+    await api("/api/retention", { method: "PUT", cookie, body: { years: 3 } });
+    await lapse(10);
+    await purgeExpired(env);
+    expect((await row()).ended_at).toBeNull();
+    await lapse(31);
+    const deadline = (await env.DB_NA.prepare("SELECT deadline FROM requests").first<any>())!.deadline;
+    await purgeExpired(env);
+    expect(await row()).toMatchObject({ status: "open", ended_at: deadline + GRACE, keep_until: deadline + GRACE + 3 * YEAR, deleted_at: null });
+  });
+
+  it("are moved to Recently deleted once the period is over", async () => {
+    await openRequest();
+    await lapse(31);
+    await purgeExpired(env);
+    expect((await row()).deleted_at).toBeNull();
+    await purgeExpired(env, Date.now() + 8 * YEAR);
+    expect((await row()).deleted_at).toBeGreaterThan(0);
+  });
+
+  it("get a clock on legal hold but are not deleted while held", async () => {
+    const { cookie, req } = await openRequest();
+    await api(`/api/requests/${req.id}/hold`, { method: "PUT", cookie, body: { on: true } });
+    await lapse(31);
+    await purgeExpired(env);
+    expect((await row()).ended_at).toBeGreaterThan(0);
+    await purgeExpired(env, Date.now() + 8 * YEAR);
+    expect(await row()).toMatchObject({ deleted_at: null });
+  });
+
+  it("leave drafts alone, and a later deadline stops the clock", async () => {
+    const { cookie, req } = await openRequest();
+    const draft = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: req.client_id, title: "Draft", deadline: Date.now() + DAY } })).json<any>();
+    await env.DB_NA.prepare("UPDATE requests SET deadline = ?").bind(Date.now() - 40 * DAY).run();
+    await purgeExpired(env);
+    const rows = (await env.DB_NA.prepare("SELECT id, ended_at FROM requests").all<any>()).results;
+    expect(rows.find((r) => r.id === draft.id).ended_at).toBeNull();
+    expect(rows.find((r) => r.id === req.id).ended_at).toBeGreaterThan(0);
+    const res = await api(`/api/requests/${req.id}`, { method: "PATCH", cookie, body: { deadline: Date.now() + 5 * DAY } });
+    expect(res.status).toBe(200);
+    expect((await env.DB_NA.prepare("SELECT ended_at, keep_until FROM requests WHERE id = ?").bind(req.id).first<any>())).toEqual({ ended_at: null, keep_until: null });
   });
 });
 
