@@ -27,7 +27,9 @@ async function find(c: Context<AppEnv>, who: Who) {
     .first<{ name: string; email: string | null }>();
   if (!client && !who.hash) return null;
   const firm = await c.env.CONTROL.prepare("SELECT COALESCE(legal_name, name) AS sender FROM firms WHERE id = ?").bind(who.firmId).first<{ sender: string | null }>();
-  return { ...who, db, client, sender: firm?.sender ?? "the sender" };
+  // a purged account has nothing left to attach a stop to
+  if (!firm) return null;
+  return { ...who, db, client, sender: firm.sender ?? "the sender" };
 }
 
 const invalid = (c: Context) => page(c, 404, "<p>This link is not valid.</p>");

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { audit } from "./audit";
 import { normalizeEmail } from "./auth";
+import { stopHash } from "./mail";
 import type { AppEnv } from "./session";
 import { endNow } from "./status";
 import { randomId } from "./util";
@@ -14,7 +15,7 @@ const PHONE_RE = /^[\d\s()+.-]{7,40}$/;
 
 const CHANNELS = [["email_ok_at", "email"], ["sms_ok_at", "sms"]] as const;
 
-type ClientRow = { id: string; email: string | null; phone: string | null; email_ok_at: number | null; sms_ok_at: number | null };
+type ClientRow = { id: string; email: string | null; phone: string | null; email_ok_at: number | null; sms_ok_at: number | null; email_stop_at: number | null };
 
 function phone(v: unknown): string | null | undefined {
   const p = maybe(v, 40);
@@ -80,7 +81,7 @@ clients.patch("/clients/:id", async (c) => {
   const db = c.get("db");
   const firmId = c.get("firm").id;
   const row = await db
-    .prepare("SELECT id, email, phone, email_ok_at, sms_ok_at FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
+    .prepare("SELECT id, email, phone, email_ok_at, sms_ok_at, email_stop_at FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
     .bind(firmId, c.req.param("id"))
     .first<ClientRow>();
   if (!row) return notFound(c);
@@ -120,6 +121,9 @@ clients.patch("/clients/:id", async (c) => {
     if (email !== row.email) fields.email_ok_at = null;
     if (tel !== row.phone) fields.sms_ok_at = null;
   }
+  // the stop belongs to the old address; the client row starts clean with the new one
+  const leaving = row.email_stop_at && row.email && email !== row.email ? await stopHash(c.env, row.email) : null;
+  if (leaving) fields.email_stop_at = null;
   if (!Object.keys(fields).length) return invalid(c);
   const set = setClause(fields);
   const consent = {
@@ -127,6 +131,7 @@ clients.patch("/clients/:id", async (c) => {
     cleared: CHANNELS.filter(([col]) => fields[col] === null && row[col]).map(([, name]) => name),
   };
   await db.batch([
+    ...(leaving ? [db.prepare("INSERT OR IGNORE INTO email_stops (firm_id, email_hash, stopped_at) VALUES (?, ?, ?)").bind(firmId, leaving, row.email_stop_at)] : []),
     db.prepare(`UPDATE clients SET ${set.sql} WHERE firm_id = ? AND id = ?`).bind(...set.values, firmId, row.id),
     audit(c, "client.update", "client", row.id, { fields: Object.keys(fields) }),
     ...(consent.set.length || consent.cleared.length ? [audit(c, "client.consent", "client", row.id, consent)] : []),

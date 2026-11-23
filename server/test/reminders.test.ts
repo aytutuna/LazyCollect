@@ -927,4 +927,30 @@ describe("unsubscribe tokens and old stops", () => {
     expect(sent).toHaveLength(0);
     expect(await stops()).toEqual([await hashOf("amy@mail.test")]);
   });
+
+  it("keeps the stop on the old address when the client's address is changed", async () => {
+    const o = await ready();
+    const link = await sentLink(o);
+    expect((await stop(link)).status).toBe(200);
+    const edit = await api(`/api/clients/${o.client.id}`, { method: "PATCH", cookie: o.cookie, body: { email: "amy2@mail.test", contact_ok: true } });
+    expect(edit.status).toBe(200);
+    expect((await edit.json<any>()).email_stop_at).toBeNull();
+    expect(await stops()).toEqual([await hashOf("amy@mail.test")]);
+    expect((await invite(o.cookie, o.req.id)).status).toBe(200);
+    // and the old address stays stopped for a client made later
+    await env.DB_NA.prepare("UPDATE clients SET deleted_at = 1").run();
+    const back = await (await api("/api/clients", { method: "POST", cookie: o.cookie, body: { name: "Amy", email: "amy@mail.test", contact_ok: true } })).json<any>();
+    const req = await (await api("/api/requests", { method: "POST", cookie: o.cookie, body: { client_id: back.id, title: "3", deadline: Date.now() + 40 * DAY, items: [{ label: "T4", required: true }] } })).json<any>();
+    expect((await invite(o.cookie, req.id)).status).toBe(400);
+  });
+
+  it("does not write a stop for an account that is gone", async () => {
+    const o = await ready();
+    const link = await sentLink(o);
+    const firmId = (await env.CONTROL.prepare("SELECT id FROM firms").first<any>()).id;
+    await env.CONTROL.batch([env.CONTROL.prepare("DELETE FROM sessions"), env.CONTROL.prepare("DELETE FROM users"), env.CONTROL.prepare("DELETE FROM firms WHERE id = ?").bind(firmId)]);
+    expect((await stop(link)).status).toBe(404);
+    expect(await stops()).toEqual([]);
+    expect((await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM audit WHERE action = 'email.unsubscribe'").first<any>())!.n).toBe(0);
+  });
 });
