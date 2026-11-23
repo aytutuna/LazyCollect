@@ -22,7 +22,7 @@ export default template("t2-year-end", "T2 corporate year-end", [
   doc("Sale documents for assets sold", "The date, the price and what was sold.", assets, false),
 
   ask(loans),
-  doc("Shareholder loan account", "The ledger with the balance at year end and every repayment. An amount still owing a year after the corporation's year end may be taxable to the shareholder.", loans),
+  doc("Shareholder loan account", "A loan not repaid by the end of the year after the one in which it was made may be taxable to the shareholder. Tell us the date and amount of each loan and repayment.", loans),
 
   ask(payroll),
   doc("Payroll summary for the year", "From your payroll software or provider.", payroll),

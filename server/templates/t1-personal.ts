@@ -8,6 +8,11 @@
 // - notice of assessment: canada.ca/en/services/taxes/income-tax/personal-income-tax/after-you-file/noa-nor.html
 // - Quebec RL titles and the housing component of the solidarity credit: revenuquebec.ca/en/online-services/forms-and-publications/current-details/rl-1-t/ (rl-2-t to rl-31-t) and revenuquebec.ca/en/citizens/tax-credits/solidarity-tax-credit/
 //   (Revenu Quebec refused automated fetches, so those titles come from its search listings)
+// - employment expenses, home office costs an employee may claim: canada.ca/en/revenue-agency/services/forms-publications/publications/t4044/employment-expenses.html
+// - RRSP 60-day window for 2025: contributions made from March 3, 2025 (60 days after December 31, 2024, a Saturday) to March 2, 2026 (day 60 is Sunday, March 1)
+// - principal residence sales are reported on the return and designated on Schedule 3 and Form T2091
+// - RL-6 is the Quebec Parental Insurance Plan slip; the slip for QPP benefits is not confirmed here, so the T4A(P) help only points to Retraite Québec
+// - Home Buyers' Plan repayments: the HBP statement in CRA My Account
 import { ask, doc, template, text } from "./build";
 
 const feb = "Your payer sends this by the end of February.";
@@ -15,7 +20,8 @@ const marital = "Did your marital status change in 2025?";
 const dependants = "Do you have dependants?";
 const childcare = "Did you have childcare costs?";
 const moved = "Did you move more than 40 km for work or school?";
-const home = "Did you buy a first home or open a First Home Savings Account (FHSA)?";
+const home = "Do you have a First Home Savings Account (FHSA), did you buy a first home, or are you repaying an RRSP Home Buyers' Plan?";
+const sold = "Did you sell a home, other property or crypto in 2025?";
 const selfEmployed = "Did you have self-employment income?";
 const rental = "Did you earn rental income?";
 const foreign = "Did you own foreign property costing more than C$100,000?";
@@ -29,15 +35,17 @@ export default template("t1-personal", "T1 personal tax organizer, 2025", [
   doc("Notice of assessment for 2024", "Sign in to CRA My Account and look under Tax returns, or use the copy that came in the mail."),
   doc("T4 slips (employment income)", `${feb} Send one for each employer.`, undefined, false),
   doc("T4A slips (pension, retirement, annuity and other income)", `${feb} This includes scholarships and some self-employment income.`, undefined, false),
-  doc("T4A(P) slip (Canada Pension Plan benefits)", feb, undefined, false),
+  doc("T4A(P) slip (Canada Pension Plan benefits)", `${feb} Quebec residents: the pension slip from Retraite Québec.`, undefined, false),
   doc("T4A(OAS) slip (Old Age Security)", feb, undefined, false),
   doc("T4E slip (Employment Insurance benefits)", feb, undefined, false),
   doc("T5 slips (investment income)", `${feb} Banks and brokers send one for interest and dividends.`, undefined, false),
   doc("T3 slips (trust income)", "Usually sent by the end of March. Mutual funds and trusts send these.", undefined, false),
+  doc("T5013 slips (partnership income)", "Usually sent by the end of March.", undefined, false),
   doc("T5008 slips (securities transactions)", "From your broker if you sold investments. Add a year-end statement if you have one.", undefined, false),
   doc("T4RSP and T4RIF slips (RRSP and RRIF income)", feb, undefined, false),
   doc("T5007 slips (social assistance and workers' compensation)", feb, undefined, false),
-  doc("RRSP contribution receipts", "Include contributions made in the first 60 days of 2026 if you want to claim them for 2025.", undefined, false),
+  doc("RRSP contribution receipts", "Contributions from March 3, 2025 to March 2, 2026 can go on the 2025 return. Your 2024 notice of assessment shows your RRSP limit.", undefined, false),
+  doc("Instalment payment records", "The amounts you paid to the CRA and Revenu Québec in 2025.", undefined, false),
 
   ask(marital, "For example marriage, a new common-law partner, separation or a death."),
   text("What changed, and on what date?", "Add your new or former partner's name and their 2025 net income if you know it.", marital),
@@ -54,9 +62,12 @@ export default template("t1-personal", "T1 personal tax organizer, 2025", [
   doc("Letter from your employer about moving costs", "Only if your employer paid or refunded part of the move.", moved, false),
 
   ask(home),
-  doc("FHSA slip (T4FHSA) and account statements", "Your bank sends the T4FHSA by the end of February. Send one for each FHSA.", home),
-  doc("Home Buyers' Plan details", "Only if you took money out of your RRSP for a first home. Your RRSP issuer can send the withdrawal and repayment amounts.", home, false),
+  doc("FHSA slip (T4FHSA) and account statements", "Your bank sends the T4FHSA by the end of February. Send one for each FHSA.", home, false),
+  doc("Home Buyers' Plan details", "Only if you took money out of your RRSP for a first home. Your HBP statement in CRA My Account shows what you still have to repay.", home, false),
   doc("Home purchase closing documents", "The statement of adjustments or the closing letter from your lawyer.", home, false),
+
+  ask(sold, "Real estate, shares, crypto or other property, including a home or cottage."),
+  doc("Sale and cost details", "For each sale: the date, what you sold it for, what it cost you and any selling costs. If it was a home you lived in, tell us; the sale is still reported and the principal residence designation is made on your return.", sold),
 
   ask(selfEmployed, "Freelance work, gig work, a small business or commissions."),
   doc("Business income summary or invoices", "A sales report, or a list of invoices for the year.", selfEmployed),
@@ -82,13 +93,14 @@ export default template("t1-personal", "T1 personal tax organizer, 2025", [
 
   ask(wfh, "For 2025 only the detailed method is available. The $500 flat rate ended after 2022.", false),
   doc("Form T2200 signed by your employer", "The Declaration of Conditions of Employment. Ask your employer or HR for it.", wfh),
-  doc("Home expense records", "Rent or mortgage interest, utilities, internet, and the size of your workspace compared with the whole home.", wfh, false),
+  doc("Home expense records", "Rent if you rent, electricity, heat, water, minor maintenance and home internet, plus the size of your workspace compared with the whole home. Employees can't claim mortgage interest, property tax or home insurance (commission employees can claim some).", wfh, false),
 
   ask(quebec, "Quebec residents also file a Quebec return. Their slips come from the RL series."),
   doc("RL-1 slips (employment and other income)", feb, quebec),
   doc("RL-2 slips (retirement and annuity income)", feb, quebec, false),
   doc("RL-3 slips (investment income)", feb, quebec, false),
   doc("RL-5 slips (benefits and indemnities)", feb, quebec, false),
+  doc("RL-6 slips (Quebec Parental Insurance Plan benefits)", feb, quebec, false),
   doc("RL-8 slips (post-secondary studies)", "Your school sends this along with the T2202.", quebec, false),
   doc("RL-24 slips (childcare expenses)", "Your childcare provider sends this.", quebec, false),
   doc("RL-31 slip (leased dwelling)", "Only if you rented your home. Your landlord gives you a copy by the end of February. It is needed for the solidarity tax credit.", quebec, false),

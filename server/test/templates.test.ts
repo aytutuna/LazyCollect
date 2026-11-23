@@ -116,3 +116,29 @@ describe("built-in templates", () => {
     for (const i of sin) expect(i.required).toBe(false);
   });
 });
+
+describe("the T1 organizer", () => {
+  const t1 = builtinTemplates.find((t) => t.id === "t1-personal")!;
+  const find = (label: RegExp) => t1.items.findIndex((i) => label.test(i.label));
+
+  it("asks about sales and hangs the sale details on that question", () => {
+    const q = find(/sell a home, other property or crypto/);
+    const details = t1.items[find(/Sale and cost details/)];
+    expect(t1.items[q].kind).toBe("yesno");
+    expect(details.show_if).toEqual({ item: q, value: "yes" });
+    expect(details.help).toContain("principal residence");
+  });
+
+  it("has partnership slips, instalment records and the RL-6 slip as optional documents", () => {
+    for (const label of [/T5013/, /Instalment payment/, /RL-6/]) {
+      const i = t1.items[find(label)];
+      expect([label.source, i.required]).toEqual([label.source, false]);
+    }
+  });
+
+  it("points Home Buyers' Plan details to CRA My Account", () => {
+    const hbp = t1.items[find(/Home Buyers' Plan details/)];
+    expect(hbp.help).toContain("CRA My Account");
+    expect(hbp.help).not.toContain("issuer");
+  });
+});
