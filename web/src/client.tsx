@@ -180,7 +180,7 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
   const [asking, setAsking] = useState(false);
   const [back, setBack] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const camera = useRef<HTMLInputElement>(null);
+  const [Scanner, setScanner] = useState<typeof import("./scan/Scanner").Scanner | null>(null);
   const picker = useRef<HTMLInputElement>(null);
   const action = useAction();
   const open = item.status !== "approved";
@@ -200,10 +200,18 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
     setPreparing(true);
     setCombined(0);
     announce(t("client.preparing"));
-    let ready: Prepared[] = [];
+    const ready: Prepared[] = [];
     for (const file of picked) {
       ready.push(file.type.startsWith("image/") ? await prepareImage(file) : { blob: file, name: file.name, jpeg: false });
     }
+    await submit(ready);
+  }
+
+  // the files go up as they are, except that photos are combined into one PDF when there is more than one
+  async function submit(files: Prepared[]) {
+    let ready = files;
+    setPreparing(true);
+    setCombined(0);
     const photos = ready.filter((r) => r.jpeg);
     // a few kB per page covers the PDF structure; past the cap the photos go up separately
     const estimate = photos.reduce((sum, p) => sum + p.blob.size + 2048, 0);
@@ -286,8 +294,8 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
         {open && (
           <>
             <div class="row-actions buttons">
-              <button disabled={preparing} aria-describedby={`label-${item.id}`} onClick={() => camera.current?.click()}>
-                {t("client.take_photo")}
+              <button class="primary" disabled={preparing} aria-describedby={`label-${item.id}`} onClick={() => import("./scan/Scanner").then((m) => setScanner(() => m.Scanner))}>
+                {t("scan.open")}
               </button>
               <button disabled={preparing} aria-describedby={`label-${item.id}`} onClick={() => picker.current?.click()}>
                 {t("client.choose_file")}
@@ -305,9 +313,18 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
                 )
               )}
             </div>
-            <input ref={camera} type="file" accept="image/*" capture="environment" hidden tabIndex={-1} onChange={(e) => pick(e.currentTarget)} />
             <input ref={picker} type="file" accept="image/*,application/pdf" multiple hidden tabIndex={-1} onChange={(e) => pick(e.currentTarget)} />
           </>
+        )}
+        {Scanner && (
+          <Scanner
+            label={item.label}
+            onClose={() => setScanner(null)}
+            onDone={(files) => {
+              setScanner(null);
+              void submit(files);
+            }}
+          />
         )}
         {asking && <DontHave item={item} firm={firm} onChange={onChange} onClose={() => setAsking(false)} onCancel={() => { setAsking(false); setBack(true); }} />}
       </div>
