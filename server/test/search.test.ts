@@ -90,7 +90,7 @@ describe("home views", () => {
 
   it("refuses values it does not know", async () => {
     const { cookie } = await nine();
-    for (const q of ["view=x", "sort=x", "status=x", "client=nope", "offset=-1", "offset=1e3", "offset=100001", `q=${"a".repeat(101)}`]) {
+    for (const q of ["view=x", "sort=x", "sort=toString", "view=constructor", "status=toString", "status=x", "client=nope", "offset=-1", "offset=1e3", "offset=100001", `q=${"a".repeat(101)}`]) {
       expect([q, (await api(`/api/requests?${q}`, { cookie })).status]).toEqual([q, 400]);
     }
   });

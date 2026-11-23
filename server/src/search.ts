@@ -51,7 +51,7 @@ export async function listRequests(c: Context<AppEnv>) {
   const client = c.req.query("client");
   const q = queryOf(c);
   const offset = offsetOf(c);
-  if (!(VIEWS as readonly string[]).includes(view) || !(sort in SORTS) || (status && !STATUSES.includes(status)) || (client && !/^[0-9a-f]{32}$/.test(client)) || q === undefined || offset === undefined) {
+  if (!(VIEWS as readonly string[]).includes(view) || !Object.hasOwn(SORTS, sort) || (status && !STATUSES.includes(status)) || (client && !/^[0-9a-f]{32}$/.test(client)) || q === undefined || offset === undefined) {
     return invalid(c);
   }
   const db = c.get("db");
