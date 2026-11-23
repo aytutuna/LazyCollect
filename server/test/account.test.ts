@@ -6,6 +6,8 @@ import { canSend } from "../src/reminders";
 import { stopHash, unsubUrl } from "../src/mail";
 import { DAY } from "../src/util";
 import { addMember, api, firmRow, inDays, login, mockOutbound, openRequest, pdf, upload } from "./helpers";
+import { Authenticator } from "./authenticator";
+import { addPasskey, codeStep } from "./passkey-flow";
 import { stripeFake } from "./stripe-fake";
 
 const close = (cookie: string, confirm = "Tuna Tax") => api("/api/account/close", { method: "POST", cookie, body: { confirm } });
@@ -176,6 +178,24 @@ describe("reopen", () => {
 });
 
 describe("purge of a closed account", () => {
+  it("removes people who have passkeys, pending logins and challenges", async () => {
+    const { cookie, firm } = await withUpload();
+    await addPasskey(cookie, await Authenticator.create());
+    await api("/api/passkeys/options", { method: "POST", cookie });
+    await codeStep("owner@firm.test");
+    for (const t of ["passkeys", "pending_logins", "passkey_challenges"]) {
+      expect([t, (await env.CONTROL.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first<any>())!.n]).toEqual([t, 1]);
+    }
+    await close(cookie);
+    await ageClose(31);
+    await purgeClosed(env);
+    expect(await env.CONTROL.prepare("SELECT 1 FROM firms WHERE id = ?").bind(firm.id).first()).toBeNull();
+    expect(await env.CONTROL.prepare("SELECT 1 FROM users").first()).toBeNull();
+    for (const t of ["passkeys", "pending_logins", "passkey_challenges"]) {
+      expect([t, (await env.CONTROL.prepare(`SELECT COUNT(*) AS n FROM ${t}`).first<any>())!.n]).toEqual([t, 0]);
+    }
+  });
+
   it("gives a firm that cannot finish no more turns than the others", async () => {
     const held = await withUpload("held@firm.test");
     await api(`/api/requests/${held.req.id}/hold`, { method: "PUT", cookie: held.cookie, body: { on: true } });

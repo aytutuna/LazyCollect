@@ -158,6 +158,9 @@ async function purgeFirm(env: Env, id: string, regionId: string, now: number) {
   await env.CONTROL.batch([
     env.CONTROL.prepare("DELETE FROM login_codes WHERE email IN (SELECT email FROM users WHERE firm_id = ?)").bind(id),
     env.CONTROL.prepare("DELETE FROM sessions WHERE firm_id = ?1 OR user_id IN (SELECT id FROM users WHERE firm_id = ?1)").bind(id),
+    ...["passkeys", "pending_logins", "passkey_challenges"].map((t) =>
+      env.CONTROL.prepare(`DELETE FROM ${t} WHERE user_id IN (SELECT id FROM users WHERE firm_id = ?)`).bind(id),
+    ),
     env.CONTROL.prepare("DELETE FROM users WHERE firm_id = ?").bind(id),
     env.CONTROL.prepare("DELETE FROM firms WHERE id = ?").bind(id),
   ]);
