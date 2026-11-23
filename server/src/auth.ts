@@ -3,7 +3,7 @@ import { createSession, endSession, type AppEnv } from "./session";
 import { sendLoginEmail } from "./email";
 import { usable } from "./firm";
 import { htmlHeaders } from "./headers";
-import { isRegion, regionOf } from "./regions";
+import { isRegion, regionOf, type Region } from "./regions";
 import { DAY, MINUTE, hmac, keyLimited, randomCode, randomId, randomToken, sha256, ipPrefix, FETCH_TIMEOUT_MS } from "./util";
 
 export const auth = new Hono<AppEnv>();
@@ -85,14 +85,49 @@ auth.post("/auth/start", async (c) => {
   return c.json({ ok: true });
 });
 
+type Found = { id: string; firm_id: string; disabled_at: number | null };
+
+// The newest live invite for the address puts it in the inviting account as a member; a removed member's row is reused,
+// since the email is unique.
+async function acceptInvite(c: Context<AppEnv>, email: string, existing: Found | null): Promise<void> {
+  const db = c.env.CONTROL;
+  const now = Date.now();
+  const invite = await db
+    .prepare(
+      `SELECT i.id, i.firm_id, i.name, f.region FROM invites i JOIN firms f ON f.id = i.firm_id
+       WHERE i.email = ? AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ? AND f.closed_at IS NULL
+       ORDER BY i.created_at DESC LIMIT 1`,
+    )
+    .bind(email, now)
+    .first<{ id: string; firm_id: string; name: string | null; region: string }>();
+  if (!invite) return;
+  const userId = existing?.id ?? randomId();
+  const taken = "EXISTS (SELECT 1 FROM invites WHERE id = ? AND accepted_at = ?)";
+  const [accepted] = await db.batch([
+    db.prepare("UPDATE invites SET accepted_at = ? WHERE id = ? AND accepted_at IS NULL AND revoked_at IS NULL").bind(now, invite.id),
+    existing
+      ? db
+          .prepare(`UPDATE users SET disabled_at = NULL, firm_id = ?, role = 'member', name = COALESCE(?, name) WHERE id = ? AND disabled_at IS NOT NULL AND ${taken}`)
+          .bind(invite.firm_id, invite.name, userId, invite.id, now)
+      : db
+          .prepare(`INSERT INTO users (id, firm_id, email, name, role, created_at) SELECT ?, ?, ?, ?, 'member', ? WHERE ${taken} ON CONFLICT (email) DO NOTHING`)
+          .bind(userId, invite.firm_id, email, invite.name, now, invite.id, now),
+  ]);
+  if (accepted.meta.changes !== 1) return;
+  await regionOf(c.env, invite.region as Region)
+    .db.prepare("INSERT INTO audit (id, firm_id, at, actor_type, actor_id, action, object_type, object_id) VALUES (?, ?, ?, 'user', ?, 'invite.accept', 'invite', ?)")
+    .bind(randomId(), invite.firm_id, now, userId, invite.id)
+    .run();
+}
+
 async function signIn(c: Context<AppEnv>, email: string): Promise<boolean> {
   const db = c.env.CONTROL;
-  const find = () =>
-    db
-      .prepare("SELECT id, firm_id, disabled_at FROM users WHERE email = ?")
-      .bind(email)
-      .first<{ id: string; firm_id: string; disabled_at: number | null }>();
+  const find = () => db.prepare("SELECT id, firm_id, disabled_at FROM users WHERE email = ?").bind(email).first<Found>();
   let user = await find();
+  if (!user || user.disabled_at) {
+    await acceptInvite(c, email, user);
+    user = await find();
+  }
   if (!user) {
     const now = Date.now();
     const firmId = randomId();
