@@ -28,7 +28,8 @@ export async function findLink(env: Env, token: string): Promise<LiveLink | null
        FROM links l JOIN requests r ON r.firm_id = l.firm_id AND r.id = l.request_id
        JOIN clients cl ON cl.firm_id = r.firm_id AND cl.id = r.client_id AND cl.deleted_at IS NULL
        WHERE l.token_hash = ? AND l.revoked_at IS NULL AND l.expires_at > ?
-       AND r.deleted_at IS NULL AND r.status != 'closed'`,
+       AND r.deleted_at IS NULL AND r.status != 'closed'
+       AND NOT EXISTS (SELECT 1 FROM firm_settings fs WHERE fs.firm_id = r.firm_id AND fs.closed_at IS NOT NULL)`,
     )
     .bind(hash, Date.now())
     .first<LiveLink["req"]>();

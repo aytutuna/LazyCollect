@@ -28,18 +28,21 @@ export const LINK_GRACE = 30 * DAY;
 // a link made on the account's behalf by the reminder pass, when no live link can be opened again
 export async function mintLink(env: Env, db: D1Database, region: string, firmId: string, requestId: string, deadline: number, now: number): Promise<string> {
   const token = `${region}_${randomToken()}`;
-  await db.batch([
+  const results = await db.batch([
     db.prepare("UPDATE links SET revoked_at = ? WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL").bind(now, firmId, requestId),
     db
       .prepare(
         `INSERT INTO links (token_hash, firm_id, request_id, expires_at, created_by, created_at, token_enc)
-         SELECT ?, ?, ?, ?, 'system', ?, ? WHERE EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)`,
+         SELECT ?, ?, ?, ?, 'system', ?, ? WHERE EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)
+         AND NOT EXISTS (SELECT 1 FROM firm_settings WHERE firm_id = ? AND closed_at IS NOT NULL)`,
       )
-      .bind(await hmac(env.HASH_KEY, token.slice(region.length + 1)), firmId, requestId, Math.max(deadline, now) + LINK_GRACE, now, await sealToken(env, token), firmId, requestId),
+      .bind(await hmac(env.HASH_KEY, token.slice(region.length + 1)), firmId, requestId, Math.max(deadline, now) + LINK_GRACE, now, await sealToken(env, token), firmId, requestId, firmId),
     db
       .prepare("INSERT INTO audit (id, firm_id, at, actor_type, action, object_type, object_id) VALUES (?, ?, ?, 'system', 'link.create', 'request', ?)")
       .bind(randomId(), firmId, now, requestId),
   ]);
+  // a refused link must not go out in an email
+  if (!results[1].meta.changes) throw new Error("link refused");
   return token;
 }
 

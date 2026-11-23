@@ -441,8 +441,11 @@ requests.post("/requests/:id/link", async (c) => {
   const results = await db.batch([
     db.prepare(`UPDATE links SET revoked_at = ? WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL AND ${LIVE}`).bind(now, firm.id, req.id, firm.id, req.id),
     db
-      .prepare(`INSERT INTO links (token_hash, firm_id, request_id, expires_at, created_by, created_at, token_enc) SELECT ?, ?, ?, ?, ?, ?, ? WHERE ${LIVE}`)
-      .bind(hash, firm.id, req.id, req.deadline + LINK_GRACE, userId, now, await sealToken(c.env, token), firm.id, req.id),
+      .prepare(
+        `INSERT INTO links (token_hash, firm_id, request_id, expires_at, created_by, created_at, token_enc) SELECT ?, ?, ?, ?, ?, ?, ?
+         WHERE ${LIVE} AND NOT EXISTS (SELECT 1 FROM firm_settings WHERE firm_id = ? AND closed_at IS NOT NULL)`,
+      )
+      .bind(hash, firm.id, req.id, req.deadline + LINK_GRACE, userId, now, await sealToken(c.env, token), firm.id, req.id, firm.id),
     db
       .prepare(
         `INSERT INTO audit (id, firm_id, at, actor_type, actor_id, action, object_type, object_id)

@@ -148,6 +148,7 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'client', ?, 'pending'
        WHERE EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)
        AND EXISTS (SELECT 1 FROM links WHERE token_hash = ? AND revoked_at IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM firm_settings WHERE firm_id = ? AND closed_at IS NOT NULL)
        AND EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status != 'approved')
        AND (SELECT COUNT(*) FROM files WHERE firm_id = ? AND item_id = ? AND deleted_at IS NULL) < ${MAX_PER_ITEM}
        AND (SELECT COUNT(*) FROM files WHERE firm_id = ? AND request_id = ? AND deleted_at IS NULL) < ${MAX_PER_REQUEST}
@@ -157,6 +158,7 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
       fileId, req.firm_id, req.id, itemId, r2Key, name, mime, length, uploadId, now,
       req.firm_id, req.id,
       link.hash,
+      req.firm_id,
       req.firm_id, req.id, itemId,
       req.firm_id, itemId,
       req.firm_id, req.id,

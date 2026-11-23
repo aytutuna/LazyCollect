@@ -43,6 +43,7 @@ account.post("/account/close", async (c) => {
   // links go dark with revoked_at = closed_at, which is how a reopen finds the ones to bring back; they go before the
   // account is marked closed, so a failure leaves an open account with dead links, which a retry can finish
   await db.batch([
+    db.prepare("INSERT INTO firm_settings (firm_id, closed_at) VALUES (?, ?) ON CONFLICT (firm_id) DO UPDATE SET closed_at = excluded.closed_at").bind(firm.id, at),
     db.prepare("UPDATE links SET revoked_at = ? WHERE firm_id = ? AND revoked_at IS NULL").bind(at, firm.id),
     ...(firm.closed_at ? [] : [audit(c, "account.close", "firm", firm.id)]),
   ]);
@@ -71,6 +72,7 @@ account.post("/account/reopen", async (c) => {
   // links first: it can be repeated, while a failure after the account is open again could not be retried
   await db.batch([
     db.prepare("UPDATE links SET revoked_at = NULL WHERE firm_id = ? AND revoked_at = ?").bind(firm.id, firm.closed_at),
+    db.prepare("UPDATE firm_settings SET closed_at = NULL WHERE firm_id = ?").bind(firm.id),
     audit(c, "account.reopen", "firm", firm.id),
   ]);
   // the purge takes over once the window is up, so it is checked in the same statement that reopens
