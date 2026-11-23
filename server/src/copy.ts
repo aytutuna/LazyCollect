@@ -17,7 +17,7 @@ const RESET: Record<string, string> = {
 
 const ROW_COLS = [
   "position", "label", "help", "required", "kind", "options_json", "show_if_pos", "show_if_value", "example",
-  "person_pos", "label_base", "for_pos", "companion", "translation", "expiry_rule", "valid_months",
+  "person_pos", "label_base", "for_pos", "companion", "translation", "expiry_rule", "valid_months", "blueprint",
 ] satisfies (keyof Row)[];
 
 // the rows of one expansion for each request id; `when` ties the insert to a state the rest of its batch checked

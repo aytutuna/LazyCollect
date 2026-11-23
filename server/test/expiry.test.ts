@@ -93,6 +93,20 @@ describe("dates on a document", () => {
     expect(JSON.stringify(meta.results)).not.toContain("2031");
   });
 
+  it("count months from the issue date to the end of a shorter month", async () => {
+    const { cookie, req } = await make();
+    const police = req.items[1];
+    const to = async (issued: string, months: number) => {
+      await setItem(police.id, "issued_on = ?, valid_months = ?", issued, months);
+      return (await view(cookie, req.id)).items[1].valid_to;
+    };
+    expect(await to("2026-08-31", 6)).toBe("2027-02-28");
+    expect(await to("2027-08-31", 6)).toBe("2028-02-29");
+    expect(await to("2026-01-31", 1)).toBe("2026-02-28");
+    expect(await to("2026-01-15", 12)).toBe("2027-01-15");
+    expect(await to("2026-12-31", 12)).toBe("2027-12-31");
+  });
+
   it("let an item asking for a date be added to a request", async () => {
     const { cookie, req } = await make();
     const res = await api(`/api/requests/${req.id}/items`, { method: "POST", cookie, body: { label: "Medical", expiry: "issue", valid_months: 12 } });

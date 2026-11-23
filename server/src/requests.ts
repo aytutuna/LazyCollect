@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { insertRows } from "./copy";
-import { MAX_ITEMS, expandItems, matches, relabel, rowsFor, parsePeople, type Person, type Row } from "./expand";
+import { MAX_ITEMS, expandItems, matches, relabel, rowsFor, parsePeople, type Blueprint, type Person, type Row } from "./expand";
 import { deadlineDay, flagOf, today } from "./expiry";
 import { ownsExamples, parseExample } from "./examples";
 import { usable } from "./firm";
@@ -239,14 +239,15 @@ async function addTagged(c: Context<AppEnv>, req: Req, item: Item) {
     .all<Person>();
   const now = today(Date.now(), c.get("firm").tz).today;
   const rows: Row[] = [];
+  const key = randomId();
   if (item.per_person) {
-    for (const p of people) if (matches(item.per_person, p, now)) rows.push(...rowsFor(item, p, state!.base + rows.length, null));
+    for (const p of people) if (matches(item.per_person, p, now)) rows.push(...rowsFor(item, p, state!.base + rows.length, null, key));
   } else {
     rows.push(...rowsFor(item, null, state!.base, null));
   }
   if (state!.count + rows.length > MAX_ITEMS) return c.json({ error: "too_many_items" }, 409);
   const live = { sql: LIVE, binds: [firmId, req.id] };
-  const kept = item.per_person ? JSON.stringify([...(state!.per_person_json ? JSON.parse(state!.per_person_json) : []), item]) : null;
+  const kept = item.per_person ? JSON.stringify([...(state!.per_person_json ? JSON.parse(state!.per_person_json) : []), { ...item, key }]) : null;
   const [res] = await db.batch([
     kept
       ? db.prepare(`UPDATE requests SET per_person_json = ? WHERE firm_id = ? AND id = ? AND status IN ('draft', 'open', 'complete') AND deleted_at IS NULL`).bind(kept, firmId, req.id)
@@ -274,10 +275,10 @@ requests.post("/requests/:id/items", async (c) => {
   if (item.show_if) {
     // here the condition names a position that is already in the request
     const p = await db
-      .prepare("SELECT kind, options_json, show_if_pos, person_pos FROM items WHERE firm_id = ? AND request_id = ? AND position = ?")
+      .prepare("SELECT kind, options_json, show_if_pos, person_pos, companion FROM items WHERE firm_id = ? AND request_id = ? AND position = ?")
       .bind(firmId, req.id, item.show_if.item)
-      .first<{ kind: string; options_json: string | null; show_if_pos: number | null; person_pos: number | null }>();
-    if (!conditionOk(item.show_if, p ? { kind: p.kind, options: p.options_json ? JSON.parse(p.options_json) : null, conditional: p.show_if_pos !== null || p.person_pos !== null } : undefined)) return invalid(c);
+      .first<{ kind: string; options_json: string | null; show_if_pos: number | null; person_pos: number | null; companion: string | null }>();
+    if (!conditionOk(item.show_if, p ? { kind: p.kind, options: p.options_json ? JSON.parse(p.options_json) : null, conditional: p.show_if_pos !== null || p.person_pos !== null || p.companion !== null } : undefined)) return invalid(c);
   }
   const [res] = await db.batch([
     db
@@ -341,17 +342,36 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
   const req = await findRequest(c);
   if (!req) return notFound(c);
   if (!editable(req)) return c.json({ error: "locked" }, 409);
-  const set = setClause(fields);
   const db = c.get("db");
   const firmId = c.get("firm").id;
   if (!(await ownsExamples(db, firmId, [fields.example as string | null]))) return exampleGone(c);
   const itemId = c.req.param("itemId");
+  const cur = await db
+    .prepare("SELECT label, label_base, expiry_rule, blueprint FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
+    .bind(firmId, req.id, itemId)
+    .first<{ label: string; label_base: string | null; expiry_rule: string | null; blueprint: string | null }>();
+  if (!cur) return notFound(c);
+  // a label sent back as it was is not a rename
+  if (fields.label === (cur.label_base ?? cur.label)) delete fields.label;
   // the dates belong to documents that ask for them, and the months only to one counted from its issue date
-  const asked = ["expires_on", "issued_on", "valid_months"].filter((k) => k in fields);
-  if (asked.length) {
-    const rule = (await db.prepare("SELECT expiry_rule FROM items WHERE firm_id = ? AND request_id = ? AND id = ?").bind(firmId, req.id, itemId).first<{ expiry_rule: string | null }>())?.expiry_rule;
-    if (rule === undefined) return notFound(c);
-    if (!rule || ("valid_months" in fields && rule !== "issue")) return invalid(c);
+  if (["expires_on", "issued_on", "valid_months"].some((k) => k in fields)) {
+    if (!cur.expiry_rule || ("valid_months" in fields && cur.expiry_rule !== "issue")) return invalid(c);
+  }
+  if (!Object.keys(fields).length) return c.json(presentItem((await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(itemId).first<any>())!));
+  const set = setClause(fields);
+  // the items still to be made for people added later follow what was changed
+  let kept: string | null = null;
+  if (cur.blueprint && ("label" in fields || "help" in fields || "required" in fields)) {
+    const json = (await db.prepare("SELECT per_person_json FROM requests WHERE firm_id = ? AND id = ?").bind(firmId, req.id).first<{ per_person_json: string | null }>())?.per_person_json;
+    if (json) {
+      const list = (JSON.parse(json) as Blueprint[]).map((b) => {
+        if (b.key !== cur.blueprint) return b;
+        const { help: _help, ...rest } = b;
+        const help = "help" in fields ? (fields.help as string | null) : b.help;
+        return { ...rest, ...(help ? { help } : {}), label: "label" in fields ? (fields.label as string) : b.label, required: "required" in fields ? fields.required === 1 : b.required };
+      });
+      kept = JSON.stringify(list);
+    }
   }
   const [res] = await db.batch([
     db
@@ -370,6 +390,7 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
           ...relabel(db, firmId, req.id),
         ]
       : []),
+    ...(kept ? [db.prepare("UPDATE requests SET per_person_json = ? WHERE firm_id = ? AND id = ?").bind(kept, firmId, req.id)] : []),
   ]);
   if (!res.meta.changes) return refused(c);
   const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(c.req.param("itemId")).first<any>();
@@ -383,11 +404,16 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
   if (req.hold_at) return c.json({ error: "legal_hold" }, 409);
   const db = c.get("db");
   const item = await db
-    .prepare("SELECT status, position FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
+    .prepare("SELECT status, position, blueprint FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
     .bind(c.get("firm").id, req.id, c.req.param("itemId"))
-    .first<{ status: string; position: number }>();
+    .first<{ status: string; position: number; blueprint: string | null }>();
   if (!item) return notFound(c);
   if (item.status !== "empty") return c.json({ error: "has_upload" }, 409);
+  const translated = await db
+    .prepare("SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND for_pos = ? AND companion = 'question' AND answer IS NOT NULL")
+    .bind(c.get("firm").id, req.id, item.position)
+    .first();
+  if (translated) return c.json({ error: "has_translation" }, 409);
   // a document's translation question and companions go with it, unless the client has already answered or uploaded there
   const started = await db
     .prepare("SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND for_pos = ? AND (status != 'empty' OR EXISTS (SELECT 1 FROM files WHERE firm_id = items.firm_id AND item_id = items.id AND deleted_at IS NULL))")
@@ -423,7 +449,15 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
   ]);
   const keys = (gone.results as { r2_key: string }[]).map((f) => f.r2_key);
   if (keys.length) await regionOf(c.env, firm.region as Region).bucket.delete(keys);
-  if (res.meta.changes) return c.json({ ok: true });
+  if (res.meta.changes) {
+    // when no one has the item any more, what was kept for people added later goes too
+    if (item.blueprint && !(await db.prepare("SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND blueprint = ?").bind(firmId, req.id, item.blueprint).first())) {
+      const json = (await db.prepare("SELECT per_person_json FROM requests WHERE firm_id = ? AND id = ?").bind(firmId, req.id).first<{ per_person_json: string | null }>())?.per_person_json;
+      const rest = json ? (JSON.parse(json) as Blueprint[]).filter((b) => b.key !== item.blueprint) : [];
+      await db.prepare("UPDATE requests SET per_person_json = ? WHERE firm_id = ? AND id = ?").bind(rest.length ? JSON.stringify(rest) : null, firmId, req.id).run();
+    }
+    return c.json({ ok: true });
+  }
   const left = await db.prepare("SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ?").bind(firmId, req.id, itemId).first();
   return left && (await findRequest(c)) ? c.json({ error: "has_upload" }, 409) : refused(c);
 });

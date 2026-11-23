@@ -138,17 +138,24 @@ export function parseAnswer(kind: Kind, options: string[] | null, v: unknown): s
 }
 
 // SQL: the item `a` is shown. A conditional item waits for its parent's answer; the parent is never conditional itself.
+// The translation question and companions of a document that was waived are not shown either.
 // A hidden item never counts as missing, and it is never shown to the client.
 export const visible = (a: string) =>
-  `(${a}.show_if_pos IS NULL OR EXISTS (SELECT 1 FROM items p WHERE p.firm_id = ${a}.firm_id AND p.request_id = ${a}.request_id
+  `((${a}.show_if_pos IS NULL OR EXISTS (SELECT 1 FROM items p WHERE p.firm_id = ${a}.firm_id AND p.request_id = ${a}.request_id
      AND p.position = ${a}.show_if_pos AND p.answer IS NOT NULL
-     AND CASE WHEN p.kind = 'multi' THEN EXISTS (SELECT 1 FROM json_each(p.answer) WHERE value = ${a}.show_if_value) ELSE p.answer = ${a}.show_if_value END))`;
+     AND CASE WHEN p.kind = 'multi' THEN EXISTS (SELECT 1 FROM json_each(p.answer) WHERE value = ${a}.show_if_value) ELSE p.answer = ${a}.show_if_value END))
+   AND NOT (${a}.for_pos IS NOT NULL AND EXISTS (SELECT 1 FROM items m WHERE m.firm_id = ${a}.firm_id AND m.request_id = ${a}.request_id
+     AND m.position = ${a}.for_pos AND m.status = 'waived'))
+   )`;
 
 // a calendar date as the table keeps it; null clears one, undefined is not one
 export const parseDay = (v: unknown) => (v === null || v === "" ? null : (parseAnswer("date", null, v) as string | undefined));
 
 // SQL: the last day a document with a date is good for, from the rule the item uses; NULL until the date is given
-export const validTo = (a: string) => `CASE ${a}.expiry_rule WHEN 'expiry' THEN ${a}.expires_on WHEN 'issue' THEN date(${a}.issued_on, '+' || ${a}.valid_months || ' months') END`;
+// a month later than a day the month lacks ends on the last day of that month: 31 August and six months is 28 February
+export const validTo = (a: string) =>
+  `CASE ${a}.expiry_rule WHEN 'expiry' THEN ${a}.expires_on WHEN 'issue' THEN date(date(${a}.issued_on, 'start of month', '+' || ${a}.valid_months || ' months'),
+    '+' || (MIN(CAST(strftime('%d', ${a}.issued_on) AS INTEGER), CAST(strftime('%d', date(${a}.issued_on, 'start of month', '+' || (${a}.valid_months + 1) || ' months', '-1 day')) AS INTEGER)) - 1) || ' days') END`;
 
 type Row = { required: number; hidden?: number; translation?: number; options_json: string | null; reject_reasons?: string | null; answer: string | null; kind: string };
 

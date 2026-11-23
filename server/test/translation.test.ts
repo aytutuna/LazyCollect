@@ -94,10 +94,37 @@ describe("a document that may need a translation", () => {
     // the question has the companions waiting on it
     expect((await del(req.items[1])).status).toBe(409);
     await answer(path, req.items[1].id, "no");
-    expect(await (await del(req.items[0])).json()).toEqual({ error: "has_dependents" });
+    expect(await (await del(req.items[0])).json()).toEqual({ error: "has_translation" });
     await answer(path, req.items[1].id, null);
     expect((await del(req.items[0])).status).toBe(200);
     expect(labels(await (await api(`/api/requests/${req.id}`, { cookie })).json<any>())).toEqual(["Photo"]);
+  });
+
+  it("is hidden along with its question and companions once the document is waived", async () => {
+    const { cookie, req, path } = await make();
+    await env.DB_NA.prepare("UPDATE items SET status = 'waived' WHERE id = ?").bind(req.items[0].id).run();
+    await api(`/api/requests/${req.id}/items/${req.items[4].id}`, { method: "PATCH", cookie, body: { help: "x" } });
+    expect(await shown(path)).toEqual(["Birth certificate", "Photo"]);
+    const now = await (await api(`/api/requests/${req.id}`, { cookie })).json<any>();
+    expect(now.items.map((i: any) => i.hidden)).toEqual([false, true, true, true, false]);
+    expect(await status(req.id)).toBe("complete");
+    // answering the question that is out of sight does nothing
+    expect((await answer(path, req.items[1].id, "no")).status).toBe(409);
+  });
+
+  it("is not renamed by a label sent back as it was", async () => {
+    const { cookie, req } = await make();
+    const patch = (item: any, label: string) => api(`/api/requests/${req.id}/items/${item.id}`, { method: "PATCH", cookie, body: { label } });
+    expect((await patch(req.items[2], req.items[2].label)).status).toBe(200);
+    expect((await env.DB_NA.prepare("SELECT companion FROM items WHERE id = ?").bind(req.items[2].id).first<any>())!.companion).toBe("translation");
+    await patch(req.items[0], "Long certificate");
+    expect(labels(await (await api(`/api/requests/${req.id}`, { cookie })).json<any>())[2]).toBe("Certified translation of Long certificate");
+  });
+
+  it("cannot be the question another item waits on", async () => {
+    const { cookie, req } = await make();
+    const res = await api(`/api/requests/${req.id}/items`, { method: "POST", cookie, body: { label: "Why not?", show_if: { item: 1, value: "no" } } });
+    expect(res.status).toBe(400);
   });
 
   it("can be added to an existing request", async () => {

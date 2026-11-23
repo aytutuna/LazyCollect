@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { audit } from "./audit";
-import { MAX_ITEMS, MAX_PEOPLE, ROLES, matches, parsePerson, relabel, rowsFor, type Person, type Row } from "./expand";
+import { MAX_ITEMS, MAX_PEOPLE, ROLES, matches, parsePerson, relabel, rowsFor, type Blueprint, type Person, type Row } from "./expand";
 import { insertRows } from "./copy";
 import { today } from "./expiry";
 import { parseDay } from "./questions";
@@ -10,7 +10,6 @@ import type { AppEnv } from "./session";
 import { syncStatus } from "./status";
 import { randomId } from "./util";
 import { invalid, notFound, readBody, setClause, text } from "./validate";
-import type { Item } from "./questions";
 
 export const people = new Hono<AppEnv>();
 
@@ -39,8 +38,8 @@ people.post("/requests/:id/people", async (c) => {
   const added: Person = { ...person, position: state!.next };
   const now = today(Date.now(), c.get("firm").tz).today;
   const rows: Row[] = [];
-  for (const item of (state!.per_person_json ? JSON.parse(state!.per_person_json) : []) as Item[]) {
-    if (matches(item.per_person!, added, now)) rows.push(...rowsFor(item, added, state!.base + rows.length, null));
+  for (const item of (state!.per_person_json ? JSON.parse(state!.per_person_json) : []) as Blueprint[]) {
+    if (matches(item.per_person!, added, now)) rows.push(...rowsFor(item, added, state!.base + rows.length, null, item.key ?? null));
   }
   if (state!.items + rows.length > MAX_ITEMS) return c.json({ error: "too_many_items" }, 409);
   const id = randomId();

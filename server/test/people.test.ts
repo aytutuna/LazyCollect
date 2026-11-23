@@ -234,6 +234,39 @@ describe("adding, renaming and removing people", () => {
   });
 });
 
+describe("changes to an item for each person", () => {
+  const blueprints = async (id: string) => JSON.parse((await q("SELECT per_person_json FROM requests WHERE id = ?", id))[0].per_person_json ?? "[]");
+
+  it("reach the people added afterwards", async () => {
+    const items = [{ label: "Passport", help: "All pages", per_person: "everyone", required: true }];
+    const { cookie, req } = await family({ items, people: FAMILY.slice(0, 1) });
+    expect((await blueprints(req.id))[0].key).toMatch(/^[0-9a-f]{32}$/);
+    await api(`/api/requests/${req.id}/items/${req.items[0].id}`, { method: "PATCH", cookie, body: { label: "Passport pages", help: "", required: false } });
+    const next = await (await api(`/api/requests/${req.id}/people`, { method: "POST", cookie, body: FAMILY[1] })).json<any>();
+    expect(next.items[1]).toMatchObject({ label: "Passport pages — Amira Haddad", help: null, required: false });
+    expect(await blueprints(req.id)).toMatchObject([{ label: "Passport pages", required: false }]);
+  });
+
+  it("are not made by a label sent back as it was", async () => {
+    const { cookie, req } = await family({ people: FAMILY.slice(0, 1) });
+    const passport = req.items.find((i: any) => i.label === "Passport — Omar Haddad");
+    const res = await api(`/api/requests/${req.id}/items/${passport.id}`, { method: "PATCH", cookie, body: { label: "Passport", required: false } });
+    expect(await res.json()).toMatchObject({ label: "Passport — Omar Haddad", required: false });
+  });
+
+  it("drop the entry for later people once the last item made from it is deleted", async () => {
+    const items = [{ label: "Passport", per_person: "everyone", required: true }, { label: "Photo", per_person: "everyone", required: true }];
+    const { cookie, req } = await family({ items, people: FAMILY.slice(0, 2) });
+    const passports = req.items.filter((i: any) => i.label.startsWith("Passport"));
+    await api(`/api/requests/${req.id}/items/${passports[0].id}`, { method: "DELETE", cookie });
+    expect(await blueprints(req.id)).toHaveLength(2);
+    await api(`/api/requests/${req.id}/items/${passports[1].id}`, { method: "DELETE", cookie });
+    expect((await blueprints(req.id)).map((b: any) => b.label)).toEqual(["Photo"]);
+    const next = await (await api(`/api/requests/${req.id}/people`, { method: "POST", cookie, body: FAMILY[2] })).json<any>();
+    expect(labels(next).slice(-1)).toEqual(["Photo — Layla Haddad"]);
+  });
+});
+
 describe("the client page", () => {
   it("lists the people by name and role and not their birth dates", async () => {
     const { cookie, req } = await family();

@@ -1,9 +1,13 @@
 import { parseDay, type Item } from "./questions";
+import { randomId } from "./util";
 import { text } from "./validate";
 
 export const ROLES = ["principal", "spouse", "child", "other"] as const;
 export type Role = (typeof ROLES)[number];
 export type Person = { position: number; role: Role; name: string; dob: string | null };
+
+// a template item that waits for people; the key ties the items made from it to it
+export type Blueprint = Item & { key?: string };
 
 export const MAX_PEOPLE = 12;
 // a request's items once people and translation companions are counted
@@ -71,6 +75,7 @@ export type Row = {
   translation: number;
   expiry_rule: string | null;
   valid_months: number | null;
+  blueprint: string | null;
 };
 
 // the wording of the companions; relabel() builds the same text in SQL when the document is renamed
@@ -82,7 +87,7 @@ const CERTIFIED_HELP = "A translation into English or French by a certified tran
 const AFFIDAVIT_HELP = "If the translator is not certified, IRCC asks for an affidavit from the translator with the translation. Check IRCC's instructions for your application to see what applies to you.";
 
 // one item for one person (or for the whole request), with its translation question and companions when it asks for them
-export function rowsFor(item: Item, person: Person | null, position: number, showPos: number | null): Row[] {
+export function rowsFor(item: Item, person: Person | null, position: number, showPos: number | null, blueprint: string | null = null): Row[] {
   const main: Row = {
     position,
     label: person ? item.label + DASH + person.name : item.label,
@@ -100,6 +105,7 @@ export function rowsFor(item: Item, person: Person | null, position: number, sho
     translation: item.translation ? 1 : 0,
     expiry_rule: item.expiry ?? null,
     valid_months: item.valid_months ?? null,
+    blueprint: person ? blueprint : null,
   };
   if (!item.translation) return [main];
   const part = (offset: number, companion: NonNullable<Row["companion"]>, label: string, help: string, over: Partial<Row>): Row => ({
@@ -118,6 +124,7 @@ export function rowsFor(item: Item, person: Person | null, position: number, sho
     translation: 0,
     expiry_rule: null,
     valid_months: null,
+    blueprint: null,
     ...over,
   });
   const ask = position + 1;
@@ -131,14 +138,15 @@ export function rowsFor(item: Item, person: Person | null, position: number, sho
 
 // The rows a template makes for these people, in order, and the template items that wait for people. A condition names an
 // item by its place in the template, so it is moved to where the item landed.
-export function expandItems(items: Item[], people: Person[], today: string): { rows: Row[]; perPerson: Item[] } {
+export function expandItems(items: Item[], people: Person[], today: string): { rows: Row[]; perPerson: Blueprint[] } {
   const rows: Row[] = [];
-  const perPerson: Item[] = [];
+  const perPerson: Blueprint[] = [];
   const at = new Map<number, number>();
   items.forEach((item, i) => {
     if (item.per_person) {
-      perPerson.push(item);
-      for (const p of people) if (matches(item.per_person, p, today)) rows.push(...rowsFor(item, p, rows.length, null));
+      const key = randomId();
+      perPerson.push({ ...item, key });
+      for (const p of people) if (matches(item.per_person, p, today)) rows.push(...rowsFor(item, p, rows.length, null, key));
     } else {
       at.set(i, rows.length);
       rows.push(...rowsFor(item, null, rows.length, item.show_if ? (at.get(item.show_if.item) ?? null) : null));
