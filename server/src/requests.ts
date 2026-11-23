@@ -17,6 +17,7 @@ export const requests = new Hono<AppEnv>();
 const COLS = "id, client_id, title, note, deadline, firm_name, status, sent_at, closed_at, created_at, reminders_on, next_reminder_at, ended_at, keep_until, hold_at";
 const ITEM_COLS = "id, position, label, help, required, status, reject_note, reviewed_at";
 const MAX_ITEMS = 100;
+const MAX_PER_DAY = 300;
 const MAX_AHEAD = 2 * 365 * DAY;
 
 type Req = { id: string; client_id: string; title: string; status: string; deadline: number; reminders_on: number; hold_at: number | null };
@@ -71,19 +72,24 @@ requests.post("/requests", async (c) => {
 
   const id = randomId();
   const now = Date.now();
-  await db.batch([
+  const made = { sql: "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ?)", binds: [firmId, id] };
+  const [res] = await db.batch([
     db
-      .prepare("INSERT INTO requests (id, firm_id, client_id, title, note, deadline, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .bind(id, firmId, body.client_id, title, note, due, c.get("session")!.userId, now),
+      .prepare(
+        `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, created_by, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?
+         WHERE (SELECT COUNT(*) FROM requests WHERE firm_id = ? AND created_at > ?) < ${MAX_PER_DAY}`,
+      )
+      .bind(id, firmId, body.client_id, title, note, due, c.get("session")!.userId, now, firmId, now - DAY),
     db
       .prepare(
         `INSERT INTO items (id, firm_id, request_id, position, label, help, required)
          SELECT lower(hex(randomblob(16))), ?, ?, key, json_extract(value, '$.label'), json_extract(value, '$.help'), json_extract(value, '$.required')
-         FROM json_each(?)`,
+         FROM json_each(?) WHERE EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ?)`,
       )
-      .bind(firmId, id, JSON.stringify(items)),
-    audit(c, "request.create", "request", id),
+      .bind(firmId, id, JSON.stringify(items), firmId, id),
+    audit(c, "request.create", "request", id, undefined, made),
   ]);
+  if (!res.meta.changes) return c.json({ error: "too_many_requests" }, 429);
   return c.json(await loadRequest(c, id), 201);
 });
 

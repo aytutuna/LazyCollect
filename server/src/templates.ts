@@ -13,6 +13,8 @@ import type { AppEnv } from "./session";
 import { randomId } from "./util";
 import { invalid, locale, maybe, notFound, readBody, setClause, text } from "./validate";
 
+const MAX_TEMPLATES = 200;
+
 export type Item = { label: string; help?: string; required: boolean };
 type Template = { id: string; name: string; items: Item[] };
 
@@ -70,12 +72,17 @@ templates.post("/templates", async (c) => {
   const id = randomId();
   const now = Date.now();
   const db = c.get("db");
-  await db.batch([
+  const firmId = c.get("firm").id;
+  const [res] = await db.batch([
     db
-      .prepare("INSERT INTO templates (id, firm_id, name, locale, items_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .bind(id, c.get("firm").id, name, lang, JSON.stringify(items), now, now),
-    audit(c, "template.create", "template", id),
+      .prepare(
+        `INSERT INTO templates (id, firm_id, name, locale, items_json, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, ?
+         WHERE (SELECT COUNT(*) FROM templates WHERE firm_id = ?) < ${MAX_TEMPLATES}`,
+      )
+      .bind(id, firmId, name, lang, JSON.stringify(items), now, now, firmId),
+    audit(c, "template.create", "template", id, undefined, { sql: "EXISTS (SELECT 1 FROM templates WHERE firm_id = ? AND id = ?)", binds: [firmId, id] }),
   ]);
+  if (!res.meta.changes) return c.json({ error: "too_many_templates" }, 409);
   const row = await db.prepare(`SELECT ${COLS} FROM templates WHERE id = ?`).bind(id).first<Row>();
   return c.json(present(row!), 201);
 });

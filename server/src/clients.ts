@@ -9,6 +9,7 @@ import { blank, invalid, locale, maybe, notFound, readBody, setClause, text } fr
 export const clients = new Hono<AppEnv>();
 
 const COLS = "id, name, email, phone, locale, email_ok_at, email_stop_at, sms_ok_at, consent_by, created_at";
+const MAX_CLIENTS = 10000;
 const PHONE_RE = /^[\d\s()+.-]{7,40}$/;
 
 const CHANNELS = [["email_ok_at", "email"], ["sms_ok_at", "sms"]] as const;
@@ -43,15 +44,17 @@ clients.post("/clients", async (c) => {
   const id = randomId();
   const db = c.get("db");
   const granted = [email && "email", tel && "sms"].filter(Boolean);
-  await db.batch([
+  const firmId = c.get("firm").id;
+  const made = { sql: "EXISTS (SELECT 1 FROM clients WHERE firm_id = ? AND id = ?)", binds: [firmId, id] };
+  const [res] = await db.batch([
     db
       .prepare(
         `INSERT INTO clients (id, firm_id, name, email, phone, locale, email_ok_at, sms_ok_at, consent_by, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM clients WHERE firm_id = ?) < ${MAX_CLIENTS}`,
       )
       .bind(
         id,
-        c.get("firm").id,
+        firmId,
         name,
         email,
         tel,
@@ -61,10 +64,12 @@ clients.post("/clients", async (c) => {
         body.contact_ok ? userId : null,
         userId,
         now,
+        firmId,
       ),
-    audit(c, "client.create", "client", id),
-    ...(body.contact_ok && granted.length ? [audit(c, "client.consent", "client", id, { set: granted })] : []),
+    audit(c, "client.create", "client", id, undefined, made),
+    ...(body.contact_ok && granted.length ? [audit(c, "client.consent", "client", id, { set: granted }, made)] : []),
   ]);
+  if (!res.meta.changes) return c.json({ error: "too_many_clients" }, 409);
   const row = await db.prepare(`SELECT ${COLS} FROM clients WHERE id = ?`).bind(id).first();
   return c.json(row, 201);
 });
