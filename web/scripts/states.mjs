@@ -73,6 +73,24 @@ const questions = {
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const photo = { name: "passport.png", mimeType: "image/png", buffer: PNG };
 
+export const fixture = (name) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
+
+// opens the scanner on the first item with the camera refused
+async function openScanner(page) {
+  await page.evaluate(() => {
+    navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException("none", "NotFoundError"));
+  });
+  await page.locator("#label-i1").locator("xpath=ancestor::li[1]").getByRole("button", { name: "Scan" }).click();
+  await page.getByRole("dialog").waitFor();
+}
+
+// takes a fixture photo through the phone-camera fallback and waits for the flattened page
+async function scanPhoto(page, name = "background02-letter001-0141.jpg") {
+  await openScanner(page);
+  await page.getByRole("dialog").locator('input[type="file"]').setInputFiles(fixture(name));
+  await page.locator("canvas.page-preview").waitFor();
+}
+
 export const states = [
   { name: "fresh", view: base },
   { name: "done", view: done },
@@ -112,6 +130,41 @@ export const states = [
     },
   },
   {
+    // no camera: the scanner offers the phone's own camera app
+    name: "scanner-no-camera",
+    view: base,
+    async run(page) {
+      await openScanner(page);
+      await page.getByRole("button", { name: "Take a photo" }).waitFor();
+    },
+  },
+  {
+    // a photo of a page: found, flattened and shown with its filters
+    name: "scanner-review",
+    view: base,
+    async run(page) {
+      await scanPhoto(page);
+    },
+  },
+  {
+    name: "scanner-black-and-white",
+    view: base,
+    async run(page) {
+      await scanPhoto(page);
+      await page.getByRole("radio", { name: "Black & white" }).check();
+    },
+  },
+  {
+    // the corner editor, reached from the page that was found
+    name: "scanner-corners",
+    view: base,
+    async run(page) {
+      await scanPhoto(page);
+      await page.getByRole("button", { name: "Adjust corners" }).click();
+      await page.getByRole("button", { name: "Top left corner" }).waitFor();
+    },
+  },
+  {
     name: "offline-queued",
     view: base,
     async run(page, context, net) {
@@ -124,16 +177,23 @@ export const states = [
   },
 ];
 
-const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml" };
+const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".wasm": "application/wasm" };
 
-export function serve() {
+// the headers the site sends on every path, from the _headers file the build copies to dist/
+async function siteHeaders() {
+  const lines = (await readFile(join(dist, "_headers"), "utf8")).split(/\r?\n/).slice(1);
+  return Object.fromEntries(lines.filter((l) => l.includes(":")).map((l) => [l.slice(0, l.indexOf(":")).trim(), l.slice(l.indexOf(":") + 1).trim()]));
+}
+
+export async function serve() {
+  const headers = await siteHeaders();
   return new Promise((resolve) => {
     const server = createServer(async (req, res) => {
       const path = new URL(req.url, "http://x").pathname;
       const target = path.startsWith("/c/") ? "/c.html" : path;
       try {
         const body = await readFile(join(dist, target));
-        res.writeHead(200, { "Content-Type": TYPES[extname(target)] ?? "application/octet-stream" }).end(body);
+        res.writeHead(200, { ...headers, "Content-Type": TYPES[extname(target)] ?? "application/octet-stream" }).end(body);
       } catch {
         res.writeHead(404).end();
       }
