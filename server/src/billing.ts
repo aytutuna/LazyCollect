@@ -63,13 +63,19 @@ async function expireOpenSessions(env: Env, customer: string) {
 }
 
 // What a subscription charged is given back when we cancel it as a duplicate; a trial charged nothing.
+// The refund goes first: a failure then leaves the subscription alive, and the webhook's retry does both again.
 async function cancelAndRefund(env: Env, sub: Subscription) {
-  await stripe(env, "DELETE", `/v1/subscriptions/${encodeURIComponent(sub.id)}`);
   const invoice = idOf(sub.latest_invoice);
-  if (sub.status === "trialing" || !invoice) return;
-  const paid = await stripe<{ data: { status: string; payment?: { payment_intent?: string | null } }[] }>(env, "GET", "/v1/invoice_payments", { invoice });
-  const intent = paid.data.find((p) => p.status === "paid")?.payment?.payment_intent;
-  if (intent) await stripe(env, "POST", "/v1/refunds", { payment_intent: intent }, `refund-${intent}`);
+  if (sub.status !== "trialing" && invoice) {
+    const paid = await stripe<{ data: { status: string; payment?: { payment_intent?: string | null } }[] }>(env, "GET", "/v1/invoice_payments", { invoice });
+    const intent = paid.data.find((p) => p.status === "paid")?.payment?.payment_intent;
+    if (intent) {
+      await stripe(env, "POST", "/v1/refunds", { payment_intent: intent }, `refund-${intent}`).catch((e) => {
+        if (!(e instanceof StripeError && e.code === "charge_already_refunded")) throw e;
+      });
+    }
+  }
+  await stripe(env, "DELETE", `/v1/subscriptions/${encodeURIComponent(sub.id)}`);
 }
 
 billing.post("/billing/checkout", async (c) => {

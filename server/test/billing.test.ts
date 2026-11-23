@@ -436,6 +436,27 @@ describe("double payment", () => {
     await webhook({ id: "evt_9", type: "checkout.session.completed", data: { object: { mode: "subscription", customer, subscription: "sub_9" } } });
     expect(stripeFake.subs.get("sub_9")!.status).toBe("canceled");
     expect(refunds()[0].form.payment_intent).toBe("pi_9");
+  it("keeps the duplicate alive when the refund fails, and finishes on the retry", async () => {
+    const { customer } = await subscribed();
+    stripeFake.sub("sub_1", customer);
+    await webhook({ id: "evt_1", type: "customer.subscription.created", data: { object: { id: "sub_1", customer } } });
+    stripeFake.sub("sub_2", customer, { latest_invoice: "in_2" });
+    stripeFake.payments.set("in_2", [{ status: "paid", payment: { payment_intent: "pi_2" } }]);
+    const event = { id: "evt_2", type: "customer.subscription.created", data: { object: { id: "sub_2", customer } } };
+    stripeFake.refund = "fail";
+    expect((await webhook(event)).status).toBe(500);
+    expect(stripeFake.subs.get("sub_2")!.status).toBe("active");
+    stripeFake.refund = "ok";
+    expect((await webhook(event)).status).toBe(200);
+    expect(stripeFake.subs.get("sub_2")!.status).toBe("canceled");
+  });
+
+  it("treats a charge that is already refunded as done", async () => {
+    stripeFake.refund = "already";
+    await twoSubs("active");
+    expect(stripeFake.subs.get("sub_2")!.status).toBe("canceled");
+  });
+
   });
 
   it("ends a leftover subscription that Stripe still has live when subscribing again", async () => {

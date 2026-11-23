@@ -4,7 +4,7 @@ import { FETCH_TIMEOUT_MS } from "./util";
 const API_VERSION = "2025-10-29.clover";
 
 export class StripeError extends Error {
-  constructor(public status: number) {
+  constructor(public status: number, public code?: string) {
     super(`stripe request failed: HTTP ${status}`);
   }
 }
@@ -39,6 +39,6 @@ export async function stripe<T>(env: Env, method: "GET" | "POST" | "DELETE", pat
   } catch (e) {
     throw new Error(`stripe request failed: ${e instanceof Error ? e.name : "error"}`);
   }
-  if (!res.ok) throw new StripeError(res.status);
+  if (!res.ok) throw new StripeError(res.status, (await res.json<{ error?: { code?: string } }>().catch(() => null))?.error?.code);
   return res.json<T>();
 }

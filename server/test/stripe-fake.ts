@@ -19,6 +19,7 @@ export const stripeFake = {
   payments: new Map<string, { status: string; payment: { payment_intent: string } }[]>(),
   gone: new Set<string>(),
   failing: false,
+  refund: "ok" as "ok" | "already" | "fail",
   next: 0,
   reset() {
     this.calls = [];
@@ -28,6 +29,7 @@ export const stripeFake = {
     this.payments.clear();
     this.gone.clear();
     this.failing = false;
+    this.refund = "ok";
     this.next = 0;
   },
   sub(id: string, customer: string, over: Partial<FakeSub> & { end?: number } = {}): FakeSub {
@@ -67,6 +69,8 @@ export const stripeFake = {
       return Response.json(found);
     }
     if (method === "GET" && url.pathname === "/v1/invoice_payments") return Response.json({ data: this.payments.get(url.searchParams.get("invoice") ?? "") ?? [] });
+    if (method === "POST" && url.pathname === "/v1/refunds" && this.refund === "fail") return new Response("nope", { status: 500 });
+    if (method === "POST" && url.pathname === "/v1/refunds" && this.refund === "already") return Response.json({ error: { code: "charge_already_refunded" } }, { status: 400 });
     if (method === "POST" && url.pathname === "/v1/refunds") return reply({ id: `re_${++this.next}` });
     if (method === "DELETE" && url.pathname.startsWith("/v1/customers/")) {
       if (this.gone.has(path[3])) return new Response("missing", { status: 404 });
