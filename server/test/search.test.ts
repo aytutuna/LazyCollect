@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DAY, randomId } from "../src/util";
 import { api, inDays, setup } from "./helpers";
 
-type Page = { rows: any[]; next: number | null; counts: Record<string, number> | null };
+type Page = { rows: any[]; next: number | null; counts: Record<string, number> | null; client: { id: string; name: string } | null };
 
 async function account(email = "owner@firm.test") {
   const { cookie, client } = await setup(email);
@@ -128,6 +128,9 @@ describe("search", () => {
     await seed(a.firmId, bo.id, "Bo's");
     expect(titles(await list(a.cookie, `?client=${bo.id}`))).toEqual(["Bo's"]);
     expect((await list(a.cookie, `?client=${bo.id}`)).counts).toMatchObject({ all: 1 });
+    expect((await list(a.cookie, `?client=${bo.id}`)).client).toEqual({ id: bo.id, name: "Bo" });
+    expect((await list(a.cookie, `?client=${bo.id}&offset=1`)).client).toEqual({ id: bo.id, name: "Bo" });
+    expect((await list(a.cookie)).client).toBeNull();
   });
 
   it("never shows another account's requests or counts them", async () => {
@@ -139,6 +142,7 @@ describe("search", () => {
     expect(titles(mine)).toEqual(["Mine shared"]);
     expect(mine.counts).toMatchObject({ all: 1 });
     expect(titles(await list(a.cookie, `?client=${b.client.id}`))).toEqual([]);
+    expect((await list(a.cookie, `?client=${b.client.id}`)).client).toBeNull();
     expect(titles(await list(b.cookie))).toEqual(["Theirs shared"]);
   });
 

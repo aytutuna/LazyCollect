@@ -45,6 +45,16 @@ describe("inline view", () => {
     expect((await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM audit WHERE action = 'file.view'").first<any>())!.n).toBe(1);
   });
 
+  it("answers a check without decrypting, auditing or using the limit", async () => {
+    const { cookie, file } = await stored(jpeg(2000), "a.jpg");
+    const res = await api(`/api/files/${file.id}/view?check=1`, { cookie });
+    expect([res.status, await res.json()]).toEqual([200, { ok: true }]);
+    expect((await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM audit WHERE action = 'file.view'").first<any>())!.n).toBe(0);
+    const other = await stored(heic(3000), "b.heic");
+    expect((await api(`/api/files/${other.file.id}/view?check=1`, { cookie: other.cookie })).status).toBe(415);
+    expect((await api(`/api/files/${"0".repeat(32)}/view?check=1`, { cookie })).status).toBe(404);
+  });
+
   it("keeps the plain route an attachment", async () => {
     const { cookie, file } = await stored(pdf(2000), "a.pdf");
     const res = await api(`/api/files/${file.id}`, { cookie });

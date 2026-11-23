@@ -107,11 +107,14 @@ export async function listRequests(c: Context<AppEnv>) {
     )
     // the view conditions come first in the statement's text, so their values come first
     .bind(...Object.values(when).flatMap((w) => w.binds), ...binds);
-  const [rows, tally] = await db.batch(offset === 0 ? [page, counts] : [page]);
+  const first = offset === 0;
+  const who = client ? db.prepare("SELECT id, name FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL").bind(firmId, client) : null;
+  const [rows, ...rest] = await db.batch([page, ...(first ? [counts] : []), ...(who ? [who] : [])]);
   const list = rows.results as Record<string, unknown>[];
   return c.json({
     rows: list.slice(0, PAGE).map(({ missing: _m, last_at: _l, ...r }) => r),
     next: list.length > PAGE ? offset + PAGE : null,
-    counts: tally ? tally.results[0] : null,
+    counts: first ? rest[0].results[0] : null,
+    client: who ? (rest[first ? 1 : 0].results[0] ?? null) : null,
   });
 }

@@ -30,7 +30,6 @@ const VIEW_CSP: Record<string, string> = {
 
 async function serve(c: Context<AppEnv>, inline: boolean) {
   const firm = c.get("firm");
-  if (await keyLimited(c.env.FILE_VIEW, firm.id)) return c.json({ error: "rate_limited" }, 429);
   const file = await c.get("db")
     .prepare(
       `SELECT f.id, f.request_id, f.r2_key, f.name, f.mime, f.size FROM files f
@@ -41,6 +40,9 @@ async function serve(c: Context<AppEnv>, inline: boolean) {
     .first<{ id: string; request_id: string; r2_key: string; name: string; mime: string; size: number }>();
   if (!file) return notFound(c);
   if (inline && !INLINE.includes(file.mime)) return c.json({ error: "not_viewable" }, 415);
+  // the page asks first so a refusal can be worded, instead of showing raw JSON inside a frame; this reads nothing and writes nothing
+  if (inline && c.req.query("check") === "1") return c.json({ ok: true });
+  if (await keyLimited(c.env.FILE_VIEW, firm.id)) return c.json({ error: "rate_limited" }, 429);
   const region = firm.region as Region;
   const object = await regionOf(c.env, region).bucket.get(file.r2_key);
   if (!object) return notFound(c);
