@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "a11y": "node scripts/a11y.mjs"
   },
   "dependencies": {
     "@simplewebauthn/browser": "14.0.0",
@@ -14,6 +15,8 @@
     "wouter-preact": "3.13.0"
   },
   "devDependencies": {
+    "axe-core": "4.14.1",
+    "playwright-core": "1.65.1",
     "typescript": "7.0.2",
     "vite": "8.3.8"
   }

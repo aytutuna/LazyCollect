@@ -53,6 +53,9 @@ export type RequestRow = {
   submitted: number;
   approved: number;
   rejected: number;
+  unavailable: number;
+  waived: number;
+  unanswered: number;
 };
 
 export type RequestCounts = { all: number; to_review: number; waiting: number; overdue: number; due_soon: number; done: number };
@@ -65,8 +68,9 @@ export type Item = {
   label: string;
   help: string | null;
   required: boolean;
-  status: "empty" | "submitted" | "approved" | "rejected";
+  status: "empty" | "submitted" | "approved" | "rejected" | "unavailable" | "waived";
   reject_note: string | null;
+  unavailable_note: string | null;
 };
 
 export type FileRow = { id: string; name: string; size: number; mime: string; uploaded_at: number };
@@ -113,11 +117,15 @@ export type SessionRow = { id: string | null; label: string | null; created_at: 
 
 export type PendingInvite = { id: string; email: string; name: string | null; created_at: number; expires_at: number };
 
-export type Message = { id: string; kind: "invite" | "reminder" | "deadline" | "rejected"; seq: number; status: "sending" | "sent" | "failed"; sent_at: number; manual: 0 | 1 };
+export type Message = { id: string; kind: "invite" | "reminder" | "deadline" | "rejected" | "answer"; seq: number; status: "sending" | "sent" | "failed"; sent_at: number; manual: 0 | 1 };
 
 export type LinkResult = { url: string; emailed?: true; email_failed?: true };
 
 export type ClientItem = Omit<Item, "position"> & { files: Omit<FileRow, "mime">[] };
+
+export type Note = { id: string; author: "client" | "user"; body: string; created_at: number };
+
+export type Thread = { notes: Note[]; unanswered: number };
 
 export type ClientView = {
   firm_name: string;
@@ -126,5 +134,8 @@ export type ClientView = {
   note: string | null;
   deadline: number;
   status: string;
+  expires_at: number;
+  contact: { name: string | null; email: string | null; phone: string | null; address: string | null } | null;
+  notes: Note[];
   items: ClientItem[];
 };

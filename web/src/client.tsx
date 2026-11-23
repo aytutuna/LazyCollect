@@ -1,44 +1,176 @@
 import { render } from "preact";
-import { useRef, useState } from "preact/hooks";
-import { ApiError, del, get, useAction, useLoad } from "./api";
-import { fmtDate, fmtSize, isLate, relative, setZone } from "./format";
+import { useEffect, useRef, useState } from "preact/hooks";
+import { ApiError, del, get, post, useAction, useLoad } from "./api";
+import { fmtDate, fmtDateTime, fmtSize, isLate, relative, setZone } from "./format";
 import { t } from "./i18n";
-import type { ClientItem, ClientView } from "./types";
-import { Badge, ErrorNote, LegalLink, Loading } from "./ui";
-import { MAX_SIZE, combineToPdf, prepareImage, sendFile, type Prepared } from "./upload";
+import { UploadQueue, sendJob, type Job } from "./queue";
+import type { ClientItem, ClientView, Note } from "./types";
+import { Badge, LegalLink, Loading, errorText } from "./ui";
+import { MAX_SIZE, combineToPdf, prepareImage, type Prepared } from "./upload";
 import "./styles.css";
 
-const TONES = { empty: "grey", submitted: "teal", approved: "green", rejected: "red" };
+const TONES = { empty: "grey", submitted: "teal", approved: "green", rejected: "red", unavailable: "amber", waived: "green" };
+// a symbol next to the words, so a status is never told by colour alone
+const MARKS = { empty: "○", submitted: "✓", approved: "✓", rejected: "!", unavailable: "–", waived: "✓" };
+const RECEIVED = ["submitted", "approved", "waived"];
 
-// one queue for the whole page keeps a phone's memory and the per-link rate limit comfortable
-let queue: Promise<unknown> = Promise.resolve();
+const token = location.pathname.split("/")[2] ?? "";
+const base = `/c/${encodeURIComponent(token)}`;
 
-type Job = { key: string; file: Prepared; uploadId: string; progress: number; failed: boolean; error?: unknown };
+// Results are spoken through one live region; the text is cleared first so a repeated message is read again.
+function announce(text: string) {
+  const el = document.getElementById("live");
+  if (!el) return;
+  el.textContent = "";
+  setTimeout(() => (el.textContent = text), 60);
+}
 
-function Uploads({ token, item, onChange }: { token: string; item: ClientItem; onChange: () => void }) {
-  const [jobs, setJobs] = useState<Job[]>([]);
+// the element to focus once the next render has put it on the page
+let pendingFocus: string | null = null;
+const focusLater = (id: string) => (pendingFocus = id);
+
+let onUploaded: (job: Job) => void = () => {};
+const queue = new UploadQueue(token, sendJob(token), (job) => onUploaded(job));
+
+function useQueue() {
+  const [, bump] = useState(0);
+  useEffect(() => queue.subscribe(() => bump((n) => n + 1)), []);
+  return queue.jobs;
+}
+
+function Alert({ error }: { error: unknown }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (error) ref.current?.focus();
+  }, [error]);
+  return error ? (
+    <p class="error" role="alert" tabIndex={-1} ref={ref}>
+      {errorText(error)}
+    </p>
+  ) : null;
+}
+
+function JobRow({ job, online }: { job: Job; online: boolean }) {
+  const { name } = job;
+  const failed = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (job.state === "failed") failed.current?.focus();
+  }, [job.state]);
+  if (job.state === "failed") {
+    return (
+      <div class="job" role="alert" tabIndex={-1} ref={failed}>
+        <p class="error">{t("client.job_failed", { name })}</p>
+        <p class="error">{errorText(job.error)}</p>
+        <div class="row-actions">
+          {!(job.error instanceof ApiError && job.error.code === "missing_file") && (
+            <button class="small" onClick={() => queue.retry(job.id)}>
+              {t("retry")}
+            </button>
+          )}
+          <button class="small" onClick={() => queue.remove(job.id)}>
+            {t("client.remove")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+  if (job.state === "uploading") {
+    const percent = Math.round(job.progress * 100);
+    return (
+      <div class="job">
+        <label>
+          <span>{t("client.job_uploading", { name, percent })}</span>
+          <progress max={1} value={job.progress} />
+        </label>
+      </div>
+    );
+  }
+  const text =
+    job.state === "retrying" && job.retryIn
+      ? t("client.job_retry", { name, seconds: job.retryIn })
+      : job.state === "retrying" || !online
+        ? t("client.job_offline", { name })
+        : t("client.job_waiting", { name });
+  return (
+    <div class="job">
+      <p class="muted">{text}</p>
+      <div class="row-actions">
+        {job.state === "retrying" && online && (
+          <button class="small" onClick={() => queue.retry(job.id)}>
+            {t("client.try_now")}
+          </button>
+        )}
+        <button class="small" onClick={() => queue.remove(job.id)}>
+          {t("client.remove")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DontHave({ item, firm, onChange, onClose }: { item: ClientItem; firm: string; onChange: () => void; onClose: () => void }) {
+  const [reason, setReason] = useState("");
+  const { busy, error, run } = useAction();
+  const field = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => field.current?.focus(), []);
+
+  async function submit(e: Event) {
+    e.preventDefault();
+    if (await run(() => post(`${base}/items/${item.id}/unavailable`, { note: reason }))) {
+      announce(t("client.status_unavailable", { firm }));
+      focusLater(`status-${item.id}`);
+      onChange();
+      onClose();
+    }
+  }
+
+  return (
+    <form class="reason" onSubmit={submit} aria-labelledby={`why-${item.id}`}>
+      <h4 id={`why-${item.id}`}>{t("client.dont_have_title")}</h4>
+      <label class="field">
+        <span class="label">{t("client.dont_have_reason")}</span>
+        <textarea ref={field} rows={3} maxLength={500} value={reason} aria-describedby={`why-hint-${item.id}`} onInput={(e) => setReason(e.currentTarget.value)} />
+        <span class="hint" id={`why-hint-${item.id}`}>
+          {t("client.dont_have_hint")}
+        </span>
+      </label>
+      <Alert error={error} />
+      <div class="row-actions">
+        <button class="primary" disabled={busy}>
+          {t("client.dont_have_save")}
+        </button>
+        <button type="button" onClick={onClose}>
+          {t("cancel")}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function statusText(item: ClientItem, firm: string): string {
+  switch (item.status) {
+    case "approved":
+      return t("client.status_approved", { firm });
+    case "rejected":
+      return t("client.status_rejected");
+    case "unavailable":
+      return t("client.status_unavailable", { firm });
+    case "waived":
+      return t("client.status_waived", { firm });
+    default:
+      return item.files.length ? t("client.status_files", { n: item.files.length }) : t("client.status_empty");
+  }
+}
+
+function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: string; jobs: Job[]; online: boolean; onChange: () => void }) {
   const [preparing, setPreparing] = useState(false);
   const [combined, setCombined] = useState(0);
+  const [asking, setAsking] = useState(false);
   const camera = useRef<HTMLInputElement>(null);
   const picker = useRef<HTMLInputElement>(null);
-  const removal = useAction();
+  const action = useAction();
   const open = item.status !== "approved";
-
-  const update = (key: string, patch: Partial<Job>) => setJobs((all) => all.map((j) => (j.key === key ? { ...j, ...patch } : j)));
-
-  function send(job: Job) {
-    queue = queue.then(async () => {
-      update(job.key, { failed: false, error: undefined, progress: 0 });
-      try {
-        if (job.file.blob.size > MAX_SIZE) throw new ApiError(413, "too_big");
-        await sendFile(`/api/c/${encodeURIComponent(token)}/items/${item.id}/files`, job.file, job.uploadId, (progress) => update(job.key, { progress }));
-        setJobs((all) => all.filter((j) => j.key !== job.key));
-        onChange();
-      } catch (error) {
-        update(job.key, { failed: true, error });
-      }
-    });
-  }
+  const mine = jobs.filter((j) => j.itemId === item.id);
 
   async function pick(input: HTMLInputElement) {
     const picked = [...(input.files ?? [])];
@@ -46,6 +178,7 @@ function Uploads({ token, item, onChange }: { token: string; item: ClientItem; o
     if (!picked.length) return;
     setPreparing(true);
     setCombined(0);
+    announce(t("client.preparing"));
     let ready: Prepared[] = [];
     for (const file of picked) {
       ready.push(file.type.startsWith("image/") ? await prepareImage(file) : { blob: file, name: file.name, jpeg: false });
@@ -65,108 +198,216 @@ function Uploads({ token, item, onChange }: { token: string; item: ClientItem; o
       }
     }
     setPreparing(false);
-    for (const file of ready) {
-      const job = { key: crypto.randomUUID(), file, uploadId: crypto.randomUUID(), progress: 0, failed: false };
-      setJobs((all) => [...all, job]);
-      send(job);
+    await queue.add(item.id, ready);
+  }
+
+  async function remove(id: string, name: string) {
+    if (await action.run(() => del(`${base}/files/${id}`))) {
+      announce(t("client.removed", { name }));
+      focusLater(`status-${item.id}`);
+      onChange();
     }
   }
 
-  async function remove(id: string) {
-    if (await removal.run(() => del(`/c/${encodeURIComponent(token)}/files/${id}`))) onChange();
+  async function found() {
+    if (await action.run(() => del(`${base}/items/${item.id}/unavailable`))) {
+      focusLater(`status-${item.id}`);
+      onChange();
+    }
   }
 
   return (
-    <div class="uploads">
-      {item.files.length > 0 && (
-        <ul class="files">
-          {item.files.map((f) => (
-            <li key={f.id}>
-              <span class="name">
-                {f.name} <span class="muted">({fmtSize(f.size)})</span>
-              </span>
-              {open && (
-                <button class="small quiet" disabled={removal.busy} onClick={() => remove(f.id)}>
-                  {t("client.remove")}
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      {jobs.map((job) => (
-        <div class="job" key={job.key}>
-          {job.failed ? (
-            <>
-              <p class="muted">{job.file.name}</p>
-              <ErrorNote error={job.error} />
-              <div class="row-actions">
-                <button class="small" onClick={() => send(job)}>
-                  {t("retry")}
-                </button>
-                <button class="small" onClick={() => setJobs((all) => all.filter((j) => j.key !== job.key))}>
-                  {t("dismiss")}
-                </button>
-              </div>
-            </>
-          ) : (
-            <label>
-              <span class="muted">{t("client.uploading", { name: job.file.name })}</span>
-              <progress max={1} value={job.progress} />
-            </label>
-          )}
+    <li class="item" aria-labelledby={`label-${item.id}`}>
+      <div class="main">
+        <div class="line">
+          <strong id={`label-${item.id}`}>{item.label}</strong>
+          <Badge tone={TONES[item.status]}>
+            <span aria-hidden="true">{MARKS[item.status]} </span>
+            {t(`client.${item.status}`)}
+          </Badge>
         </div>
-      ))}
-      {preparing && <p class="muted">{t("client.preparing")}</p>}
-      {combined > 0 && <p class="muted">{t("client.combined", { n: combined })}</p>}
-      <ErrorNote error={removal.error} />
-      {open && (
-        <>
-          <div class="row-actions">
-            <button class="small" disabled={preparing} onClick={() => camera.current?.click()}>
-              {t("client.take_photo")}
-            </button>
-            <button class="small" disabled={preparing} onClick={() => picker.current?.click()}>
-              {t("client.choose_file")}
-            </button>
+        {item.help && <div class="muted">{item.help}</div>}
+        <p class="item-status" id={`status-${item.id}`} tabIndex={-1}>
+          {statusText(item, firm)}
+        </p>
+        {item.status === "rejected" && item.reject_note && (
+          <div class="callout">
+            <strong>{t("client.rejected_title")}</strong>
+            <p>{item.reject_note}</p>
           </div>
-          <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={(e) => pick(e.currentTarget)} />
-          <input ref={picker} type="file" accept="image/*,application/pdf" multiple hidden onChange={(e) => pick(e.currentTarget)} />
-        </>
-      )}
-    </div>
+        )}
+        {item.status === "unavailable" && item.unavailable_note && <p class="muted reason-text">{t("client.unavailable_reason", { note: item.unavailable_note })}</p>}
+        {item.status === "submitted" && item.reject_note && <p class="muted">{t("client.earlier_note", { note: item.reject_note })}</p>}
+
+        {item.files.length > 0 && (
+          <ul class="files">
+            {item.files.map((f) => (
+              <li key={f.id}>
+                <span class="name">
+                  {f.name} <span class="muted">({fmtSize(f.size)})</span>
+                </span>
+                {open && (
+                  <button class="small quiet" disabled={action.busy} aria-label={t("client.remove_file", { name: f.name })} onClick={() => remove(f.id, f.name)}>
+                    {t("client.remove")}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        {mine.map((job) => (
+          <JobRow key={job.id} job={job} online={online} />
+        ))}
+        {preparing && <p class="muted">{t("client.preparing")}</p>}
+        {combined > 0 && <p class="muted">{t("client.combined", { n: combined })}</p>}
+        <Alert error={action.error} />
+
+        {open && (
+          <>
+            <div class="row-actions buttons">
+              <button disabled={preparing} aria-describedby={`label-${item.id}`} onClick={() => camera.current?.click()}>
+                {t("client.take_photo")}
+              </button>
+              <button disabled={preparing} aria-describedby={`label-${item.id}`} onClick={() => picker.current?.click()}>
+                {t("client.choose_file")}
+              </button>
+              {item.status === "unavailable" ? (
+                <button class="quiet-link" disabled={action.busy} aria-describedby={`label-${item.id}`} onClick={found}>
+                  {t("client.found_it")}
+                </button>
+              ) : (
+                (item.status === "empty" || item.status === "rejected") &&
+                !asking && (
+                  <button class="quiet-link" aria-describedby={`label-${item.id}`} onClick={() => setAsking(true)}>
+                    {t("client.dont_have")}
+                  </button>
+                )
+              )}
+            </div>
+            <input ref={camera} type="file" accept="image/*" capture="environment" hidden tabIndex={-1} onChange={(e) => pick(e.currentTarget)} />
+            <input ref={picker} type="file" accept="image/*,application/pdf" multiple hidden tabIndex={-1} onChange={(e) => pick(e.currentTarget)} />
+          </>
+        )}
+        {asking && <DontHave item={item} firm={firm} onChange={onChange} onClose={() => setAsking(false)} />}
+      </div>
+    </li>
   );
 }
 
-function ItemList({ items, token, onChange }: { items: ClientItem[]; token: string; onChange: () => void }) {
+function ItemList({ items, firm, jobs, online, onChange }: { items: ClientItem[]; firm: string; jobs: Job[]; online: boolean; onChange: () => void }) {
   return (
     <ul class="items">
       {items.map((item) => (
-        <li key={item.id}>
-          <div class="main">
-            <div class="line">
-              <strong>{item.label}</strong>
-              <Badge tone={TONES[item.status]}>{t(`client.${item.status}`)}</Badge>
-            </div>
-            {item.help && <div class="muted">{item.help}</div>}
-            {item.status === "rejected" && item.reject_note && (
-              <div class="callout" role="alert">
-                <strong>{t("client.rejected_title")}</strong>
-                <p>{item.reject_note}</p>
-              </div>
-            )}
-            {item.status === "submitted" && item.reject_note && <p class="muted">{t("client.earlier_note", { note: item.reject_note })}</p>}
-            <Uploads token={token} item={item} onChange={onChange} />
-          </div>
-        </li>
+        <Item key={item.id} item={item} firm={firm} jobs={jobs} online={online} onChange={onChange} />
       ))}
     </ul>
   );
 }
 
+function Thread({ firm, notes, onChange }: { firm: string; notes: Note[]; onChange: () => void }) {
+  const [body, setBody] = useState("");
+  const [sent, setSent] = useState(false);
+  const { busy, error, run } = useAction();
+
+  async function submit(e: Event) {
+    e.preventDefault();
+    setSent(false);
+    if (await run(() => post(`${base}/notes`, { body }))) {
+      setBody("");
+      setSent(true);
+      announce(t("client.notes_sent"));
+      onChange();
+    }
+  }
+
+  return (
+    <section aria-labelledby="notes-title">
+      <h2 id="notes-title">{t("client.notes_title", { firm })}</h2>
+      <p class="muted">{t("client.notes_intro", { firm })}</p>
+      {notes.length > 0 && (
+        <ol class="thread">
+          {notes.map((n) => (
+            <li key={n.id} class={n.author === "client" ? "from-you" : "from-firm"}>
+              <p class="who">
+                <strong>{n.author === "client" ? t("client.notes_you") : firm}</strong> <span class="muted">{fmtDateTime(n.created_at)}</span>
+              </p>
+              <p class="body">{n.body}</p>
+            </li>
+          ))}
+        </ol>
+      )}
+      <form onSubmit={submit}>
+        <label class="field">
+          <span class="label">{t("client.notes_label")}</span>
+          <textarea required rows={4} maxLength={2000} value={body} aria-describedby="notes-left" onInput={(e) => setBody(e.currentTarget.value)} />
+          <span class="hint" id="notes-left">
+            {t("client.notes_left", { n: 2000 - body.length })}
+          </span>
+        </label>
+        <Alert error={error} />
+        {sent && <p class="ok">{t("client.notes_sent")}</p>}
+        <button class="primary" disabled={busy || !body.trim()}>
+          {t("client.notes_send")}
+        </button>
+      </form>
+    </section>
+  );
+}
+
 function Page() {
-  const token = location.pathname.split("/")[2] ?? "";
-  const { data, error, reload } = useLoad(() => get<ClientView>(`/c/${encodeURIComponent(token)}`));
+  const { data, error, reload } = useLoad(() => get<ClientView>(base));
+  const jobs = useQueue();
+  const [online, setOnline] = useState(navigator.onLine);
+  const wasDone = useRef<boolean | null>(null);
+  const doneHeading = useRef<HTMLHeadingElement>(null);
+
+  onUploaded = (job) => {
+    announce(t("client.uploaded", { name: job.name }));
+    focusLater(`status-${job.itemId}`);
+    reload();
+  };
+
+  useEffect(() => {
+    queue.restore();
+    const up = () => {
+      setOnline(true);
+      queue.online();
+    };
+    const down = () => {
+      setOnline(false);
+      announce(t("client.offline"));
+    };
+    addEventListener("online", up);
+    addEventListener("offline", down);
+    return () => {
+      removeEventListener("online", up);
+      removeEventListener("offline", down);
+    };
+  }, []);
+
+  const scope = data ? (data.items.some((i) => i.required) ? data.items.filter((i) => i.required) : data.items) : [];
+  const received = scope.filter((i) => RECEIVED.includes(i.status)).length;
+  const unavailable = scope.filter((i) => i.status === "unavailable").length;
+  const finished = Boolean(data) && scope.length > 0 && received + unavailable === scope.length;
+
+  useEffect(() => {
+    if (pendingFocus) {
+      document.getElementById(pendingFocus)?.focus();
+      pendingFocus = null;
+    }
+    // the first look only records the state; after that, becoming finished moves focus to the message
+    if (data) {
+      if (wasDone.current === false && finished) {
+        doneHeading.current?.focus();
+        announce(t("client.all_done_title"));
+      }
+      wasDone.current = finished;
+    }
+  });
+
+  useEffect(() => {
+    if (data) document.title = `${data.title} - ${data.firm_name}`;
+  }, [data?.title, data?.firm_name]);
 
   if (error && !data) {
     const gone = error instanceof ApiError && error.status === 404;
@@ -180,16 +421,19 @@ function Page() {
   if (!data) return <Loading />;
   setZone(data.tz);
 
+  const firm = data.firm_name;
   const optional = data.items.filter((i) => !i.required);
-  const received = data.items.filter((i) => i.status === "submitted" || i.status === "approved").length;
+  const contact = data.contact && (data.contact.email || data.contact.phone || data.contact.address) ? data.contact : null;
   return (
     <main class="client-page">
-      <p class="firm">{data.firm_name}</p>
+      <div id="live" class="sr-only" role="status" aria-live="polite" />
+      <p class="firm">{firm}</p>
       <h1>{data.title}</h1>
-      {data.note && <p>{data.note}</p>}
+      {data.note && <p class="request-note">{data.note}</p>}
       <p>
         {t("client.due")}: <strong class={isLate(data.deadline) ? "late" : ""}>{fmtDate(data.deadline)}</strong> ({relative(data.deadline)})
       </p>
+      <p class="muted">{t("client.privacy", { firm })}</p>
       {error && (
         <p class="error" role="alert">
           {t("client.refresh_failed")}{" "}
@@ -198,19 +442,89 @@ function Page() {
           </button>
         </p>
       )}
-      <p class="muted">
-        {t("client.privacy", { firm: data.firm_name })} <LegalLink page="privacy">{t("legal.privacy")}</LegalLink>
-      </p>
-      <section>
-        <h2>{t("client.checklist")}</h2>
-        <p class="muted">{t("progress", { done: received, total: data.items.length })}</p>
-        <ItemList items={data.items.filter((i) => i.required)} token={token} onChange={reload} />
+
+      {(jobs.length > 0 || !online) && (
+        <div class="banner">
+          {jobs.length > 0 && <strong>{t("client.waiting", { n: jobs.length })}</strong>}
+          {!online && <p>{t("client.offline")}</p>}
+          {jobs.length > 0 && !queue.persistent && <p>{t("client.no_storage")}</p>}
+        </div>
+      )}
+
+      <section class="progress-card" aria-labelledby="progress-text">
+        <p id="progress-text">
+          <strong>{t("client.progress", { done: received, total: scope.length })}</strong>
+          {unavailable > 0 && <span class="muted">, {t("client.progress_na", { n: unavailable })}</span>}
+        </p>
+        <progress max={scope.length || 1} value={received + unavailable} aria-labelledby="progress-text" />
+      </section>
+
+      {finished && (
+        <section class="done" aria-labelledby="done-title">
+          <h2 id="done-title" tabIndex={-1} ref={doneHeading}>
+            {t("client.all_done_title")}
+          </h2>
+          <p>{t("client.all_done_body", { firm })}</p>
+        </section>
+      )}
+
+      <section aria-labelledby="checklist-title">
+        <h2 id="checklist-title">{t("client.checklist")}</h2>
+        <ItemList items={data.items.filter((i) => i.required)} firm={firm} jobs={jobs} online={online} onChange={reload} />
         {optional.length > 0 && (
           <>
             <h3 class="optional">{t("client.optional")}</h3>
-            <ItemList items={optional} token={token} onChange={reload} />
+            <ItemList items={optional} firm={firm} jobs={jobs} online={online} onChange={reload} />
           </>
         )}
+      </section>
+
+      <Thread firm={firm} notes={data.notes} onChange={reload} />
+
+      {contact && (
+        <section aria-labelledby="contact-title">
+          <h2 id="contact-title">{t("client.contact_title")}</h2>
+          <p>
+            <strong>{contact.name ?? firm}</strong>
+          </p>
+          <dl class="facts">
+            {contact.email && (
+              <>
+                <dt>{t("client.contact_email")}</dt>
+                <dd>
+                  <a href={`mailto:${contact.email}`}>{contact.email}</a>
+                </dd>
+              </>
+            )}
+            {contact.phone && (
+              <>
+                <dt>{t("client.contact_phone")}</dt>
+                <dd>
+                  <a href={`tel:${contact.phone.replace(/[^\d+]/g, "")}`}>{contact.phone}</a>
+                </dd>
+              </>
+            )}
+            {contact.address && (
+              <>
+                <dt>{t("client.contact_address")}</dt>
+                <dd class="address">{contact.address}</dd>
+              </>
+            )}
+          </dl>
+        </section>
+      )}
+
+      <section aria-labelledby="trust-title">
+        <h2 id="trust-title">{t("client.trust_title")}</h2>
+        <ul class="trust">
+          <li>{t("client.trust_private")}</li>
+          <li>{t("client.trust_encrypted")}</li>
+          <li>{t("client.trust_access", { firm })}</li>
+          <li>{t("client.trust_expires", { date: fmtDate(data.expires_at) })}</li>
+        </ul>
+        <p>
+          <LegalLink page="privacy">{t("client.privacy_link")}</LegalLink>
+        </p>
       </section>
     </main>
   );
