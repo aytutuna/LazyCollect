@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { createSession, endSession, type AppEnv } from "./session";
+import { createSession, endSession, holdLogin, type AppEnv } from "./session";
 import { sendLoginEmail } from "./email";
 import { untouchedRegion, untouchedSql, usable } from "./firm";
 import { htmlHeaders } from "./headers";
@@ -149,7 +149,8 @@ async function acceptInvite(c: Context<AppEnv>, email: string, existing: Found |
   }
 }
 
-async function signIn(c: Context<AppEnv>, email: string): Promise<boolean> {
+// what the email step leads to: a session, or a pending login that owes a passkey (held, or still to be added)
+async function signIn(c: Context<AppEnv>, email: string): Promise<"session" | "passkey" | "enrol" | null> {
   const db = c.env.CONTROL;
   const find = () => db.prepare("SELECT id, firm_id, role, disabled_at FROM users WHERE email = ?").bind(email).first<Found>();
   let user = await find();
@@ -181,9 +182,18 @@ async function signIn(c: Context<AppEnv>, email: string): Promise<boolean> {
     ]);
     user = (await find())!;
   }
-  if (user.disabled_at) return false;
+  if (user.disabled_at) return null;
+  const keys = await db
+    .prepare("SELECT (SELECT COUNT(*) FROM passkeys WHERE user_id = ?1) AS keys, (SELECT require_passkeys FROM firms WHERE id = ?2) AS required")
+    .bind(user.id, user.firm_id)
+    .first<{ keys: number; required: number }>();
+  const step = keys!.keys > 0 ? "passkey" : keys!.required === 1 ? "enrol" : null;
+  if (step) {
+    await holdLogin(c, user.id, step);
+    return step;
+  }
   await createSession(c, user.id, user.firm_id);
-  return true;
+  return "session";
 }
 
 auth.post("/auth/verify", async (c) => {
@@ -223,8 +233,9 @@ auth.post("/auth/verify", async (c) => {
     .bind(now, row.id)
     .run();
   if (used.meta.changes !== 1) return c.json({ error: "invalid" }, 400);
-  if (!(await signIn(c, row.email))) return c.json({ error: "disabled" }, 403);
-  return c.json({ ok: true });
+  const step = await signIn(c, row.email);
+  if (!step) return c.json({ error: "disabled" }, 403);
+  return c.json(step === "session" ? { ok: true } : { ok: true, step });
 });
 
 function escapeHtml(s: string): string {
@@ -263,8 +274,9 @@ auth.post("/auth/link", async (c) => {
     .bind(Date.now(), await sha256(body.t), Date.now())
     .first<{ email: string }>();
   if (!row) return c.json({ error: "invalid" }, 400);
-  if (!(await signIn(c, row.email))) return c.json({ error: "disabled" }, 403);
-  return c.json({ ok: true });
+  const step = await signIn(c, row.email);
+  if (!step) return c.json({ error: "disabled" }, 403);
+  return c.json(step === "session" ? { ok: true } : { ok: true, step });
 });
 
 auth.post("/auth/logout", async (c) => {

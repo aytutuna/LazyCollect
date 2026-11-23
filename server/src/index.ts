@@ -9,6 +9,8 @@ import { devices } from "./devices";
 import { exportZip } from "./export";
 import { files } from "./files";
 import { firm, loadClosedFirm, loadFirm } from "./firm";
+import { passkeys } from "./passkeys";
+import { pending } from "./pending";
 import { purgeExpired } from "./purge";
 import { requests } from "./requests";
 import { retention } from "./retention";
@@ -41,6 +43,7 @@ app.route("/api", stripeWebhook);
 app.use("/api/*", csrf, loadSession);
 app.get("/api/health", (c) => c.json({ ok: true }));
 app.route("/api", auth);
+app.route("/api", pending);
 app.route("/api", client);
 app.route("/api", uploads);
 app.use("/api/firm", loadFirm);
@@ -51,6 +54,8 @@ app.use("/api/retention/*", loadFirm);
 app.use("/api/trash", loadFirm);
 app.use("/api/staff/*", loadFirm);
 app.use("/api/sessions/*", loadFirm);
+app.use("/api/passkeys/*", loadFirm);
+app.use("/api/security/*", loadFirm);
 app.use("/api/activity", loadFirm);
 app.use("/api/clients/*", loadFirm);
 app.use("/api/templates/*", loadFirm);
@@ -67,6 +72,7 @@ app.route("/api", retention);
 app.route("/api", trash);
 app.route("/api", staff);
 app.route("/api", devices);
+app.route("/api", passkeys);
 app.route("/api", activity);
 app.route("/api", files);
 
@@ -95,6 +101,8 @@ export default {
       env.CONTROL.batch([
         env.CONTROL.prepare("DELETE FROM login_codes WHERE created_at < ?").bind(now - DAY),
         env.CONTROL.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
+        env.CONTROL.prepare("DELETE FROM pending_logins WHERE expires_at < ?").bind(now),
+        env.CONTROL.prepare("DELETE FROM passkey_challenges WHERE expires_at < ?").bind(now),
         env.CONTROL.prepare("DELETE FROM stripe_events WHERE received_at < ?").bind(now - 30 * DAY),
       ]),
     );

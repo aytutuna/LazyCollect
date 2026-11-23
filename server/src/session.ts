@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { DAY, HOUR, randomId, randomToken, sha256 } from "./util";
+import { DAY, HOUR, MINUTE, randomId, randomToken, sha256 } from "./util";
 
 export type Session = { id: string | null; tokenHash: string; userId: string; firmId: string };
 export type Firm = {
@@ -20,6 +20,7 @@ export type Firm = {
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
   closed_at: number | null;
+  require_passkeys: number;
 };
 export type AppEnv = { Bindings: Env; Variables: { session: Session | null; firm: Firm; db: D1Database } };
 
@@ -85,3 +86,38 @@ export const loadSession: MiddlewareHandler<AppEnv> = async (c, next) => {
   }
   await next();
 };
+
+// A good email code or link that still owes a passkey. It is not a session: loadSession never looks at this cookie.
+const PENDING_COOKIE = "__Host-lc_pending";
+const PENDING_TTL = 5 * MINUTE;
+export const PENDING_TRIES = 5;
+
+export type Pending = { tokenHash: string; userId: string; firmId: string; step: "passkey" | "enrol"; role: string; email: string; name: string | null };
+
+export async function holdLogin(c: Context<AppEnv>, userId: string, step: Pending["step"]) {
+  const token = randomToken();
+  await c.env.CONTROL.batch([
+    c.env.CONTROL.prepare("DELETE FROM pending_logins WHERE user_id = ?").bind(userId),
+    c.env.CONTROL.prepare("INSERT INTO pending_logins (token_hash, user_id, step, expires_at) VALUES (?, ?, ?, ?)").bind(await sha256(token), userId, step, Date.now() + PENDING_TTL),
+  ]);
+  setCookie(c, PENDING_COOKIE, token, { httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: PENDING_TTL / 1000 });
+}
+
+export async function loadPending(c: Context<AppEnv>): Promise<Pending | null> {
+  const token = getCookie(c, PENDING_COOKIE);
+  if (!token) return null;
+  const tokenHash = await sha256(token);
+  const row = await c.env.CONTROL.prepare(
+    `SELECT p.step, u.id AS user_id, u.firm_id, u.role, u.email, u.name FROM pending_logins p JOIN users u ON u.id = p.user_id
+     WHERE p.token_hash = ? AND p.expires_at > ? AND u.disabled_at IS NULL`,
+  )
+    .bind(tokenHash, Date.now())
+    .first<{ step: Pending["step"]; user_id: string; firm_id: string; role: string; email: string; name: string | null }>();
+  return row && { tokenHash, userId: row.user_id, firmId: row.firm_id, step: row.step, role: row.role, email: row.email, name: row.name };
+}
+
+export async function endPending(c: Context<AppEnv>) {
+  const token = getCookie(c, PENDING_COOKIE);
+  if (token) await c.env.CONTROL.prepare("DELETE FROM pending_logins WHERE token_hash = ?").bind(await sha256(token)).run();
+  deleteCookie(c, PENDING_COOKIE, { path: "/", secure: true });
+}
