@@ -111,3 +111,16 @@ export function checksum(img: Pixels): number {
   for (const b of img.data) hash = Math.imul(hash ^ b, 16777619) >>> 0;
   return hash;
 }
+
+export const isLightPrint = (x: number, y: number, width: number, height: number) =>
+  x >= 24 && x < width - 24 && y >= 70 && y < height - 30 && (y - 70) % 12 < 1 && Math.floor((x - 24) / 18) % 5 !== 4;
+
+// Lazy Scan's page with no paper to whiten (EnhancerPages.darkGround): a dark ground of luma 55 with sparse light print of 235
+export function darkGround(width = 240, height = 320): Pixels {
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) data.fill(isLightPrint(x, y, width, height) ? 235 : 55, (y * width + x) * 4, (y * width + x) * 4 + 3);
+  }
+  for (let i = 3; i < data.length; i += 4) data[i] = 255;
+  return { width, height, data };
+}

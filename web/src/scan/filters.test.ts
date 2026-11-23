@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { applyFilter } from "./filters";
-import { checksum, shadowedPage } from "./fixtures";
+import { applyFilter, isLightOnDark, luma as grayOf } from "./filters";
+import { checksum, darkGround, isLightPrint, shadowedPage } from "./fixtures";
 import type { Pixels } from "./geometry";
 
 // the same pages and checksums as Lazy Scan's DocumentEnhancerTests, so both apps give the same bytes
@@ -77,5 +77,34 @@ describe("Lazy Scan's page clean-up", () => {
 
   it("leaves the original alone", () => {
     expect(applyFilter(page, "original")).toBe(page);
+  });
+});
+
+describe("light print on a dark ground", () => {
+  const page = darkGround();
+
+  it("is kept, not whitened away", () => {
+    expect(checksum(page)).toBe(0xe4cfc2d5);
+    expect(isLightOnDark(grayOf(page))).toBe(true);
+    // stretched as a whole in every filter: the ground black, the print white, and the same bytes as the app (gray, B&W,
+    // enhanced and whiteboard all come out the same on a gray page)
+    for (const filter of ["gray", "bw", "enhanced", "whiteboard"] as const) {
+      const out = applyFilter(page, filter);
+      for (let y = 0; y < out.height; y++) {
+        for (let x = 0; x < out.width; x++) {
+          const v = luma(out, x, y);
+          if (isLightPrint(x, y, out.width, out.height)) expect(v).toBeGreaterThanOrEqual(250);
+          else expect(v).toBeLessThanOrEqual(5);
+        }
+      }
+      expect(checksum(out)).toBe(0x6edc8c95);
+    }
+  });
+
+  it("is not claimed by a page with paper, or by a blank dark sheet", () => {
+    expect(isLightOnDark(grayOf(shadowedPage()))).toBe(false);
+    expect(isLightOnDark(grayOf(shadowedPage(false, true)))).toBe(false);
+    const blank = new Uint8ClampedArray(240 * 320 * 4).fill(55);
+    expect(isLightOnDark(grayOf({ width: 240, height: 320, data: blank }))).toBe(false);
   });
 });
