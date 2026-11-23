@@ -1,10 +1,12 @@
 import { useState } from "preact/hooks";
 import { Link, useLocation } from "wouter-preact";
 import { ApiError, del, get, patch, post, put, useAction, useLoad } from "../api";
-import { fmtDate, fmtSize, fromInput, inDays, isLate, relative, toInput } from "../format";
+import { fmtDate, fmtDateTime, fmtSize, fromInput, inDays, isLate, relative, toInput } from "../format";
 import { t } from "../i18n";
 import type { ActivityRow, Client, Firm, Item, ItemWithFiles, LinkResult, Message, RequestDetail } from "../types";
 import { ActivityList } from "./activity";
+import { Review } from "./review";
+import { Viewer } from "./viewer";
 import { Badge, Check, Confirm, ErrorNote, Field, Loading, statusLabel, statusTone } from "../ui";
 
 const ITEM_TONES = { empty: "grey", submitted: "teal", approved: "green", rejected: "red" };
@@ -27,6 +29,9 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
   const [ask, setAsk] = useState<Ask>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [viewing, setViewing] = useState<string | null>(null);
+  const [reminded, setReminded] = useState<string | null>(null);
+  const nudge = useAction();
   const act = useAction((e) => e instanceof ApiError && e.status === 409 && reload());
 
   if (!req) return error ? <ErrorNote error={error} /> : <Loading />;
@@ -43,6 +48,9 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
   };
   const received = req.items.filter((i) => i.status === "submitted" || i.status === "approved").length;
   const late = isLate(req.deadline) && editable;
+  const lastEmail = sent.data?.find((m) => m.status === "sent");
+  const lastManual = sent.data?.find((m) => m.manual && m.status !== "failed" && Date.now() - m.sent_at < 86_400_000);
+  const remindBlock = mailBlock ?? (req.status !== "open" ? "closed" : null);
 
   function closeAsk() {
     setAsk(null);
@@ -58,6 +66,25 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
       refresh();
     });
     if (done) setAsk(null);
+  }
+
+  async function showLink() {
+    await act.run(async () => {
+      const found = await get<{ url: string | null }>(`/requests/${id}/link`);
+      setUrl(found.url);
+      setMailNote(found.url ? null : t("detail.link_missing"));
+      setCopied(false);
+      activity.reload();
+    });
+  }
+
+  async function remindNow() {
+    setReminded(null);
+    if (await nudge.run(() => post(`/requests/${id}/remind`))) {
+      setReminded(t("detail.remind_sent", { email: client?.email ?? "" }));
+      sent.reload();
+      activity.reload();
+    }
   }
 
   async function close() {
@@ -161,26 +188,63 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
                   {copied ? t("detail.copied") : t("detail.copy")}
                 </button>
               </div>
-              {mailNote && <p class="muted">{mailNote}</p>}
             </>
           ) : (
             <p class="muted">{req.sent_at ? t("detail.link_exists") : t("detail.link_none")}</p>
           )}
-          {firm.data && client && (
-            <>
-              <Check label={client.email ? t("detail.email_to", { email: client.email }) : t("detail.email_to_client")} checked={emailing} disabled={Boolean(mailBlock)} onChange={setEmailIt} />
-              {mailBlock === "address" && (
-                <p class="muted">
-                  <Link href="/settings">{t("detail.email_address")}</Link>
+          {mailNote && <p class="muted">{mailNote}</p>}
+          {req.sent_at && !url && (
+            <p>
+              <button disabled={act.busy} onClick={showLink}>
+                {t("detail.show_link")}
+              </button>
+            </p>
+          )}
+          {req.sent_at && (
+            <div class="block">
+              <p class="muted">{lastEmail ? t("detail.last_email", { what: t(`message.${lastEmail.kind}`), when: fmtDateTime(lastEmail.sent_at) }) : t("detail.last_email_none")}</p>
+              <button disabled={nudge.busy || Boolean(remindBlock) || Boolean(lastManual)} onClick={remindNow}>
+                {t("detail.remind")}
+              </button>
+              {reminded && (
+                <p class="ok" role="status">
+                  {reminded}
                 </p>
               )}
-              {mailBlock === "client" && <p class="muted">{t("detail.email_client")}</p>}
-              {mailBlock === "stopped" && <p class="muted">{t("detail.email_stopped")}</p>}
-            </>
+              <ErrorNote error={nudge.error} />
+              <p class="hint">
+                {lastManual
+                  ? t("detail.remind_wait", { when: fmtDateTime(lastManual.sent_at + 86_400_000) })
+                  : remindBlock === "closed"
+                    ? t("detail.remind_closed")
+                    : remindBlock === "address"
+                      ? t("detail.email_address")
+                      : remindBlock === "client"
+                        ? t("detail.email_client")
+                        : remindBlock === "stopped"
+                          ? t("detail.email_stopped")
+                          : t("detail.remind_help")}
+              </p>
+            </div>
           )}
-          <button class={url || req.sent_at ? "" : "primary"} disabled={act.busy || req.items.length === 0} onClick={() => (req.sent_at ? setAsk("link") : makeLink())}>
-            {req.sent_at ? t("detail.new_link") : t("detail.create_link")}
-          </button>
+          <div class={req.sent_at ? "block" : ""}>
+            {req.sent_at && <p class="muted">{t("detail.replace_help")}</p>}
+            {firm.data && client && (
+              <>
+                <Check label={client.email ? t(req.sent_at ? "detail.replace_email" : "detail.email_to", { email: client.email }) : t("detail.email_to_client")} checked={emailing} disabled={Boolean(mailBlock)} onChange={setEmailIt} />
+                {mailBlock === "address" && !req.sent_at && (
+                  <p class="muted">
+                    <Link href="/settings">{t("detail.email_address")}</Link>
+                  </p>
+                )}
+                {mailBlock === "client" && !req.sent_at && <p class="muted">{t("detail.email_client")}</p>}
+                {mailBlock === "stopped" && !req.sent_at && <p class="muted">{t("detail.email_stopped")}</p>}
+              </>
+            )}
+            <button class={req.sent_at ? "" : "primary"} disabled={act.busy || req.items.length === 0} onClick={() => (req.sent_at ? setAsk("link") : makeLink())}>
+              {req.sent_at ? t("detail.new_link") : t("detail.create_link")}
+            </button>
+          </div>
         </section>
       )}
 
@@ -233,8 +297,14 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
                         {item.files.map((f) => (
                           <li key={f.id}>
                             <span class="name">
-                              <a href={`/api/files/${f.id}`}>{f.name}</a> <span class="muted">({fmtSize(f.size)})</span>
+                              <button class="link" aria-label={t("viewer.open", { name: f.name })} onClick={() => setViewing(f.id)}>
+                                {f.name}
+                              </button>{" "}
+                              <span class="muted">({fmtSize(f.size)})</span>
                             </span>
+                            <a class="small-link" href={`/api/files/${f.id}`}>
+                              {t("viewer.download")}
+                            </a>
                           </li>
                         ))}
                       </ul>
@@ -291,6 +361,8 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
         </button>
       </div>
 
+      {viewing && <Viewer req={req} startId={viewing} onClose={() => setViewing(null)} onChanged={refresh} />}
+
       {ask === "link" && (
         <Confirm title={t("detail.new_link")} body={t("detail.new_link_warning")} confirm={t("detail.new_link")} busy={act.busy} error={act.error} onConfirm={makeLink} onCancel={closeAsk} />
       )}
@@ -301,54 +373,6 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
         <Confirm title={t("detail.delete")} body={t("detail.delete_body")} confirm={t("detail.delete")} danger busy={act.busy} error={act.error} onConfirm={remove} onCancel={closeAsk} />
       )}
     </>
-  );
-}
-
-function Review({ requestId, item, onDone }: { requestId: string; item: ItemWithFiles; onDone: () => void }) {
-  const [rejecting, setRejecting] = useState(false);
-  const [note, setNote] = useState("");
-  const { busy, error, run } = useAction((e) => e instanceof ApiError && e.status === 409 && onDone());
-
-  async function decide(decision: "approve" | "reject") {
-    if (await run(() => post(`/requests/${requestId}/items/${item.id}/review`, { decision, note, files: item.files.map((f) => f.id) }))) onDone();
-  }
-
-  if (!rejecting) {
-    return (
-      <>
-        <ErrorNote error={error} />
-        <div class="row-actions">
-          <button class="primary small" disabled={busy} onClick={() => decide("approve")}>
-            {t("detail.approve")}
-          </button>
-          <button class="small" disabled={busy} onClick={() => setRejecting(true)}>
-            {t("detail.reject")}
-          </button>
-        </div>
-      </>
-    );
-  }
-  return (
-    <form
-      class="editor-row"
-      onSubmit={(e) => {
-        e.preventDefault();
-        decide("reject");
-      }}
-    >
-      <Field label={t("detail.reject_note")} hint={t("detail.reject_hint")}>
-        <textarea required rows={3} maxLength={500} value={note} onInput={(e) => setNote(e.currentTarget.value)} />
-      </Field>
-      <ErrorNote error={error} />
-      <div class="row-actions">
-        <button class="primary small" disabled={busy}>
-          {t("detail.reject_send")}
-        </button>
-        <button type="button" class="small" onClick={() => setRejecting(false)}>
-          {t("cancel")}
-        </button>
-      </div>
-    </form>
   );
 }
 

@@ -55,6 +55,10 @@ export type RequestRow = {
   rejected: number;
 };
 
+export type RequestCounts = { all: number; to_review: number; waiting: number; overdue: number; due_soon: number; done: number };
+
+export type ClientRow = Client & { requests: number };
+
 export type Item = {
   id: string;
   position: number;
@@ -105,7 +109,7 @@ export type Person = { id: string; email: string; name: string | null; role: "ow
 
 export type PendingInvite = { id: string; email: string; name: string | null; created_at: number; expires_at: number };
 
-export type Message = { id: string; kind: "invite" | "reminder" | "deadline" | "rejected"; seq: number; status: "sending" | "sent" | "failed"; sent_at: number };
+export type Message = { id: string; kind: "invite" | "reminder" | "deadline" | "rejected"; seq: number; status: "sending" | "sent" | "failed"; sent_at: number; manual: 0 | 1 };
 
 export type LinkResult = { url: string; emailed?: true; email_failed?: true };
 
