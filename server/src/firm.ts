@@ -1,5 +1,6 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { audit } from "./audit";
+import { keyLimited } from "./auth";
 import { isRegion, regionOf } from "./regions";
 import type { AppEnv, Firm } from "./session";
 import { validZone } from "./tz";
@@ -40,6 +41,7 @@ function load(allowClosed: boolean): MiddlewareHandler<AppEnv> {
       .first<Firm>();
     if (!row || !isRegion(row.region)) return c.json({ error: "unauthorized" }, 401);
     if (row.closed_at && !allowClosed) return c.json({ error: "closed" }, 403);
+    if (c.req.method !== "GET" && c.req.method !== "HEAD" && (await keyLimited(c.env.FIRM_WRITE, row.id))) return c.json({ error: "rate_limited" }, 429);
     c.set("firm", row);
     c.set("db", regionOf(c.env, row.region).db);
     await next();

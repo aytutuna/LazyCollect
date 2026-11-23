@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { audit } from "./audit";
+import { keyLimited } from "./auth";
 import { fileKey, decryptStream } from "./crypt";
 import { disposition } from "./files";
 import { firmDek } from "./keys";
@@ -22,6 +23,7 @@ exportZip.get("/requests/:id/export", async (c) => {
   const req = await findRequest(c);
   if (!req) return notFound(c);
   const firm = c.get("firm");
+  if (await keyLimited(c.env.EXPORT, firm.id)) return c.json({ error: "rate_limited" }, 429);
   const { results } = await c.get("db")
     .prepare(
       `SELECT f.id, f.item_id, f.r2_key, f.name, f.size, f.uploaded_at, i.label FROM files f

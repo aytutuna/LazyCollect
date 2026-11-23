@@ -65,5 +65,15 @@ name = "UPLOAD"
 namespace_id = "2004"
 simple = { limit = 30, period = 60 }
 
+[[ratelimits]]
+name = "FIRM_WRITE"
+namespace_id = "2005"
+simple = { limit = 120, period = 60 }
+
+[[ratelimits]]
+name = "EXPORT"
+namespace_id = "2006"
+simple = { limit = 10, period = 60 }
+
 [triggers]
 crons = ["*/10 * * * *"]
