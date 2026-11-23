@@ -397,6 +397,7 @@ describe("owners of an untouched account", () => {
     const ownFirm = (await me(own)).firm.id;
     expect(ownFirm).not.toBe((await me(cookie)).firm.id);
     await env.DB_NA.prepare("INSERT INTO firm_settings (firm_id, retention_years) VALUES (?, 7)").bind(ownFirm).run();
+    await api("/api/firm", { method: "PATCH", cookie: own, body: { name: "Own" } });
 
     mockOutbound();
     expect((await invite(cookie, "member@firm.test")).status).toBe(201);
@@ -406,6 +407,7 @@ describe("owners of an untouched account", () => {
     expect(joined.firm.id).toBe((await me(cookie)).firm.id);
     expect(await row("SELECT 1 FROM firms WHERE id = ?", ownFirm)).toBeNull();
     expect((await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM firm_settings WHERE firm_id = ?").bind(ownFirm).first<any>())!.n).toBe(0);
+    expect((await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM audit WHERE firm_id = ?").bind(ownFirm).first<any>())!.n).toBe(0);
     expect((await api("/api/me", { cookie: own })).status).toBe(401);
     expect((await api("/api/me", { cookie: member })).status).toBe(401);
   });

@@ -143,7 +143,10 @@ async function acceptInvite(c: Context<AppEnv>, email: string, existing: Found |
     .db.prepare("INSERT INTO audit (id, firm_id, at, actor_type, actor_id, action, object_type, object_id) VALUES (?, ?, ?, 'user', ?, 'invite.accept', 'invite', ?)")
     .bind(randomId(), invite.firm_id, now, userId, invite.id)
     .run();
-  if (empty) await regionOf(c.env, empty.region).db.prepare("DELETE FROM firm_settings WHERE firm_id = ?").bind(empty.firmId).run();
+  if (empty) {
+    const gone = regionOf(c.env, empty.region).db;
+    await gone.batch([gone.prepare("DELETE FROM firm_settings WHERE firm_id = ?").bind(empty.firmId), gone.prepare("DELETE FROM audit WHERE firm_id = ?").bind(empty.firmId)]);
+  }
 }
 
 async function signIn(c: Context<AppEnv>, email: string): Promise<boolean> {
