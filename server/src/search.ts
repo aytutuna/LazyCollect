@@ -85,7 +85,7 @@ export async function listRequests(c: Context<AppEnv>) {
          AND n.created_at > COALESCE((SELECT MAX(created_at) FROM notes WHERE firm_id = r.firm_id AND request_id = r.id AND author = 'user'), 0)) AS unanswered,
        COALESCE(SUM(i.required = 1 AND i.status IN ('empty', 'rejected')), 0) AS missing${
          withActivity
-           ? `, NULLIF(MAX(COALESCE(MAX(i.reviewed_at), 0), COALESCE((SELECT MAX(f.uploaded_at) FROM files f WHERE f.firm_id = r.firm_id AND f.request_id = r.id AND f.state = 'live' AND f.deleted_at IS NULL), 0)), 0) AS last_at`
+           ? `, NULLIF(MAX(COALESCE(MAX(i.reviewed_at), 0), COALESCE((SELECT MAX(f.uploaded_at) FROM files f WHERE f.firm_id = r.firm_id AND f.request_id = r.id AND f.state = 'live' AND f.deleted_at IS NULL), 0), COALESCE(MAX(i.unavailable_at), 0), COALESCE((SELECT MAX(n.created_at) FROM notes n WHERE n.firm_id = r.firm_id AND n.request_id = r.id), 0)), 0) AS last_at`
            : ""
        }
      FROM requests r

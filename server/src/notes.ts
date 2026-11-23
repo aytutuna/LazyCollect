@@ -16,6 +16,7 @@ export const notes = new Hono<AppEnv>();
 const MAX_LENGTH = 2000;
 const CLIENT_PER_DAY = 20;
 const CLIENT_PER_REQUEST = 200;
+const USER_PER_REQUEST = 300;
 const REPLY_QUIET = 30 * MINUTE;
 
 const live = (link: LiveLink) => link.req.status === "open" || link.req.status === "complete";
@@ -63,13 +64,16 @@ notes.post("/c/:token/notes", async (c) => {
 const UNANSWERED = `(SELECT COUNT(*) FROM notes n WHERE n.firm_id = ?1 AND n.request_id = ?2 AND n.author = 'client'
   AND n.created_at > COALESCE((SELECT MAX(created_at) FROM notes WHERE firm_id = ?1 AND request_id = ?2 AND author = 'user'), 0))`;
 
+// the newest 300, oldest first
+export const NEWEST = `SELECT id, author, body, created_at FROM (SELECT rowid AS rid, id, author, body, created_at FROM notes WHERE firm_id = ? AND request_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 300) ORDER BY created_at, rid`;
+
 notes.get("/requests/:id/notes", async (c) => {
   const req = await findRequest(c);
   if (!req) return notFound(c);
   const db = c.get("db");
   const firmId = c.get("firm").id;
   const [list, count] = await db.batch([
-    db.prepare("SELECT id, author, body, created_at FROM notes WHERE firm_id = ? AND request_id = ? ORDER BY created_at, rowid LIMIT 300").bind(firmId, req.id),
+    db.prepare(NEWEST).bind(firmId, req.id),
     db.prepare(`SELECT ${UNANSWERED} AS n`).bind(firmId, req.id),
   ]);
   return c.json({ notes: list.results, unanswered: (count.results[0] as { n: number }).n });
@@ -89,12 +93,16 @@ notes.post("/requests/:id/notes", async (c) => {
     db
       .prepare(
         `INSERT INTO notes (id, firm_id, request_id, author, user_id, body, created_at) SELECT ?, ?, ?, 'user', ?, ?, ?
-         WHERE EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)`,
+         WHERE EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)
+         AND (SELECT COUNT(*) FROM notes WHERE firm_id = ? AND request_id = ? AND author = 'user') < ${USER_PER_REQUEST}`,
       )
-      .bind(id, firm.id, req.id, c.get("session")!.userId, body, now, firm.id, req.id),
+      .bind(id, firm.id, req.id, c.get("session")!.userId, body, now, firm.id, req.id, firm.id, req.id),
     audit(c, "note.answer", "note", id, { request: req.id }, { sql: "EXISTS (SELECT 1 FROM notes WHERE firm_id = ? AND id = ?)", binds: [firm.id, id] }),
   ]);
-  if (!added.meta.changes) return c.json({ error: "locked" }, 409);
+  if (!added.meta.changes) {
+    const open = await findRequest(c);
+    return open && (open.status === "open" || open.status === "complete") ? c.json({ error: "too_many_notes" }, 429) : c.json({ error: "locked" }, 409);
+  }
   const note = { id, author: "user", body, created_at: now };
 
   // The reply is saved either way; the email says only that there is one, and is held to the same stops and caps as the rest.
@@ -116,9 +124,12 @@ async function emailReply(env: Env, db: D1Database, firm: Firm, req: { id: strin
   if (client.email_stop_at || (await addressStopped(env, db, firm.id, client.email))) return "unsubscribed";
   const link = await liveToken(env, db, firm.id, req.id, now);
   if (!link) return "no_link";
-  // a second reply soon after the first needs no second email: the first one points to the same thread
+  // a second reply soon after the first needs no second email, unless the client wrote in between: the first one points to the same thread
   const recent = await db
-    .prepare("SELECT 1 FROM messages WHERE firm_id = ? AND request_id = ? AND kind = 'answer' AND status IN ('sent', 'sending') AND sent_at > ?")
+    .prepare(
+      `SELECT 1 FROM messages m WHERE m.firm_id = ? AND m.request_id = ? AND m.kind = 'answer' AND m.status IN ('sent', 'sending') AND m.sent_at > ?
+       AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.firm_id = m.firm_id AND n.request_id = m.request_id AND n.author = 'client' AND n.created_at > m.sent_at)`,
+    )
     .bind(firm.id, req.id, now - REPLY_QUIET)
     .first();
   if (recent) return "recent";

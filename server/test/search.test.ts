@@ -262,3 +262,16 @@ describe("clients page search", () => {
     expect((await api("/api/clients/search")).status).toBe(401);
   });
 });
+
+describe("activity sort", () => {
+  it("counts a new client message as activity", async () => {
+    const a = await account();
+    const x = await seed(a.firmId, a.client.id, "x");
+    const y = await seed(a.firmId, a.client.id, "y");
+    await env.DB_NA.prepare("UPDATE requests SET created_at = 100 WHERE id = ?").bind(x).run();
+    await env.DB_NA.prepare("UPDATE requests SET created_at = 200 WHERE id = ?").bind(y).run();
+    expect((await list(a.cookie, "?sort=activity")).rows.map((r) => r.title)).toEqual(["y", "x"]);
+    await env.DB_NA.prepare("INSERT INTO notes (id, firm_id, request_id, author, body, created_at) VALUES (?, ?, ?, 'client', 'hi', ?)").bind(randomId(), a.firmId, x, Date.now()).run();
+    expect((await list(a.cookie, "?sort=activity")).rows.map((r) => r.title)).toEqual(["x", "y"]);
+  });
+});

@@ -298,3 +298,61 @@ describe("migration 0014 on existing rows", () => {
     ).rejects.toThrow();
   });
 });
+
+describe("taking it back", () => {
+  it("puts a sent-back item back to sent back, and an item with a newer file to submitted", async () => {
+    const { req, path } = await openRequest();
+    const [passport, visa] = req.items.map((i: any) => i.id);
+    await upload(path, passport, pdf(500));
+    await env.DB_NA.prepare("UPDATE items SET status = 'rejected', reject_note = 'Blurry', reviewed_at = ? WHERE id = ?").bind(Date.now() + 1000, passport).run();
+    await mark(path, passport);
+    await unmark(path, passport);
+    expect(await status(passport)).toBe("rejected");
+
+    await upload(path, visa, pdf(500));
+    await env.DB_NA.prepare("UPDATE items SET status = 'rejected', reject_note = 'Blurry', reviewed_at = 1 WHERE id = ?").bind(visa).run();
+    await mark(path, visa);
+    await unmark(path, visa);
+    expect(await status(visa)).toBe("submitted");
+  });
+
+  it("keeps a request open when a sent-back item is taken back", async () => {
+    const o = await openRequest();
+    const passport = o.req.items[0].id;
+    await upload(o.path, passport, pdf(500));
+    await env.DB_NA.prepare("UPDATE items SET status = 'rejected', reject_note = 'Blurry', reviewed_at = ? WHERE id = ?").bind(Date.now() + 1000, passport).run();
+    await mark(o.path, passport);
+    await unmark(o.path, passport);
+    expect((await request(o.req.id)).status).toBe("open");
+  });
+
+  it("starts the reminders again", async () => {
+    const o = await openRequest();
+    const passport = o.req.items[0].id;
+    await env.DB_NA.prepare("UPDATE requests SET next_reminder_at = NULL").run();
+    await mark(o.path, passport);
+    await unmark(o.path, passport);
+    expect((await request(o.req.id)).next_reminder_at).toBeGreaterThan(Date.now());
+  });
+});
+
+describe("export of a request without files", () => {
+  it("lists the unavailable items and their reasons in checklist.txt", async () => {
+    const o = await openRequest();
+    const [passport, visa] = o.req.items.map((i: any) => i.id);
+    await mark(o.path, passport, { note: "Lost in a move" });
+    await mark(o.path, visa);
+    await decide(o.cookie, o.req.id, visa, { decision: "ask", note: "Please look again" });
+    const res = await api(`/api/requests/${o.req.id}/export`, { cookie: o.cookie });
+    expect(res.status).toBe(200);
+    const raw = new TextDecoder("latin1").decode(new Uint8Array(await res.arrayBuffer()));
+    expect(raw).toContain("checklist.txt");
+    expect(raw).toContain("Passport\n  client says they do not have it, waiting for an answer\n  client's reason: Lost in a move");
+    expect(raw).toContain("Visa\n  asked again: Please look again");
+  });
+
+  it("still refuses when there is nothing at all", async () => {
+    const o = await openRequest();
+    expect((await api(`/api/requests/${o.req.id}/export`, { cookie: o.cookie })).status).toBe(409);
+  });
+});

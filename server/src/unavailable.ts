@@ -44,7 +44,10 @@ async function clientSide(c: Context<AppEnv>, mark: boolean) {
       : db
           .prepare(
             `UPDATE items SET unavailable_note = NULL, unavailable_at = NULL,
-               status = CASE WHEN EXISTS (SELECT 1 FROM files WHERE firm_id = items.firm_id AND item_id = items.id AND state = 'live' AND deleted_at IS NULL) THEN 'submitted' ELSE 'empty' END
+               status = CASE
+                 WHEN EXISTS (SELECT 1 FROM files WHERE firm_id = items.firm_id AND item_id = items.id AND state = 'live' AND deleted_at IS NULL AND uploaded_at > COALESCE(items.reviewed_at, 0)) THEN 'submitted'
+                 WHEN reject_note IS NOT NULL THEN 'rejected'
+                 ELSE 'empty' END
              WHERE firm_id = ? AND request_id = ? AND id = ? AND status IN (${from}) AND ${OPEN}`,
           )
           .bind(...readyBinds),
@@ -53,6 +56,13 @@ async function clientSide(c: Context<AppEnv>, mark: boolean) {
     db
       .prepare("UPDATE requests SET notice_due_at = COALESCE(notice_due_at, ?) WHERE firm_id = ? AND id = ? AND ? = 1")
       .bind(now, req.firm_id, req.id, mark ? 1 : 0),
+    // an item that was only waiting for an answer may have ended the cadence; taking it back starts it again
+    db
+      .prepare(
+        `UPDATE requests SET next_reminder_at = ? WHERE firm_id = ? AND id = ? AND ? = 0 AND reminders_on = 1 AND status = 'open' AND deadline > ?
+         AND (next_reminder_at IS NULL OR next_reminder_at <= ?)`,
+      )
+      .bind(nextReminder(now, req.deadline, req.tz ?? "America/Toronto", false), req.firm_id, req.id, mark ? 1 : 0, now, now),
   ]);
   if (!res.meta.changes) {
     const item = await db.prepare("SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ?").bind(...here).first();

@@ -273,3 +273,56 @@ describe("isolation, purge and export", () => {
     expect(new TextDecoder("latin1").decode(new Uint8Array(await res.arrayBuffer()))).not.toContain("messages.txt");
   });
 });
+
+describe("thread limits and reply emails", () => {
+  it("emails a reply again when the client wrote after the last one", async () => {
+    const o = await ready();
+    const sent = mockOutbound();
+    await answer(o.cookie, o.req.id, { body: "One" });
+    await new Promise((done) => setTimeout(done, 5));
+    await ask(o.path, { body: "Another question" });
+    expect(await (await answer(o.cookie, o.req.id, { body: "Two" })).json()).toMatchObject({ email: "sent" });
+    expect(sent).toHaveLength(2);
+  });
+
+  it("shows the newest 300 notes, oldest first, on both sides", async () => {
+    const o = await ready();
+    const row = (await env.DB_NA.prepare("SELECT firm_id FROM requests").first<any>())!;
+    await env.DB_NA
+      .prepare(
+        `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 310)
+         INSERT INTO notes (id, firm_id, request_id, author, body, created_at) SELECT lower(hex(randomblob(16))), ?, ?, 'user', 'n' || i, 1000 + i FROM n`,
+      )
+      .bind(row.firm_id, o.req.id)
+      .run();
+    const mine = (await thread(o.cookie, o.req.id)).notes.map((n: any) => n.body);
+    expect([mine.length, mine[0], mine[299]]).toEqual([300, "n11", "n310"]);
+    const page = (await (await api(o.path)).json<any>()).notes.map((n: any) => n.body);
+    expect([page.length, page[0], page[299]]).toEqual([300, "n11", "n310"]);
+  });
+
+  it("caps the account's notes per request", async () => {
+    const o = await ready();
+    mockOutbound();
+    const row = (await env.DB_NA.prepare("SELECT firm_id FROM requests").first<any>())!;
+    await env.DB_NA
+      .prepare(
+        `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 300)
+         INSERT INTO notes (id, firm_id, request_id, author, body, created_at) SELECT lower(hex(randomblob(16))), ?, ?, 'user', 'x', 1 FROM n`,
+      )
+      .bind(row.firm_id, o.req.id)
+      .run();
+    const res = await answer(o.cookie, o.req.id, { body: "one more" });
+    expect([res.status, (await res.json<any>()).error]).toEqual([429, "too_many_notes"]);
+  });
+});
+
+describe("contact on the client page", () => {
+  it("is what an email would show, and absent when the account cannot send", async () => {
+    const o = await openRequest();
+    expect((await (await api(o.path)).json<any>()).contact).toBeNull();
+    await api("/api/firm", { method: "PATCH", cookie: o.cookie, body: { address: ADDRESS, phone: "416-555-0100" } });
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'active'").run();
+    expect((await (await api(o.path)).json<any>()).contact).toMatchObject({ email: "owner@firm.test", phone: "416-555-0100", address: ADDRESS });
+  });
+});

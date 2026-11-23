@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { rateLimited } from "./auth";
 import { isRegion, regionOf, type Region } from "./regions";
-import { sendersOf } from "./reminders";
+import { NEWEST } from "./notes";
+import { canSend, sendersOf } from "./reminders";
 import type { AppEnv } from "./session";
 import { HOUR, hmac, ipPrefix, randomId } from "./util";
 import { notFound } from "./validate";
@@ -54,7 +55,7 @@ client.get("/c/:token", async (c) => {
     .bind(req.firm_id, req.id)
     .all<{ item_id: string }>();
   const { results: notes } = await db
-    .prepare("SELECT id, author, body, created_at FROM notes WHERE firm_id = ? AND request_id = ? ORDER BY created_at, rowid LIMIT 300")
+    .prepare(NEWEST)
     .bind(req.firm_id, req.id)
     .all();
   // only what the emails to this client already show
@@ -76,7 +77,7 @@ client.get("/c/:token", async (c) => {
     deadline: req.deadline,
     status: req.status,
     expires_at: req.expires_at,
-    contact: sender ? { name: sender.legal_name ?? sender.name, email: sender.owner_email, phone: sender.phone, address: sender.address } : null,
+    contact: canSend(sender, now) ? { name: sender.legal_name ?? sender.name, email: sender.owner_email, phone: sender.phone, address: sender.address } : null,
     notes,
     items: results.map((i) => ({
       ...i,

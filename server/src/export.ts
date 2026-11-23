@@ -12,6 +12,21 @@ import { END_RECORD, cleanName, entryOverhead, uniqueName, zipStream, type ZipEn
 
 export const exportZip = new Hono<AppEnv>();
 
+// what the client said about items they could not send, and what the account answered; null when no item has such a story
+async function checklistText(db: D1Database, firmId: string, requestId: string): Promise<string | null> {
+  const { results } = await db
+    .prepare(
+      `SELECT label, status, reject_note, unavailable_note FROM items WHERE firm_id = ? AND request_id = ?
+       AND (status IN ('unavailable', 'waived') OR unavailable_note IS NOT NULL) ORDER BY position`,
+    )
+    .bind(firmId, requestId)
+    .all<{ label: string; status: string; reject_note: string | null; unavailable_note: string | null }>();
+  if (!results.length) return null;
+  const state = (i: { status: string; reject_note: string | null }) =>
+    i.status === "waived" ? "accepted as not needed" : i.status === "unavailable" ? "client says they do not have it, waiting for an answer" : i.reject_note ? `asked again: ${i.reject_note}` : "client has it after all";
+  return results.map((i) => `${i.label}\n  ${state(i)}\n  ${i.unavailable_note ? `client's reason: ${i.unavailable_note}` : "no reason given"}\n`).join("\n");
+}
+
 // the thread with the client as plain text, oldest first; null when there is none
 async function messagesText(db: D1Database, firmId: string, requestId: string): Promise<string | null> {
   const { results } = await db
@@ -45,14 +60,17 @@ exportZip.get("/requests/:id/export", async (c) => {
     )
     .bind(firm.id, req.id)
     .all<{ id: string; item_id: string; r2_key: string; name: string; size: number; uploaded_at: number; label: string }>();
-  if (!results.length) return c.json({ error: "no_files" }, 409);
+  const thread = await messagesText(c.get("db"), firm.id, req.id);
+  const checklist = await checklistText(c.get("db"), firm.id, req.id);
+  if (!results.length && !thread && !checklist) return c.json({ error: "no_files" }, 409);
   if (results.length > MAX_ENTRIES) return c.json({ error: "export_too_big" }, 413);
 
   const region = firm.region as Region;
   const { bucket } = regionOf(c.env, region);
   const folders = new Map<string, { dir: string; n: number }>();
   const taken = new Set<string>();
-  const dek = await firmDek(c.env, region, firm.id, false);
+  // an account that never received a file has no key yet
+  const dek = results.length ? await firmDek(c.env, region, firm.id, false) : null!;
   const entries: ZipEntry[] = results.map((f) => {
     let folder = folders.get(f.item_id);
     if (!folder) folders.set(f.item_id, (folder = { dir: uniqueName(cleanName(f.label, 80, "item"), taken), n: 0 }));
@@ -69,11 +87,11 @@ exportZip.get("/requests/:id/export", async (c) => {
   });
 
   const encoder = new TextEncoder();
-  const thread = await messagesText(c.get("db"), firm.id, req.id);
   const sizes = results.map((f) => f.size);
-  if (thread) {
-    const bytes = encoder.encode(thread);
-    entries.push({ name: "messages.txt", mtime: Date.now(), open: async () => new Blob([bytes]).stream() });
+  for (const [name, content] of [["messages.txt", thread], ["checklist.txt", checklist]] as const) {
+    if (!content) continue;
+    const bytes = encoder.encode(content);
+    entries.push({ name, mtime: Date.now(), open: async () => new Blob([bytes]).stream() });
     sizes.push(bytes.length);
   }
   const total = entries.reduce((sum, e, i) => sum + sizes[i] + entryOverhead(encoder.encode(e.name).length), END_RECORD);
