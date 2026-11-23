@@ -1,6 +1,6 @@
 export const htmlHeaders = {
   "Content-Security-Policy":
-    "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src 'self' https://challenges.cloudflare.com; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://challenges.cloudflare.com; frame-src 'self' https://challenges.cloudflare.com; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "Strict-Transport-Security": "max-age=31536000",

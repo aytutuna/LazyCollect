@@ -5,6 +5,7 @@ export default defineConfig(({ mode }) => {
     throw new Error("VITE_TURNSTILE_SITEKEY is not set");
   }
   return {
+    worker: { format: "es" },
     build: {
       rollupOptions: { input: { main: "index.html", c: "c.html" } },
     },
