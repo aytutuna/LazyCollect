@@ -27,12 +27,13 @@ export type Output = { name: string; blob: Blob; size: number; ok: boolean; note
 export const limitBytes = (mb: number) => mb * MB;
 
 // the first size and quality that fits the budget; otherwise the smallest one tried, marked as not fitting
-export async function fitJpeg(image: Decoded, budget: number): Promise<Encoded & { fits: boolean; reduced: boolean }> {
+export async function fitJpeg(image: Decoded, budget: number, signal?: AbortSignal): Promise<Encoded & { fits: boolean; reduced: boolean }> {
   const long = Math.max(image.width, image.height);
   const edges = [...new Set(EDGES.map((e) => Math.min(e, long)))];
   let last!: Encoded;
   for (const edge of edges) {
     for (const quality of QUALITIES) {
+      signal?.throwIfAborted();
       last = await image.encode(edge, quality);
       if (last.bytes.length <= budget) return { ...last, fits: true, reduced: edge < edges[0] || quality < QUALITIES[0] };
       await new Promise((done) => setTimeout(done));
@@ -78,6 +79,16 @@ export function irccName(label: string, fallbackPerson: string, taken: Set<strin
 
 const ext = (name: string) => /\.([A-Za-z0-9]{1,5})$/.exec(name)?.[1]?.toLowerCase() ?? "bin";
 
+// a name not used yet in the zip, compared without regard to case; -2, -3 and so on keep the ones that collide apart
+export function claim(name: string, taken: Set<string>): string {
+  const dot = name.lastIndexOf(".");
+  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  let out = name;
+  for (let n = 2; taken.has(out.toLowerCase()); n++) out = `${stem}-${n}${ext}`;
+  taken.add(out.toLowerCase());
+  return out;
+}
+
 const original = (stem: string, files: Input[], notes: Note[]): Output[] =>
   files.map((f, i) => {
     const base = stem.replace(/\.pdf$/, "");
@@ -87,11 +98,21 @@ const original = (stem: string, files: Input[], notes: Note[]): Output[] =>
 
 // All the files of one item as one PDF of at most `limit` bytes where that is possible.
 // A file that can't be brought under the limit or read is passed on unchanged with a note saying why.
-export async function buildItem(stem: string, files: Input[], limit: number, decode: Decode): Promise<Output[]> {
+export async function buildItem(stem: string, files: Input[], limit: number, decode: Decode, signal?: AbortSignal): Promise<Output[]> {
   if (files.length === 1 && files[0].mime === "application/pdf") {
     const [f] = files;
     return f.blob.size <= limit ? [{ name: stem, blob: f.blob, size: f.blob.size, ok: true, notes: [] }] : original(stem, files, [{ code: "pdf_over" }]);
   }
+  try {
+    return await merge(stem, files, limit, decode, signal);
+  } catch (e) {
+    // one file that cannot be put together must not stop the rest; it goes through as it is
+    if (signal?.aborted) throw e;
+    return original(stem, files, [{ code: "unreadable" }]);
+  }
+}
+
+async function merge(stem: string, files: Input[], limit: number, decode: Decode, signal?: AbortSignal): Promise<Output[]> {
   const { PDFDocument } = await import("pdf-lib");
   const doc = await PDFDocument.create();
   const notes: Note[] = [];
@@ -101,6 +122,7 @@ export async function buildItem(stem: string, files: Input[], limit: number, dec
   let todo = images.length;
   let fell = false;
   for (const f of files) {
+    signal?.throwIfAborted();
     if (f.mime === "application/pdf") {
       let src;
       try {
@@ -119,7 +141,7 @@ export async function buildItem(stem: string, files: Input[], limit: number, dec
       return original(stem, files, [{ code: "unreadable", name: f.name }]);
     }
     try {
-      const fit = await fitJpeg(image, Math.max(left / todo, 0));
+      const fit = await fitJpeg(image, Math.max(left / todo, 0), signal);
       todo--;
       left -= fit.bytes.length;
       fell ||= !fit.fits;
@@ -190,8 +212,24 @@ export async function fetchFile(id: string, signal: AbortSignal): Promise<Blob> 
     const res = await fetch(`/api/files/${id}`, { signal, credentials: "same-origin" });
     if (res.ok) return res.blob();
     if (res.status !== 429 || tries >= 6) throw new Error(`file ${res.status}`);
-    await new Promise((done) => setTimeout(done, 10_000));
+    await pause(10_000, signal);
   }
+}
+
+// a wait that ends at once when the person cancels
+export function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((done, fail) => {
+    if (signal.aborted) return fail(signal.reason);
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", stop);
+      done();
+    }, ms);
+    const stop = () => {
+      clearTimeout(timer);
+      fail(signal.reason);
+    };
+    signal.addEventListener("abort", stop, { once: true });
+  });
 }
 
 export async function prepareAll(
@@ -207,11 +245,18 @@ export async function prepareAll(
     run.progress(at, item.label);
     run.signal.throwIfAborted();
     const inputs: Input[] = [];
-    for (const f of item.files) inputs.push({ name: f.name, mime: f.mime, blob: await (run.fetch ?? fetchFile)(f.id, run.signal) });
-    const outputs = await buildItem(irccName(item.label, person, taken), inputs, limitBytes(limitMb), run.decode ?? decodeImage);
+    for (const f of item.files) {
+      run.signal.throwIfAborted();
+      inputs.push({ name: f.name, mime: f.mime, blob: await (run.fetch ?? fetchFile)(f.id, run.signal) });
+    }
+    const stem = irccName(item.label, person, taken);
+    const outputs = await buildItem(stem, inputs, limitBytes(limitMb), run.decode ?? decodeImage, run.signal);
+    // the name the item reserved is released so that whatever comes out, a PDF or the files as they were, is claimed like any other
+    taken.delete(stem.toLowerCase());
     for (const o of outputs) {
-      await zip.add(o.name, o.blob);
-      rows.push({ item: item.label, name: o.name, size: o.size, ok: o.ok, notes: o.notes });
+      const name = claim(o.name, taken);
+      await zip.add(name, o.blob);
+      rows.push({ item: item.label, name, size: o.size, ok: o.ok, notes: o.notes });
     }
     await new Promise((done) => setTimeout(done));
   }

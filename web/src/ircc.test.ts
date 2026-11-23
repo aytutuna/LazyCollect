@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PDFDocument } from "pdf-lib";
-import { buildItem, fitJpeg, irccName, irccSources, limitBytes, prepareAll, type Decode, type Decoded, type Input } from "./ircc";
+import { buildItem, fitJpeg, irccName, irccSources, limitBytes, pause, prepareAll, type Decode, type Decoded, type Input } from "./ircc";
 import { ZipWriter, crc32 } from "./zip";
 
 // a 1x1 JPEG padded with comment segments up to the size a real photo would have
@@ -186,6 +186,30 @@ describe("buildItem", () => {
   });
 });
 
+describe("a file that cannot be put together", () => {
+  it("goes through as it was when the encoder fails, with a note", async () => {
+    const broken: Decode = async () => ({ width: 10, height: 10, encode: async () => { throw new Error("canvas"); }, close() {} });
+    const outs = await buildItem("x.pdf", [image("a.jpg")], limitBytes(4), broken);
+    expect(outs.map((o) => [o.name, o.ok, o.notes])).toEqual([["x.jpg", false, [{ code: "unreadable" }]]]);
+  });
+
+  it("does not hide a cancel", async () => {
+    const stop = new AbortController();
+    stop.abort();
+    await expect(buildItem("x.pdf", [image("a.jpg")], limitBytes(4), fake([2000, 3000]), stop.signal)).rejects.toThrow();
+  });
+});
+
+describe("waiting", () => {
+  it("ends when cancelled", async () => {
+    const stop = new AbortController();
+    const waiting = pause(60_000, stop.signal);
+    stop.abort();
+    await expect(waiting).rejects.toThrow();
+    await expect(pause(1, stop.signal)).rejects.toThrow();
+  });
+});
+
 describe("zip", () => {
   it("checksums like the standard", () => {
     expect(crc32(new TextEncoder().encode("123456789"))).toBe(0xcbf43926);
@@ -233,6 +257,16 @@ describe("prepareAll", () => {
     expect(rows.map((r) => [r.name, r.ok])).toEqual([["Passport-Amira-Haddad.pdf", true], ["Police-certificates-Amira-Haddad.pdf", true]]);
     expect(seen).toEqual([[0, "Passport — Amira Haddad"], [1, "Police certificates"], [2, ""]]);
     expect(zip.size).toBeGreaterThan(rows[0].size + rows[1].size);
+  });
+
+  it("keeps every name in the archive apart, files sent on as they were included", async () => {
+    const bad = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `b${i}`, name: `b${i}.pdf`, mime: "application/pdf" }));
+    const fetchBad = async () => new Blob(["not a pdf"]);
+    for (const order of [["Doc 2", "Doc"], ["Doc", "Doc 2"]]) {
+      const { rows } = await prepareAll(order.map((label) => ({ label, files: label === "Doc" ? bad(2) : bad(1) })), "", 4, run({ fetch: fetchBad }));
+      const names = rows.map((r) => r.name.toLowerCase());
+      expect([order, new Set(names).size]).toEqual([order, names.length]);
+    }
   });
 
   it("stops when cancelled", async () => {
