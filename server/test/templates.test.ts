@@ -13,7 +13,9 @@ const IDS = [
   "ircc-express-entry",
   "ircc-spousal-sponsorship",
   "ircc-study-permit",
+  "ircc-pgwp",
   "ircc-work-permit",
+  "ircc-work-permit-extension",
   "ircc-visitor-visa",
   "ircc-citizenship",
 ];
