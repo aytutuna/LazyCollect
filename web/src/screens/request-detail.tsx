@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 import { Link, useLocation } from "wouter-preact";
 import { ApiError, del, get, patch, post, put, useAction, useLoad } from "../api";
-import { fmtDate, fmtDateTime, fmtSize, fromInput, inDays, isLate, relative, toInput } from "../format";
+import { fmtDate, fmtDateTime, fmtDay, fmtSize, fromInput, inDays, isLate, relative, toInput } from "../format";
 import { t } from "../i18n";
 import type { ActivityRow, Client, Firm, Item, ItemWithFiles, LinkResult, Message, RequestDetail } from "../types";
 import { ActivityList } from "./activity";
@@ -493,9 +493,7 @@ function DetailsForm({ req, onSaved, onCancel }: { req: RequestDetail; onSaved: 
 
 // an item can hang a condition on any unconditional yes/no or choice item already in the request; its position is its key here
 const parentsOfRequest = (items: Item[]): Parent[] =>
-  items.filter((i) => i.show_if_pos === null && i.person_pos === null && (i.kind === "yesno" || i.kind === "choice" || i.kind === "multi")).map((i) => ({ key: i.position, label: i.label, kind: i.kind, options: i.options ?? [] }));
-
-const fmtDay = (d: string) => fmtDate(Date.parse(`${d}T12:00:00Z`));
+  items.filter((i) => i.show_if_pos === null && i.person_pos === null && i.companion === null && (i.kind === "yesno" || i.kind === "choice" || i.kind === "multi")).map((i) => ({ key: i.position, label: i.label, kind: i.kind, options: i.options ?? [] }));
 
 // the date a document was given, what is made of it, and a flag when it falls short; target is the date it has to last to
 function Dates({ item, target }: { item: Item; target: string }) {
@@ -544,7 +542,7 @@ function ItemForm({ requestId, item, parents, onSaved, onCancel }: { requestId: 
     const [added] = toPayload([{ ...edit, showKey: null }]);
     const body = item
       ? {
-          label: edit.label,
+          ...(edit.label.trim() !== (item.label_base ?? item.label) && { label: edit.label.trim() }),
           help: edit.help,
           required: edit.required,
           example: edit.example || null,

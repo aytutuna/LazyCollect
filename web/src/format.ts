@@ -16,6 +16,9 @@ const wall = (ms: number) => {
   return { y: p.year, m: p.month, d: p.day, h: p.hour, min: p.minute };
 };
 
+// a calendar date such as a document's expiry has no time zone, so it is read as the same day everywhere
+export const fmtDay = (day: string) => new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeZone: "UTC" }).format(Date.parse(`${day}T12:00:00Z`));
+
 export const fmtDate = (ms: number) => new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeZone: zone }).format(ms);
 
 export const fmtDateTime = (ms: number) => new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short", timeZone: zone }).format(ms);

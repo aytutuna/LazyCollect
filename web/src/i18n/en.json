@@ -1032,6 +1032,7 @@
   "people.new_hint": "Add the people this application is for. Items marked for each person are made for them.",
   "people.new_waiting": "The checklist you picked has items for each person. Add at least one person to get them.",
   "error.has_data": "This person's items hold files or answers. Confirm to remove them as well.",
+  "error.has_translation": "The client has already answered whether this is in English or French, so it can't be removed.",
   "error.too_many_people": "A request can have up to 12 people.",
   "items.for": "Asked of",
   "items.for.none": "The whole request",

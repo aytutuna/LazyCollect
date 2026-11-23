@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import { del, patch, post, useAction } from "../api";
-import { fmtDate } from "../format";
+import { fmtDay } from "../format";
 import { t } from "../i18n";
 import { roleName } from "../people";
 import type { Applicant, ItemWithFiles, RequestDetail, Role } from "../types";
@@ -129,7 +129,7 @@ export function PeopleSection({ req, editable, onChange }: { req: RequestDetail;
                       <strong>{p.name}</strong>
                       <span class="muted">{roleName(p.role)}</span>
                     </div>
-                    {p.dob && <div class="muted">{t("people.dob")}: {fmtDate(Date.parse(`${p.dob}T12:00:00Z`))}</div>}
+                    {p.dob && <div class="muted">{t("people.dob")}: {fmtDay(p.dob)}</div>}
                     <div class="muted">{t("people.progress", { role: roleName(p.role), done: shown.filter(done).length, total: shown.length })}</div>
                     {editable && (
                       <div class="row-actions">

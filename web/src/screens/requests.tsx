@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 import { Link, useLocation } from "wouter-preact";
 import { useAction } from "../api";
-import { fmtDate, isLate, relative } from "../format";
+import { fmtDate, fmtDay, isLate, relative } from "../format";
 import { t } from "../i18n";
 import { usePaged, useSearchBox, useUrlParams } from "../paged";
 import { MAX_SELECT, carried, collect, useSelection } from "../selection";
@@ -203,7 +203,7 @@ function Progress({ r }: { r: RequestRow }) {
       {r.submitted > 0 && <Badge tone="teal">{t("requests.to_review_n", { n: r.submitted })}</Badge>}
       {r.unavailable > 0 && <Badge tone="amber">{t("requests.unavailable_n", { n: r.unavailable })}</Badge>}
       {r.unanswered > 0 && <Badge tone="amber">{t("requests.unanswered_n", { n: r.unanswered })}</Badge>}
-      {r.expiring > 0 && r.expiring_on && <Badge tone="amber">{t("requests.expiring_n", { n: r.expiring, date: fmtDate(Date.parse(`${r.expiring_on}T12:00:00Z`)) })}</Badge>}
+      {r.expiring > 0 && r.expiring_on && <Badge tone="amber">{t("requests.expiring_n", { n: r.expiring, date: fmtDay(r.expiring_on) })}</Badge>}
     </>
   );
 }
