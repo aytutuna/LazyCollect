@@ -2,19 +2,11 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { post } from "../api";
 import { fmtSize } from "../format";
 import { t } from "../i18n";
-import { DEFAULT_LIMIT, LIMITS, prepareAll, words, type Note, type Row, type Source } from "../ircc";
+import { DEFAULT_LIMIT, LIMITS, irccSources, prepareAll, words, type Note, type Row } from "../ircc";
 import type { RequestDetail } from "../types";
 import { Badge, Field } from "../ui";
 
 type State = { at: "idle" } | { at: "running"; done: number; label: string } | { at: "done"; rows: Row[]; url: string } | { at: "failed" };
-
-// what goes to IRCC: answers and unfilled items have no files, and a file sent back is not the one to send
-export function irccSources(req: RequestDetail): Source[] {
-  return req.items
-    .filter((i) => !i.hidden)
-    .map((i) => ({ label: i.label, files: i.files.filter((f) => !f.sent_back_at) }))
-    .filter((i) => i.files.length > 0);
-}
 
 const noteText = (n: Note) => t(`ircc.note.${n.code}`, { name: n.name ?? "" });
 
@@ -23,7 +15,7 @@ export function IrccDialog({ req, clientName, onClose }: { req: RequestDetail; c
   const stop = useRef<AbortController | undefined>(undefined);
   const [limit, setLimit] = useState(DEFAULT_LIMIT);
   const [state, setState] = useState<State>({ at: "idle" });
-  const sources = irccSources(req);
+  const sources = irccSources(req.items);
   const total = sources.length;
 
   useEffect(() => {

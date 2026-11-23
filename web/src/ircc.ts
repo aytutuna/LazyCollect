@@ -165,6 +165,23 @@ export async function decodeImage(blob: Blob): Promise<Decoded> {
 }
 
 export type Source = { label: string; files: { id: string; name: string; mime: string }[] };
+
+type ItemLike = { position: number; label: string; hidden: boolean; companion: string | null; for_pos: number | null; files: { id: string; name: string; mime: string; sent_back_at: number | null }[] };
+
+// What goes to IRCC: answers and unfilled items have no files, a file sent back is not the one to send, and an item the
+// client's answers hide is left out. A translation or affidavit is named after its original ("Passport translation — Amira Haddad").
+export function irccSources(items: ItemLike[]): Source[] {
+  const said = { translation: "translation", affidavit: "translator affidavit" } as const;
+  return items
+    .filter((i) => !i.hidden)
+    .map((i) => {
+      const kind = i.companion === "translation" || i.companion === "affidavit" ? said[i.companion] : null;
+      const parent = kind && items.find((p) => p.position === i.for_pos);
+      const [what, ...person] = parent ? parent.label.split(" — ") : [];
+      return { label: parent ? [`${what} ${kind}`, ...person].join(" — ") : i.label, files: i.files.filter((f) => !f.sent_back_at) };
+    })
+    .filter((i) => i.files.length > 0);
+}
 export type Row = { item: string; name: string; size: number; ok: boolean; notes: Note[] };
 
 // the file route allows 60 reads a minute per account, so a long request waits for the limit to clear

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PDFDocument } from "pdf-lib";
-import { buildItem, fitJpeg, irccName, limitBytes, prepareAll, type Decode, type Decoded, type Input } from "./ircc";
+import { buildItem, fitJpeg, irccName, irccSources, limitBytes, prepareAll, type Decode, type Decoded, type Input } from "./ircc";
 import { ZipWriter, crc32 } from "./zip";
 
 // a 1x1 JPEG padded with comment segments up to the size a real photo would have
@@ -239,5 +239,29 @@ describe("prepareAll", () => {
     const stop = new AbortController();
     const go = prepareAll([{ label: "A", files: files(1) }, { label: "B", files: files(1) }], "", 4, run({ signal: stop.signal, progress: (n: number) => n === 1 && stop.abort() }));
     await expect(go).rejects.toThrow();
+  });
+});
+
+describe("irccSources for a family", () => {
+  const file = (id: string, sent = false) => ({ id, name: id + ".pdf", mime: "application/pdf", sent_back_at: sent ? 1 : null });
+  const item = (position: number, label: string, o: object = {}) => ({ position, label, hidden: false, companion: null, for_pos: null, files: [], ...o });
+
+  it("names one file per person, and puts a translation next to its original", () => {
+    const sources = irccSources([
+      item(0, "Passport — Omar Haddad", { files: [file("a")] }),
+      item(1, "Passport — Amira Haddad", { files: [file("b")] }),
+      item(2, "Is Passport — Amira Haddad in English or French?"),
+      item(3, "Certified translation of Passport — Amira Haddad", { companion: "translation", for_pos: 1, files: [file("c")] }),
+      item(4, "Translator's affidavit (if the translator is not certified)", { companion: "affidavit", for_pos: 1, files: [file("d")] }),
+      item(5, "Certified translation of Passport — Hidden", { companion: "translation", for_pos: 1, hidden: true, files: [file("e")] }),
+      item(6, "Passport — Layla Haddad", { files: [file("f", true)] }),
+    ]);
+    const taken = new Set<string>();
+    expect(sources.map((s) => irccName(s.label, "Client", taken))).toEqual([
+      "Passport-Omar-Haddad.pdf",
+      "Passport-Amira-Haddad.pdf",
+      "Passport-translation-Amira-Haddad.pdf",
+      "Passport-translator-affidavit-Amira-Haddad.pdf",
+    ]);
   });
 });
