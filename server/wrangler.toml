@@ -1,5 +1,6 @@
 # Secrets (wrangler secret put): RESEND_API_KEY, TURNSTILE_SECRET, HASH_KEY,
 # MASTER_KEY_NA (32 random bytes, base64: openssl rand -base64 32; losing it makes every NA file unreadable)
+# STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET (billing; STRIPE_PRICE_ID below is a plain var, not a secret)
 # For wrangler dev put the same names in .dev.vars (gitignored), plus
 # APP_URL=http://localhost:8787 so the origin check and email links match.
 
@@ -41,6 +42,8 @@ bucket_name = "lazycollect-na"
 [vars]
 APP_URL = "https://collect.alazy.app"
 EMAIL_FROM = "Lazy Collect <noreply@alazy.app>"
+# the Stripe price for the C$39 monthly plan; set it before the first deploy with billing
+STRIPE_PRICE_ID = ""
 
 [[ratelimits]]
 name = "LOGIN"
