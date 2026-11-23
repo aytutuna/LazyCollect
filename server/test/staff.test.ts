@@ -157,6 +157,25 @@ describe("invite refusals", () => {
     expect((await res.json<any>()).error).toBe("too_many_staff");
   });
 
+  it("keeps an expired invite from coming back over the 100 cap", async () => {
+    const { cookie } = await setup();
+    mockOutbound();
+    const { id } = await (await invite(cookie)).json<any>();
+    await env.CONTROL.prepare("UPDATE invites SET expires_at = ?").bind(Date.now() - 1).run();
+    await env.CONTROL.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 99)
+       INSERT INTO users (id, firm_id, email, role, created_at) SELECT lower(hex(randomblob(16))), ?, 'm' || i || '@x.test', 'member', 1 FROM n`,
+    )
+      .bind((await me(cookie)).firm.id)
+      .run();
+    const res = await api(`/api/staff/invites/${id}/resend`, { method: "POST", cookie });
+    expect(res.status).toBe(409);
+    expect((await res.json<any>()).error).toBe("too_many_staff");
+    expect((await row("SELECT expires_at FROM invites"))!.expires_at).toBeLessThan(Date.now());
+    await env.CONTROL.prepare("DELETE FROM users WHERE email = 'm1@x.test'").run();
+    expect((await api(`/api/staff/invites/${id}/resend`, { method: "POST", cookie })).status).toBe(200);
+  });
+
   it("stops at 20 invites in 24 hours", async () => {
     const { cookie } = await setup();
     const owner = (await row("SELECT id FROM users"))!.id;

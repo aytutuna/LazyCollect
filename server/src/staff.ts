@@ -95,11 +95,20 @@ staff.post("/staff/invites/:id/resend", async (c) => {
   if (!firm.name) return c.json({ error: "firm_profile" }, 400);
   const now = Date.now();
   if (!usable(firm, now)) return c.json({ error: "plan" }, 402);
-  const row = await c.env.CONTROL.prepare(`UPDATE invites SET expires_at = ? WHERE id = ? AND firm_id = ? AND ${LIVE} RETURNING email`)
-    .bind(now + INVITE_TTL, c.req.param("id"), firm.id)
+  const id = c.req.param("id");
+  // an expired invite is not in the count, so bringing it back has to fit under the cap again
+  const row = await c.env.CONTROL.prepare(
+    `UPDATE invites SET expires_at = ?1 WHERE id = ?2 AND firm_id = ?3 AND ${LIVE}
+     AND (expires_at > ?4 OR (SELECT COUNT(*) FROM users WHERE firm_id = ?3 AND disabled_at IS NULL)
+       + (SELECT COUNT(*) FROM invites WHERE firm_id = ?3 AND ${LIVE} AND expires_at > ?4) < ${MAX_STAFF}) RETURNING email`,
+  )
+    .bind(now + INVITE_TTL, id, firm.id, now)
     .first<{ email: string }>();
-  if (!row) return notFound(c);
-  await audit(c, "invite.send", "invite", c.req.param("id"), { resent: true }).run();
+  if (!row) {
+    const live = await c.env.CONTROL.prepare(`SELECT 1 FROM invites WHERE id = ? AND firm_id = ? AND ${LIVE}`).bind(id, firm.id).first();
+    return live ? c.json({ error: "too_many_staff" }, 409) : notFound(c);
+  }
+  await audit(c, "invite.send", "invite", id, { resent: true }).run();
   return (await deliver(c, row.email)) ?? c.json({ ok: true });
 });
 
