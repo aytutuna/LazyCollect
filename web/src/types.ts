@@ -11,6 +11,7 @@ export type Me = {
     cancel_at_period_end: boolean;
     subscribed: boolean;
     closed_at: number | null;
+    held: boolean;
     usable: boolean;
   };
 };

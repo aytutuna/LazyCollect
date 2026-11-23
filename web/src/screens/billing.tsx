@@ -17,8 +17,15 @@ function line(f: PlanFirm): string {
   if (f.plan_status === "active") {
     return t(f.cancel_at_period_end ? "settings.plan_cancelling" : "settings.plan_active", { date: fmtDate(f.current_period_end ?? Date.now()) });
   }
-  if (f.plan_status === "past_due" && f.usable) return t("settings.plan_past_due", { date: fmtDate((f.past_due_since ?? 0) + GRACE) });
-  if (trialing) return t(f.subscribed ? "settings.plan_trial_subscribed" : "settings.plan_trial", { date: fmtDate(f.trial_ends_at!) });
+  if (f.plan_status === "past_due") {
+    return f.usable ? t("settings.plan_past_due", { date: fmtDate((f.past_due_since ?? 0) + GRACE) }) : t("settings.plan_past_due_ended");
+  }
+  if (trialing) {
+    const date = fmtDate(f.trial_ends_at!);
+    if (f.subscribed) return t(f.cancel_at_period_end ? "settings.plan_trial_cancelling" : "settings.plan_trial_subscribed", { date });
+    // Checkout bills at once when less than 48 hours of trial are left
+    return t(f.trial_ends_at! < Date.now() + 2 * 86_400_000 ? "settings.plan_trial_soon" : "settings.plan_trial", { date });
+  }
   return t("settings.plan_ended");
 }
 
@@ -130,15 +137,16 @@ export function CloseAccount({ name, onClosed }: { name: string; onClosed: () =>
 export function Closed({ me, onReopened, onSignOut }: { me: Me; onReopened: () => void; onSignOut: () => void }) {
   const { busy, error, run } = useAction();
   const owner = me.user.role === "owner";
+  const within = me.firm.closed_at! + 30 * 86_400_000 > Date.now();
   return (
     <main class="narrow">
       <h1 class="brand">{t("app.name")}</h1>
       <h2>{t("closed.title")}</h2>
-      <p>{t(me.firm.closed_at! + 30 * 86_400_000 > Date.now() ? "closed.body" : "closed.body_held", { date: fmtDate(me.firm.closed_at! + 30 * 86_400_000) })}</p>
+      <p>{t(within ? "closed.body" : me.firm.held ? "closed.body_held" : "closed.body_purging", { date: fmtDate(me.firm.closed_at! + 30 * 86_400_000) })}</p>
       {!owner && <p class="muted">{t("closed.member")}</p>}
       <ErrorNote error={error} />
       <p class="actions">
-        {owner && (
+        {owner && (within || me.firm.held) && (
           <button type="button" class="primary" disabled={busy} onClick={async () => (await run(() => post("/account/reopen"))) && onReopened()}>
             {t("closed.reopen")}
           </button>

@@ -96,7 +96,15 @@ export function App() {
     );
 
   const ended = blocked || !me.firm.usable;
-  const pastDue = me.firm.plan_status === "past_due" && !ended;
+  const pastDue = me.firm.plan_status === "past_due";
+  const isOwner = me.user.role === "owner";
+  const banner = !pastDue
+    ? ended
+      ? t(isOwner ? "plan.ended" : "plan.ended_member")
+      : null
+    : ended
+      ? t(isOwner ? "plan.past_due_ended" : "plan.past_due_ended_member")
+      : t(isOwner ? "plan.past_due" : "plan.past_due_member", { date: fmtDate((me.firm.past_due_since ?? 0) + 7 * 86_400_000) });
 
   return (
     <>
@@ -111,9 +119,9 @@ export function App() {
           </nav>
         </div>
       </header>
-      {(ended || pastDue) && (
+      {banner && (
         <div class="banner" role="status">
-          {ended ? t(me.user.role === "owner" ? "plan.ended" : "plan.ended_member") : t("plan.past_due", { date: fmtDate((me.firm.past_due_since ?? 0) + 7 * 86_400_000) })}
+          {banner}
         </div>
       )}
       {notice}
