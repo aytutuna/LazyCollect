@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mintLink } from "../src/links";
 import { api, firmRow, inDays, login, openRequest, setup } from "./helpers";
 
@@ -105,5 +105,18 @@ describe("link minted while closing", () => {
     expect((await env.DB_NA.prepare("SELECT closed_at FROM firm_settings WHERE firm_id = ?").bind(firm.id).first<any>()).closed_at).toBeNull();
     expect((await api(path)).status).toBe(200);
     await expect(mintLink(env, env.DB_NA, "na", firm.id, req.id, Date.now() + 86_400_000, Date.now())).resolves.toMatch(/^na_/);
+  });
+});
+
+describe("firm write limit", () => {
+  it("takes one token per write, also on the routes registered with and without a trailing path", async () => {
+    const cookie = await login();
+    const limit = vi.spyOn(env.FIRM_WRITE, "limit");
+    expect((await api("/api/retention", { method: "PUT", cookie, body: { years: 5 } })).status).toBe(200);
+    expect(limit).toHaveBeenCalledTimes(1);
+    limit.mockClear();
+    expect((await api("/api/staff", { cookie })).status).toBe(200);
+    expect(limit).not.toHaveBeenCalled();
+    expect((await api("/api/staff")).status).toBe(401);
   });
 });
