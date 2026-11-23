@@ -3,7 +3,7 @@ import { t } from "../i18n";
 import { acceptable } from "./corners";
 import type { Detector } from "./detector";
 import { aspect, scaled, warp, type Quad } from "./geometry";
-import { readPixels, shotOf, type Shot } from "./pipeline";
+import { readPixels, release, shotOf, type Shot } from "./pipeline";
 import { frameIssues, pageIssues, type Issue } from "./quality";
 
 export type Capture = { shot: Shot; quad: Quad | null; confidence: number | null };
@@ -17,34 +17,48 @@ const HOLD_MS = 1000;
 
 type Seen = { quad: Quad; confidence: number; issues: Issue[]; at: number };
 
-export function CameraView({ detector, onCapture, onUnavailable, say }: { detector: Detector; onCapture: (c: Capture) => void; onUnavailable: (why: "denied" | "none") => void; say: (text: string) => void }) {
+export function CameraView({ detector, onCapture, onUnavailable, say }: { detector: Detector; onCapture: (c: Capture) => void | Promise<void>; onUnavailable: (why: "denied" | "none") => void; say: (text: string) => void }) {
   const video = useRef<HTMLVideoElement>(null);
   const [dims, setDims] = useState<[number, number]>([4, 3]);
   const [seen, setSeen] = useState<Seen | null>(null);
   const [state, setState] = useState<"starting" | "loading" | "searching" | "found" | "hold" | "manual">("starting");
   const [auto, setAuto] = useState(true);
+  const shutter = useRef<HTMLButtonElement>(null);
   const live = useRef({ auto: true, seen: null as Seen | null, busy: false });
   live.current.auto = auto;
 
-  async function grab(seenNow: Seen | null) {
+  // false when nothing was taken
+  async function grab(seenNow: Seen | null): Promise<boolean> {
     const v = video.current!;
-    if (live.current.busy || !v.videoWidth) return;
+    if (live.current.busy || !v.videoWidth) return false;
     live.current.busy = true;
-    const shot = await shotOf(v, v.videoWidth, v.videoHeight);
-    // the outline is in video pixels; the shot may be a smaller copy of the frame
-    const quad = seenNow ? scaled(seenNow.quad, shot.width / v.videoWidth, shot.height / v.videoHeight) : null;
-    onCapture({ shot, quad, confidence: seenNow?.confidence ?? null });
+    try {
+      const shot = await shotOf(v, v.videoWidth, v.videoHeight);
+      // the outline is in video pixels; the shot may be a smaller copy of the frame
+      const quad = seenNow ? scaled(seenNow.quad, shot.width / v.videoWidth, shot.height / v.videoHeight) : null;
+      await onCapture({ shot, quad, confidence: seenNow?.confidence ?? null });
+      return true;
+    } catch {
+      say(t("scan.photo_failed"));
+      return false;
+    } finally {
+      live.current.busy = false;
+    }
   }
 
   useEffect(() => {
     let stream: MediaStream | null = null;
     let timer = 0;
     let alive = true;
+    // each start gets a number, and stop() invalidates the one in flight, so a start overtaken by a hide or a newer start ends quietly
+    let gen = 0;
+    const scratch = document.createElement("canvas");
     let still = { quad: null as Quad | null, since: 0 };
     let advice = { key: "", times: 0 };
     let shownAdvice = "";
 
     const stop = () => {
+      gen++;
       clearTimeout(timer);
       stream?.getTracks().forEach((track) => track.stop());
       stream = null;
@@ -52,16 +66,24 @@ export function CameraView({ detector, onCapture, onUnavailable, say }: { detect
     };
 
     async function tick() {
-      const v = video.current;
-      if (!alive || !stream || !v) return;
-      if (v.readyState < 2 || !v.videoWidth) {
-        timer = window.setTimeout(tick, TICK_MS);
-        return;
+      let again = true;
+      try {
+        again = await look();
+      } catch {
+        // a bad frame is skipped
       }
+      if (again && alive && stream) timer = window.setTimeout(tick, TICK_MS);
+    }
+
+    // one look at the picture; false once the photo is taken or the camera is gone
+    async function look(): Promise<boolean> {
+      const v = video.current;
+      if (!alive || !stream || !v) return false;
+      if (v.readyState < 2 || !v.videoWidth) return true;
       setDims((d) => (d[0] === v.videoWidth && d[1] === v.videoHeight ? d : [v.videoWidth, v.videoHeight]));
-      const frame = readPixels(v, v.videoWidth, v.videoHeight, LIVE);
+      const frame = readPixels(v, v.videoWidth, v.videoHeight, LIVE, scratch);
       const found = await detector.detect({ ...frame, data: frame.data.slice() });
-      if (!alive || !stream) return;
+      if (!alive || !stream) return false;
       const now = Date.now();
       if (found && acceptable(found, frame.width, frame.height)) {
         const quad = scaled(found.quad, frame.width, frame.height);
@@ -84,8 +106,7 @@ export function CameraView({ detector, onCapture, onUnavailable, say }: { detect
         const ready = stable >= HOLD_MS && !issues.length;
         setState(!shownIssues.length && stable > 300 && live.current.auto ? "hold" : "found");
         if (ready && live.current.auto) {
-          await grab(next);
-          return;
+          return !(await grab(next));
         }
       } else {
         still = { quad: null, since: 0 };
@@ -96,33 +117,36 @@ export function CameraView({ detector, onCapture, onUnavailable, say }: { detect
           setState("searching");
         }
       }
-      timer = window.setTimeout(tick, TICK_MS);
+      return true;
     }
 
     async function start() {
-      if (stream || !navigator.mediaDevices?.getUserMedia) {
-        if (!navigator.mediaDevices?.getUserMedia) onUnavailable("none");
-        return;
-      }
+      if (stream) return;
+      if (!navigator.mediaDevices?.getUserMedia) return onUnavailable("none");
+      const run = ++gen;
+      const current = () => alive && run === gen;
       try {
         const media = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false });
-        if (!alive || document.hidden) {
+        if (!current() || document.hidden) {
           media.getTracks().forEach((track) => track.stop());
           return;
         }
         stream = media;
         // continuous focus where the camera offers it
         await media.getVideoTracks()[0].applyConstraints({ advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] }).catch(() => {});
+        if (!current()) return;
         video.current!.srcObject = media;
         await video.current!.play();
+        if (!current()) return;
         // the picture and the shutter work while the page finder loads
         setState("loading");
         const model = await detector.ready;
-        if (!alive) return;
+        if (!current()) return;
         setState(model ? "searching" : "manual");
-        if (model) tick();
+        if (model) void tick();
       } catch (e) {
-        if (alive) onUnavailable((e as DOMException).name === "NotAllowedError" ? "denied" : "none");
+        const name = (e as DOMException).name;
+        if (current() && name !== "AbortError") onUnavailable(name === "NotAllowedError" ? "denied" : "none");
       }
     }
 
@@ -134,8 +158,14 @@ export function CameraView({ detector, onCapture, onUnavailable, say }: { detect
       alive = false;
       document.removeEventListener("visibilitychange", visibility);
       stop();
+      release(scratch);
     };
   }, []);
+
+  // the shutter takes focus once the camera is running
+  useEffect(() => {
+    if (state !== "starting") shutter.current?.focus({ preventScroll: true });
+  }, [state === "starting"]);
 
   useEffect(() => {
     say(t(`scan.state_${state}`));
@@ -161,7 +191,7 @@ export function CameraView({ detector, onCapture, onUnavailable, say }: { detect
         <span>{t("scan.auto")}</span>
       </label>
       <div class="shutter">
-        <button type="button" class="primary" disabled={state === "starting"} onClick={() => grab(live.current.seen && Date.now() - live.current.seen.at < 1000 ? live.current.seen : null)}>
+        <button ref={shutter} type="button" class="primary" disabled={state === "starting"} onClick={() => grab(live.current.seen && Date.now() - live.current.seen.at < 1000 ? live.current.seen : null)}>
           {t("scan.shutter")}
         </button>
       </div>

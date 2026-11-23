@@ -13,6 +13,11 @@ export type Shot = { blob: Blob; width: number; height: number };
 
 const canvasOf = (width: number, height: number) => Object.assign(document.createElement("canvas"), { width, height });
 
+// iOS Safari caps the memory canvases hold, so each one is emptied as soon as its pixels or blob are taken
+export const release = (canvas: HTMLCanvasElement) => {
+  canvas.width = canvas.height = 0;
+};
+
 const toBlob = (canvas: HTMLCanvasElement, quality: number) =>
   new Promise<Blob>((done, fail) => canvas.toBlob((b) => (b ? done(b) : fail(new Error("encode"))), "image/jpeg", quality));
 
@@ -22,32 +27,42 @@ export function toCanvas(img: Pixels): HTMLCanvasElement {
   return canvas;
 }
 
-// `source` drawn to at most `max` pixels on its long side
-export function draw(source: CanvasImageSource, width: number, height: number, max: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+// `source` drawn to at most `max` pixels on its long side, on `reuse` when given
+export function draw(source: CanvasImageSource, width: number, height: number, max: number, reuse?: HTMLCanvasElement): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
   const k = Math.min(1, max / Math.max(width, height));
-  const canvas = canvasOf(Math.max(1, Math.round(width * k)), Math.max(1, Math.round(height * k)));
+  const w = Math.max(1, Math.round(width * k));
+  const h = Math.max(1, Math.round(height * k));
+  const canvas = reuse ?? canvasOf(w, h);
+  if (reuse && (reuse.width !== w || reuse.height !== h)) Object.assign(reuse, { width: w, height: h });
   const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
   return { canvas, ctx };
 }
 
-export function readPixels(source: CanvasImageSource, width: number, height: number, max: number): Pixels {
-  const { canvas, ctx } = draw(source, width, height, max);
+export function readPixels(source: CanvasImageSource, width: number, height: number, max: number, reuse?: HTMLCanvasElement): Pixels {
+  const { canvas, ctx } = draw(source, width, height, max, reuse);
   const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  if (!reuse) release(canvas);
   return { width: img.width, height: img.height, data: img.data };
 }
 
 export async function shotOf(source: CanvasImageSource, width: number, height: number): Promise<Shot> {
   const { canvas } = draw(source, width, height, SOURCE_MAX);
-  const blob = await toBlob(canvas, 0.92);
-  return { blob, width: canvas.width, height: canvas.height };
+  const { width: w, height: h } = canvas;
+  try {
+    return { blob: await toBlob(canvas, 0.92), width: w, height: h };
+  } finally {
+    release(canvas);
+  }
 }
 
 async function decode(shot: Shot): Promise<Pixels> {
   const bitmap = await createImageBitmap(shot.blob);
-  const pixels = readPixels(bitmap, bitmap.width, bitmap.height, SOURCE_MAX);
-  bitmap.close();
-  return pixels;
+  try {
+    return readPixels(bitmap, bitmap.width, bitmap.height, SOURCE_MAX);
+  } finally {
+    bitmap.close();
+  }
 }
 
 // width and height of the flat page with `long` pixels on its long side, in the sheet's own proportions
@@ -69,7 +84,12 @@ export async function finalPage(shot: Shot, quad: Quad, turns: number, filter: F
   const [w, h] = pageSize(quad, shot, Math.min(MAX_OUT, Math.max(MIN_OUT, Math.round(own))));
   const flat = warp(await decode(shot), quad, w, h);
   if (!flat) throw new Error("warp");
-  return toBlob(toCanvas(applyFilter(rotate(flat, turns), filter)), 0.85);
+  const canvas = toCanvas(applyFilter(rotate(flat, turns), filter));
+  try {
+    return await toBlob(canvas, 0.85);
+  } finally {
+    release(canvas);
+  }
 }
 
 // a corner rectangle `inset` in from the photo's edges, for a photo where no page was found
