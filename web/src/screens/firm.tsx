@@ -5,6 +5,7 @@ import { t } from "../i18n";
 import type { Firm, Me } from "../types";
 import { Confirm, ErrorNote, Field, LegalLink, Loading } from "../ui";
 import { CloseAccount, Plan } from "./billing";
+import { Security } from "./security";
 import { Staff } from "./staff";
 
 const ZONES = ["America/St_Johns", "America/Halifax", "America/Toronto", "America/Winnipeg", "America/Regina", "America/Edmonton", "America/Vancouver"];
@@ -188,6 +189,7 @@ export function Settings({ me, onSaved, onRefresh, onSignOut, onClosed }: { me: 
         <h2>{t("settings.firm")}</h2>
         {data ? <FirmForm firm={data} canEdit={me.user.role === "owner"} onSaved={onSaved} /> : error ? <ErrorNote error={error} /> : <Loading />}
       </section>
+      <Security me={me} />
       <Retention canEdit={me.user.role === "owner"} />
       {me.user.role === "owner" && <Staff me={me} />}
       <section>

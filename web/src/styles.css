@@ -638,3 +638,7 @@ details summary {
   margin: 0.25rem 0 0;
   white-space: pre-wrap;
 }
+
+.files.stack li {
+  flex-wrap: wrap;
+}

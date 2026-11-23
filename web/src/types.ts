@@ -101,7 +101,11 @@ export type ActivityRow = {
   client_id: string | null;
 };
 
-export type Person = { id: string; email: string; name: string | null; role: "owner" | "member"; created_at: number };
+export type Person = { id: string; email: string; name: string | null; role: "owner" | "member"; created_at: number; sessions: number; passkeys: number };
+
+export type PasskeyRow = { id: string; name: string; user_verified: boolean; created_at: number; last_used_at: number | null };
+
+export type SessionRow = { id: string | null; label: string | null; created_at: number; last_seen_at: number; current: boolean };
 
 export type PendingInvite = { id: string; email: string; name: string | null; created_at: number; expires_at: number };
 
