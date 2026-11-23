@@ -1,9 +1,10 @@
 import { useEffect, useState } from "preact/hooks";
 import { Link, Route, Switch, useRoute } from "wouter-preact";
 import { ApiError, get, onApiEvents, post } from "./api";
-import { setZone } from "./format";
+import { fmtDate, setZone } from "./format";
 import { t } from "./i18n";
 import { Activity } from "./screens/activity";
+import { Closed } from "./screens/billing";
 import { Clients } from "./screens/clients";
 import { FirmSetup, Settings } from "./screens/firm";
 import { NewRequest } from "./screens/new-request";
@@ -31,11 +32,12 @@ export function App() {
   const [fault, setFault] = useState<{ error: unknown; retry?: () => void } | null>(null);
 
   // a 401 is handled by the unauthorized hook; anything else is thrown to the caller
-  async function loadMe() {
+  async function loadMe(): Promise<Me | undefined> {
     try {
       const found = await get<Me>("/me");
       setZone(found.firm.tz);
       setMe(found);
+      return found;
     } catch (e) {
       if (!(e instanceof ApiError && e.status === 401)) throw e;
     }
@@ -77,6 +79,13 @@ export function App() {
         <SignIn onDone={loadMe} />
       </>
     );
+  if (me.firm.closed_at)
+    return (
+      <>
+        {notice}
+        <Closed me={me} onReopened={reload} onSignOut={signOut} />
+      </>
+    );
   if (!me.firm.name)
     return (
       <>
@@ -85,7 +94,8 @@ export function App() {
       </>
     );
 
-  const ended = blocked || (me.firm.plan_status !== "active" && !(me.firm.plan_status === "trialing" && (me.firm.trial_ends_at ?? 0) > Date.now()));
+  const ended = blocked || !me.firm.usable;
+  const pastDue = me.firm.plan_status === "past_due" && !ended;
 
   return (
     <>
@@ -100,9 +110,9 @@ export function App() {
           </nav>
         </div>
       </header>
-      {ended && (
+      {(ended || pastDue) && (
         <div class="banner" role="status">
-          {t("plan.ended")}
+          {ended ? t("plan.ended") : t("plan.past_due", { date: fmtDate((me.firm.current_period_end ?? 0) + 7 * 86_400_000) })}
         </div>
       )}
       {notice}
@@ -126,7 +136,7 @@ export function App() {
           </Route>
           <Route path="/templates/:id">{(params) => <TemplatePage id={params.id} />}</Route>
           <Route path="/settings">
-            <Settings me={me} onSaved={reload} onSignOut={signOut} />
+            <Settings me={me} onSaved={reload} onRefresh={loadMe} onSignOut={signOut} onClosed={() => setMe(null)} />
           </Route>
           <Route path="/trash">
             <Trash />

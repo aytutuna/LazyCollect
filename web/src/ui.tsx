@@ -51,7 +51,9 @@ export function Confirm(props: {
   confirm: string;
   danger?: boolean;
   busy?: boolean;
+  disabled?: boolean;
   error?: unknown;
+  children?: ComponentChildren;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -64,9 +66,10 @@ export function Confirm(props: {
     <dialog ref={ref} aria-labelledby="dialog-title" onCancel={props.onCancel}>
       <h2 id="dialog-title">{props.title}</h2>
       <p>{props.body}</p>
+      {props.children}
       <ErrorNote error={props.error} />
       <div class="actions">
-        <button type="button" class={props.danger ? "danger" : "primary"} disabled={props.busy} onClick={props.onConfirm}>
+        <button type="button" class={props.danger ? "danger" : "primary"} disabled={props.busy || props.disabled} onClick={props.onConfirm}>
           {props.confirm}
         </button>
         <button type="button" autoFocus={props.danger} onClick={props.onCancel}>

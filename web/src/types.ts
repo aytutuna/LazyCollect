@@ -1,6 +1,17 @@
 export type Me = {
   user: { id: string; email: string; name: string | null; role: "owner" | "member" };
-  firm: { id: string; name: string | null; tz: string; plan_status: string; trial_ends_at: number | null };
+  firm: {
+    id: string;
+    name: string | null;
+    tz: string;
+    plan_status: string;
+    trial_ends_at: number | null;
+    current_period_end: number | null;
+    cancel_at_period_end: boolean;
+    subscribed: boolean;
+    closed_at: number | null;
+    usable: boolean;
+  };
 };
 
 export type Firm = {

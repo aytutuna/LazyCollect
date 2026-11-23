@@ -1,10 +1,10 @@
 import { useState } from "preact/hooks";
 import { Link } from "wouter-preact";
 import { get, patch, put, useAction, useLoad } from "../api";
-import { fmtDate } from "../format";
 import { t } from "../i18n";
 import type { Firm, Me } from "../types";
 import { Confirm, ErrorNote, Field, Loading } from "../ui";
+import { CloseAccount, Plan } from "./billing";
 
 const ZONES = ["America/St_Johns", "America/Halifax", "America/Toronto", "America/Winnipeg", "America/Regina", "America/Edmonton", "America/Vancouver"];
 const PROVINCES = ["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"];
@@ -93,14 +93,6 @@ export function FirmSetup({ me, onSaved, onSignOut }: { me: Me; onSaved: () => v
   );
 }
 
-function planLine(firm: Me["firm"]): string {
-  if (firm.plan_status === "active") return t("settings.plan_active");
-  if (firm.plan_status === "trialing" && firm.trial_ends_at && firm.trial_ends_at > Date.now()) {
-    return t("settings.plan_trial", { date: fmtDate(firm.trial_ends_at) });
-  }
-  return t("settings.plan_ended");
-}
-
 function Retention({ canEdit }: { canEdit: boolean }) {
   const { data, error, reload } = useLoad(() => get<{ years: number }>("/retention"));
   const [saved, setSaved] = useState(false);
@@ -178,7 +170,7 @@ function Retention({ canEdit }: { canEdit: boolean }) {
   );
 }
 
-export function Settings({ me, onSaved, onSignOut }: { me: Me; onSaved: () => void; onSignOut: () => void }) {
+export function Settings({ me, onSaved, onRefresh, onSignOut, onClosed }: { me: Me; onSaved: () => void; onRefresh: () => Promise<Me | undefined>; onSignOut: () => void; onClosed: () => void }) {
   const { data, error } = useLoad(() => get<Firm>("/firm"));
   return (
     <>
@@ -186,7 +178,7 @@ export function Settings({ me, onSaved, onSignOut }: { me: Me; onSaved: () => vo
       <section>
         <h2>{t("settings.account")}</h2>
         <p>{t("settings.signed_in", { email: me.user.email })}</p>
-        <p>{planLine(me.firm)}</p>
+        <Plan me={me} onRefresh={onRefresh} />
         <button type="button" onClick={onSignOut}>
           {t("nav.signout")}
         </button>
@@ -207,6 +199,7 @@ export function Settings({ me, onSaved, onSignOut }: { me: Me; onSaved: () => vo
           </p>
         )}
       </section>
+      {me.user.role === "owner" && <CloseAccount name={me.firm.name!} onClosed={onClosed} />}
     </>
   );
 }
