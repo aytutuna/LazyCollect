@@ -1,7 +1,10 @@
-import { Link } from "wouter-preact";
+import { useState } from "preact/hooks";
+import { Link, useLocation } from "wouter-preact";
+import { useAction } from "../api";
 import { fmtDate, isLate, relative } from "../format";
 import { t } from "../i18n";
 import { usePaged, useSearchBox, useUrlParams } from "../paged";
+import { MAX_SELECT, carried, collect, useSelection } from "../selection";
 import type { RequestCounts, RequestRow } from "../types";
 import { Badge, ErrorNote, Field, Loading, statusLabel, statusTone } from "../ui";
 
@@ -26,6 +29,29 @@ export function Requests() {
 
   const query = new URLSearchParams({ view, sort, ...(status && { status }), ...(client && { client }), ...(q && { q }) }).toString();
   const list = usePaged<RequestRow, Extra>("/requests", query);
+  const [, go] = useLocation();
+  const picked = useSelection<RequestRow>(new Map());
+  const everyone = useAction();
+  const [truncated, setTruncated] = useState(false);
+  const allOnPage = list.rows.length > 0 && list.rows.every((r) => picked.has(r.id));
+
+  async function selectMatching() {
+    await everyone.run(async () => {
+      const all = await collect<RequestRow>("/requests", query);
+      picked.add(all);
+      setTruncated(all.length >= MAX_SELECT);
+    });
+  }
+
+  function clearAll() {
+    picked.clear();
+    setTruncated(false);
+  }
+
+  function repeatSelected() {
+    carried.requests = new Map(picked.map);
+    go("/batches/new?repeat=1");
+  }
   const counts = list.extra?.counts;
   const filtered = Boolean(q || status || client);
   const firstRun = counts?.all === 0 && !filtered && !list.loading;
@@ -34,9 +60,17 @@ export function Requests() {
     <>
       <div class="head">
         <h1>{t("requests.title")}</h1>
-        <Link href="/new" class="button primary">
-          {t("requests.new")}
-        </Link>
+        <div class="row-actions">
+          <Link href="/batches" class="button">
+            {t("requests.batches")}
+          </Link>
+          <Link href="/batches/new" class="button">
+            {t("requests.send_many")}
+          </Link>
+          <Link href="/new" class="button primary">
+            {t("requests.new")}
+          </Link>
+        </div>
       </div>
       <ErrorNote error={list.error} />
       {firstRun ? (
@@ -85,6 +119,26 @@ export function Requests() {
               </button>
             </p>
           )}
+          {picked.map.size > 0 && (
+            <div class="callout" role="status">
+              <p>{t("requests.selected", { n: picked.map.size })}</p>
+              <div class="row-actions">
+                <button class="primary small" onClick={repeatSelected}>
+                  {t("requests.repeat")}
+                </button>
+                {(list.next !== null || !allOnPage) && (
+                  <button class="small" disabled={everyone.busy} onClick={selectMatching}>
+                    {t("requests.select_matching")}
+                  </button>
+                )}
+                <button class="small quiet" onClick={clearAll}>
+                  {t("requests.clear_selection")}
+                </button>
+              </div>
+              {truncated && <p class="muted">{t("requests.select_limit")}</p>}
+              <ErrorNote error={everyone.error} />
+            </div>
+          )}
           <div aria-busy={list.loading}>
             {list.loading && list.rows.length === 0 ? (
               !list.error && <Loading />
@@ -98,6 +152,14 @@ export function Requests() {
                 <table class={`stack${list.loading ? " busy" : ""}`}>
                   <thead>
                     <tr>
+                      <th class="pick">
+                        <input
+                          type="checkbox"
+                          aria-label={t("requests.select_page")}
+                          checked={allOnPage}
+                          onChange={(e) => (e.currentTarget.checked ? picked.add(list.rows) : picked.remove(list.rows.map((r) => r.id)))}
+                        />
+                      </th>
                       <th>{t("requests.client")}</th>
                       <th>{t("requests.request")}</th>
                       <th class="wide">{t("requests.deadline")}</th>
@@ -107,7 +169,7 @@ export function Requests() {
                   </thead>
                   <tbody>
                     {list.rows.map((r) => (
-                      <Row key={r.id} r={r} />
+                      <Row key={r.id} r={r} picked={picked.has(r.id)} onPick={() => picked.toggle(r)} />
                     ))}
                   </tbody>
                 </table>
@@ -145,12 +207,15 @@ function Progress({ r }: { r: RequestRow }) {
   );
 }
 
-function Row({ r }: { r: RequestRow }) {
+function Row({ r, picked, onPick }: { r: RequestRow; picked: boolean; onPick: () => void }) {
   const open = r.status === "draft" || r.status === "open";
   const late = isLate(r.deadline) && open;
   const when = late ? relative(r.deadline) : t("requests.due", { when: relative(r.deadline).toLowerCase() });
   return (
     <tr>
+      <td class="pick">
+        <input type="checkbox" aria-label={t("requests.select_one", { title: r.title, name: r.client_name })} checked={picked} onChange={onPick} />
+      </td>
       <td class="name">{r.client_name}</td>
       <td>
         <Link href={`/requests/${r.id}`}>{r.title}</Link>
