@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { createSession, endSession, type AppEnv } from "./session";
 import { sendLoginEmail } from "./email";
-import { usable } from "./firm";
+import { untouchedRegion, untouchedSql, usable } from "./firm";
 import { htmlHeaders } from "./headers";
 import { isRegion, regionOf, type Region } from "./regions";
 import { DAY, MINUTE, hmac, keyLimited, randomCode, randomId, randomToken, sha256, ipPrefix, FETCH_TIMEOUT_MS } from "./util";
@@ -85,10 +85,10 @@ auth.post("/auth/start", async (c) => {
   return c.json({ ok: true });
 });
 
-type Found = { id: string; firm_id: string; disabled_at: number | null };
+type Found = { id: string; firm_id: string; role: string; disabled_at: number | null };
 
-// The newest live invite for the address puts it in the inviting account as a member; a removed member's row is reused,
-// since the email is unique.
+// The newest live invite for the address puts it in the inviting account as a member. A removed member's row is reused,
+// since the email is unique, and so is the row of an owner whose own account was never used.
 async function acceptInvite(c: Context<AppEnv>, email: string, existing: Found | null): Promise<void> {
   const db = c.env.CONTROL;
   const now = Date.now();
@@ -101,36 +101,56 @@ async function acceptInvite(c: Context<AppEnv>, email: string, existing: Found |
     .bind(email, now)
     .first<{ id: string; firm_id: string; name: string | null; region: string }>();
   if (!invite) return;
+  const live = "EXISTS (SELECT 1 FROM invites WHERE id = ? AND accepted_at IS NULL AND revoked_at IS NULL)";
+  const joined = "EXISTS (SELECT 1 FROM users WHERE email = ? AND firm_id = ?)";
   const userId = existing?.id ?? randomId();
-  const taken = "EXISTS (SELECT 1 FROM invites WHERE id = ? AND accepted_at = ?)";
-  const [accepted] = await db.batch([
-    db.prepare("UPDATE invites SET accepted_at = ? WHERE id = ? AND accepted_at IS NULL AND revoked_at IS NULL").bind(now, invite.id),
-    ...(existing
+  // the user row goes first; everything after it only happens if it really is in the inviting account now
+  let join: D1PreparedStatement;
+  let empty: { region: Region; firmId: string } | null = null;
+  if (!existing) {
+    join = db
+      .prepare(`INSERT INTO users (id, firm_id, email, name, role, created_at) SELECT ?, ?, ?, ?, 'member', ? WHERE ${live} ON CONFLICT (email) DO NOTHING`)
+      .bind(userId, invite.firm_id, email, invite.name, now, invite.id);
+  } else if (existing.disabled_at) {
+    join = db
+      .prepare(`UPDATE users SET disabled_at = NULL, firm_id = ?, role = 'member', name = COALESCE(?, name) WHERE id = ? AND disabled_at IS NOT NULL AND ${live}`)
+      .bind(invite.firm_id, invite.name, userId, invite.id);
+  } else {
+    if (existing.role !== "owner" || existing.firm_id === invite.firm_id) return;
+    const region = await untouchedRegion(c.env, existing.firm_id, now);
+    if (!region) return;
+    const u = untouchedSql(existing.firm_id, now);
+    // checked again in the update, in case the account was used since the look above
+    join = db
+      .prepare(`UPDATE users SET firm_id = ?, role = 'member', name = COALESCE(?, name) WHERE id = ? AND firm_id = ? AND role = 'owner' AND disabled_at IS NULL AND ${live} AND ${u.sql}`)
+      .bind(invite.firm_id, invite.name, userId, existing.firm_id, invite.id, ...u.binds);
+    empty = { region, firmId: existing.firm_id };
+  }
+  const [, accepted] = await db.batch([
+    join,
+    db.prepare(`UPDATE invites SET accepted_at = ? WHERE id = ? AND accepted_at IS NULL AND revoked_at IS NULL AND ${joined}`).bind(now, invite.id, email, invite.firm_id),
+    // a sign-in that was in flight during the removal may have left a session for the old account
+    db.prepare(`DELETE FROM sessions WHERE user_id = ? AND ${joined}`).bind(userId, email, invite.firm_id),
+    ...(empty
       ? [
-          db
-            .prepare(`UPDATE users SET disabled_at = NULL, firm_id = ?, role = 'member', name = COALESCE(?, name) WHERE id = ? AND disabled_at IS NOT NULL AND ${taken}`)
-            .bind(invite.firm_id, invite.name, userId, invite.id, now),
-          // a sign-in that was in flight during the removal may have left a session for the old account
-          db.prepare(`DELETE FROM sessions WHERE user_id = ? AND ${taken}`).bind(userId, invite.id, now),
+          db.prepare("DELETE FROM invites WHERE firm_id = ? AND NOT EXISTS (SELECT 1 FROM users WHERE firm_id = ?)").bind(empty.firmId, empty.firmId),
+          db.prepare("DELETE FROM firms WHERE id = ? AND NOT EXISTS (SELECT 1 FROM users WHERE firm_id = ?)").bind(empty.firmId, empty.firmId),
         ]
-      : [
-          db
-            .prepare(`INSERT INTO users (id, firm_id, email, name, role, created_at) SELECT ?, ?, ?, ?, 'member', ? WHERE ${taken} ON CONFLICT (email) DO NOTHING`)
-            .bind(userId, invite.firm_id, email, invite.name, now, invite.id, now),
-        ]),
+      : []),
   ]);
   if (accepted.meta.changes !== 1) return;
   await regionOf(c.env, invite.region as Region)
     .db.prepare("INSERT INTO audit (id, firm_id, at, actor_type, actor_id, action, object_type, object_id) VALUES (?, ?, ?, 'user', ?, 'invite.accept', 'invite', ?)")
     .bind(randomId(), invite.firm_id, now, userId, invite.id)
     .run();
+  if (empty) await regionOf(c.env, empty.region).db.prepare("DELETE FROM firm_settings WHERE firm_id = ?").bind(empty.firmId).run();
 }
 
 async function signIn(c: Context<AppEnv>, email: string): Promise<boolean> {
   const db = c.env.CONTROL;
-  const find = () => db.prepare("SELECT id, firm_id, disabled_at FROM users WHERE email = ?").bind(email).first<Found>();
+  const find = () => db.prepare("SELECT id, firm_id, role, disabled_at FROM users WHERE email = ?").bind(email).first<Found>();
   let user = await find();
-  if (!user || user.disabled_at) {
+  if (!user || user.disabled_at || user.role === "owner") {
     await acceptInvite(c, email, user);
     user = await find();
   }
@@ -148,7 +168,10 @@ async function signIn(c: Context<AppEnv>, email: string): Promise<boolean> {
         : db
             .prepare("INSERT INTO users (id, firm_id, email, role, created_at) VALUES (?, ?, ?, 'owner', ?) ON CONFLICT (email) DO NOTHING")
             .bind(randomId(), firmId, email, now),
-      db.prepare("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = ?) AND firm_id != ?").bind(email, firmId),
+      // only once the row is in the new firm, so the loser of two parallel sign-ins leaves the winner a session
+      db
+        .prepare("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = ?1) AND firm_id != ?2 AND EXISTS (SELECT 1 FROM users WHERE email = ?1 AND firm_id = ?2)")
+        .bind(email, firmId),
       db
         .prepare("DELETE FROM firms WHERE id = ? AND NOT EXISTS (SELECT 1 FROM users WHERE firm_id = ?)")
         .bind(firmId, firmId),

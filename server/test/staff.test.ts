@@ -386,6 +386,71 @@ describe("members", () => {
   });
 });
 
+describe("owners of an untouched account", () => {
+  it("can be invited, and move into the inviting account", async () => {
+    const { cookie } = await setup();
+    const member = await addMember(cookie);
+    const gone = (await row("SELECT id FROM users WHERE email = 'member@firm.test'"))!.id;
+    await api(`/api/staff/${gone}`, { method: "DELETE", cookie });
+    // the removed member signs in once and gets an empty account of their own
+    const own = await login("member@firm.test");
+    const ownFirm = (await me(own)).firm.id;
+    expect(ownFirm).not.toBe((await me(cookie)).firm.id);
+    await env.DB_NA.prepare("INSERT INTO firm_settings (firm_id, retention_years) VALUES (?, 7)").bind(ownFirm).run();
+
+    mockOutbound();
+    expect((await invite(cookie, "member@firm.test")).status).toBe(201);
+    const joined = await me(await login("member@firm.test"));
+    expect(joined.user.id).toBe(gone);
+    expect(joined.user.role).toBe("member");
+    expect(joined.firm.id).toBe((await me(cookie)).firm.id);
+    expect(await row("SELECT 1 FROM firms WHERE id = ?", ownFirm)).toBeNull();
+    expect((await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM firm_settings WHERE firm_id = ?").bind(ownFirm).first<any>())!.n).toBe(0);
+    expect((await api("/api/me", { cookie: own })).status).toBe(401);
+    expect((await api("/api/me", { cookie: member })).status).toBe(401);
+  });
+
+  it("are still refused with already_has_account once the account has been used", async () => {
+    const { cookie } = await setup();
+    mockOutbound();
+    const used = await setup("used@firm.test", "Used Firm");
+    expect((await invite(cookie, "used@firm.test")).status).toBe(409);
+    const billed = await login("billed@firm.test");
+    await env.CONTROL.prepare("UPDATE firms SET stripe_customer_id = 'cus_1' WHERE id = ?").bind((await me(billed)).firm.id).run();
+    expect((await invite(cookie, "billed@firm.test")).status).toBe(409);
+    const quiet = await login("quiet@firm.test");
+    expect((await invite(cookie, "quiet@firm.test")).status).toBe(201);
+    // used since the invite: the sign-in leaves the account alone
+    await api("/api/templates", { method: "POST", cookie: quiet, body: { name: "Mine", items: [{ label: "ID", required: true }] } });
+    const again = await me(await login("quiet@firm.test"));
+    expect(again.user.role).toBe("owner");
+    expect(again.firm.id).toBe((await me(quiet)).firm.id);
+    expect(used.cookie).toBeTruthy();
+  });
+
+  it("cannot invite themselves", async () => {
+    const { cookie } = await setup();
+    mockOutbound();
+    expect((await invite(cookie, OWNER)).status).toBe(409);
+  });
+});
+
+describe("parallel sign-ins", () => {
+  it("leave both sessions working for a new address", async () => {
+    const sent = mockOutbound();
+    await start("fresh@mail.test");
+    const code = codeFrom(sent[0]);
+    const t = sent[0].text.match(/link\?t=(\S+)/)![1];
+    const [a, b] = await Promise.all([
+      api("/api/auth/verify", { method: "POST", body: { email: "fresh@mail.test", code } }),
+      api("/api/auth/link", { method: "POST", body: { t } }),
+    ]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect((await api("/api/me", { cookie: cookieFrom(a) })).status).toBe(200);
+    expect((await api("/api/me", { cookie: cookieFrom(b) })).status).toBe(200);
+  });
+});
+
 describe("tenant isolation", () => {
   it("keeps one account's owner away from another's invites and people", async () => {
     const a = await setup();

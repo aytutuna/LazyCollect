@@ -1,6 +1,6 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { audit } from "./audit";
-import { isRegion, regionOf } from "./regions";
+import { isRegion, regionOf, type Region } from "./regions";
 import type { AppEnv, Firm } from "./session";
 import { validZone } from "./tz";
 import { DAY, keyLimited } from "./util";
@@ -26,6 +26,28 @@ export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at" | "past_due
     default:
       return false;
   }
+}
+
+// An owner who signed in once and did nothing: alone in the account, no clients, requests or templates, no billing, nothing pending.
+export function untouchedSql(firmId: string, now: number) {
+  return {
+    sql: `(SELECT COUNT(*) FROM users WHERE firm_id = ?) = 1
+      AND NOT EXISTS (SELECT 1 FROM invites WHERE firm_id = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?)
+      AND EXISTS (SELECT 1 FROM firms WHERE id = ? AND closed_at IS NULL AND stripe_customer_id IS NULL AND stripe_subscription_id IS NULL)`,
+    binds: [firmId, firmId, now, firmId],
+  };
+}
+
+// the region of an untouched account, or null when it has been used
+export async function untouchedRegion(env: Env, firmId: string, now: number): Promise<Region | null> {
+  const u = untouchedSql(firmId, now);
+  const f = await env.CONTROL.prepare(`SELECT region FROM firms WHERE id = ? AND ${u.sql}`).bind(firmId, ...u.binds).first<{ region: string }>();
+  if (!f || !isRegion(f.region)) return null;
+  const used = await regionOf(env, f.region)
+    .db.prepare("SELECT (SELECT COUNT(*) FROM clients WHERE firm_id = ?1) + (SELECT COUNT(*) FROM requests WHERE firm_id = ?1) + (SELECT COUNT(*) FROM templates WHERE firm_id = ?1) AS n")
+    .bind(firmId)
+    .first<{ n: number }>();
+  return used!.n === 0 ? f.region : null;
 }
 
 function load(allowClosed: boolean): MiddlewareHandler<AppEnv> {

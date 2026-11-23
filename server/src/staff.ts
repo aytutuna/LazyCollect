@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { normalizeEmail } from "./auth";
 import { sendInviteEmail } from "./email";
-import { isOwner, usable } from "./firm";
+import { isOwner, untouchedRegion, usable } from "./firm";
 import { claimStaffMail } from "./mail";
 import type { AppEnv } from "./session";
 import { DAY, randomId } from "./util";
@@ -56,7 +56,9 @@ staff.post("/staff/invites", async (c) => {
   if (!usable(firm, now)) return c.json({ error: "plan" }, 402);
   const db = c.env.CONTROL;
   // a removed member's row stays, and signing in under an invite brings it back
-  if (await db.prepare("SELECT 1 FROM users WHERE email = ? AND disabled_at IS NULL").bind(email).first()) {
+  const existing = await db.prepare("SELECT firm_id, role FROM users WHERE email = ? AND disabled_at IS NULL").bind(email).first<{ firm_id: string; role: string }>();
+  // someone who signed in once and has nothing in their own account can still be invited
+  if (existing && (existing.firm_id === firm.id || existing.role !== "owner" || !(await untouchedRegion(c.env, existing.firm_id, now)))) {
     return c.json({ error: "already_has_account" }, 409);
   }
   const id = randomId();
