@@ -6,7 +6,7 @@ import { HOUR, RESTORE_WINDOW, randomId } from "./util";
 const BUDGET = 20;
 const RETENTION_BATCH = 50;
 
-type Reason = "deleted" | "retention";
+type Reason = "deleted" | "retention" | "closed";
 type Target = { id: string; firm_id: string; deleted_reason?: string | null };
 
 // A request is only retired once it is closed or its link has run out, so a live link is never cut. Takes the time once.
@@ -15,7 +15,7 @@ export const FINISHED = `ended_at IS NOT NULL AND hold_at IS NULL AND deleted_at
 
 const log = (e: unknown) => console.error(e instanceof Error ? e.message : "error");
 
-async function emptyPrefix(bucket: R2Bucket, prefix: string, onDelete?: () => void) {
+export async function emptyPrefix(bucket: R2Bucket, prefix: string, onDelete?: () => void) {
   let cursor: string | undefined;
   do {
     const page = await bucket.list({ prefix, cursor, limit: 1000 });
@@ -28,7 +28,7 @@ async function emptyPrefix(bucket: R2Bucket, prefix: string, onDelete?: () => vo
 }
 
 // Claim first, so restore and hold back off; objects go before rows, so a run that dies in between is finished by the next one.
-async function purgeRequest(db: D1Database, bucket: R2Bucket, req: Target, reason: Reason, now: number, cutoff: number): Promise<number | null> {
+export async function purgeRequest(db: D1Database, bucket: R2Bucket, req: Target, reason: Reason, now: number, cutoff: number): Promise<number | null> {
   const claim = await db
     .prepare(
       `UPDATE requests SET purging_at = ? WHERE firm_id = ? AND id = ? AND hold_at IS NULL AND (purging_at IS NULL OR purging_at < ?)
