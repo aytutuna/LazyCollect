@@ -41,7 +41,9 @@ export function Templates() {
                 <summary>{t("templates.items", { n: tpl.items.length })}</summary>
                 <ul>
                   {tpl.items.map((i) => (
-                    <li>{i.label}</li>
+                    <li>
+                      {i.label} {i.kind && i.kind !== "file" && <span class="muted">({t(`kind.${i.kind}`).toLowerCase()})</span>}
+                    </li>
                   ))}
                 </ul>
               </details>

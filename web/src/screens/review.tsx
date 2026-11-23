@@ -10,7 +10,7 @@ export function Review({ requestId, item, onDone }: { requestId: string; item: I
   const { busy, error, run } = useAction((e) => e instanceof ApiError && e.status === 409 && onDone());
 
   async function decide(decision: "approve" | "reject") {
-    if (await run(() => post(`/requests/${requestId}/items/${item.id}/review`, { decision, note, files: item.files.map((f) => f.id) }))) onDone();
+    if (await run(() => post(`/requests/${requestId}/items/${item.id}/review`, { decision, note, files: item.files.map((f) => f.id), answered_at: item.answer_at }))) onDone();
   }
 
   if (!rejecting) {
@@ -36,7 +36,7 @@ export function Review({ requestId, item, onDone }: { requestId: string; item: I
         decide("reject");
       }}
     >
-      <Field label={t("detail.reject_note")} hint={t("detail.reject_hint")}>
+      <Field label={t("detail.reject_note")} hint={t(item.kind === "file" ? "detail.reject_hint" : "detail.reject_hint_question")}>
         <textarea required rows={3} maxLength={500} value={note} onInput={(e) => setNote(e.currentTarget.value)} />
       </Field>
       <ErrorNote error={error} />

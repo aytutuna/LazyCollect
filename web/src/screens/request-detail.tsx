@@ -5,6 +5,7 @@ import { fmtDate, fmtDateTime, fmtSize, fromInput, inDays, isLate, relative, toI
 import { t } from "../i18n";
 import type { ActivityRow, Client, Firm, Item, ItemWithFiles, LinkResult, Message, RequestDetail } from "../types";
 import { ActivityList } from "./activity";
+import { QuestionFields, newItem, toPayload, type EditItem, type Parent } from "./items-editor";
 import { Review } from "./review";
 import { Thread } from "./thread";
 import { Unavailable } from "./unavailable";
@@ -48,7 +49,9 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
     sent.reload();
     activity.reload();
   };
-  const received = req.items.filter((i) => i.status === "submitted" || i.status === "approved" || i.status === "waived").length;
+  // an item hidden by an answer is not part of the count
+  const shown = req.items.filter((i) => !i.hidden);
+  const received = shown.filter((i) => i.status === "submitted" || i.status === "approved" || i.status === "waived").length;
   const late = isLate(req.deadline) && editable;
   const lastEmail = sent.data?.find((m) => m.status === "sent");
   const lastManual = sent.data?.find((m) => m.manual && m.status !== "failed" && Date.now() - m.sent_at < 86_400_000);
@@ -165,7 +168,7 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
                 <span class={late ? "late" : ""}>{relative(req.deadline)}</span>, {fmtDate(req.deadline)}
               </dd>
               <dt>{t("requests.progress")}</dt>
-              <dd>{t("progress", { done: received, total: req.items.length })}</dd>
+              <dd>{t("progress", { done: received, total: shown.length })}</dd>
               {req.note && (
                 <>
                   <dt>{t("new.note")}</dt>
@@ -293,6 +296,13 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
                       <Badge tone={ITEM_TONES[item.status]}>{t(`item.${item.status}`)}</Badge>
                     </div>
                     {item.help && <div class="muted">{item.help}</div>}
+                    {item.show_if_pos !== null && <p class="muted">{condition(req.items, item)}</p>}
+                    {item.hidden && <p class="muted">{t("items.hidden")}</p>}
+                    {item.kind !== "file" && (
+                      <p class="answer">
+                        <strong>{t("detail.answer")}:</strong> {answerText(item) || <span class="muted">{t("detail.no_answer")}</span>}
+                      </p>
+                    )}
                     {item.status === "rejected" && item.reject_note && <p class="reject">{item.reject_note}</p>}
                     {item.status === "unavailable" && (req.status === "open" || req.status === "complete") && <Unavailable requestId={id} item={item} onDone={reload} />}
                     {item.status === "waived" && item.unavailable_note && <p class="muted">{t("detail.unavailable_reason", { note: item.unavailable_note })}</p>}
@@ -339,7 +349,7 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
             </button>
           </p>
         )}
-        {manage && (adding ? <ItemForm requestId={id} onSaved={saved} onCancel={() => setAdding(false)} /> : <button onClick={() => setAdding(true)}>{t("items.add")}</button>)}
+        {manage && (adding ? <ItemForm requestId={id} parents={parentsOfRequest(req.items)} onSaved={saved} onCancel={() => setAdding(false)} /> : <button onClick={() => setAdding(true)}>{t("items.add")}</button>)}
       </section>
 
       <Thread requestId={id} clientName={clientName} editable={req.status === "open" || req.status === "complete"} onChange={activity.reload} />
@@ -421,28 +431,49 @@ function DetailsForm({ req, onSaved, onCancel }: { req: RequestDetail; onSaved: 
   );
 }
 
-function ItemForm({ requestId, item, onSaved, onCancel }: { requestId: string; item?: Item; onSaved: () => void; onCancel: () => void }) {
-  const [label, setLabel] = useState(item?.label ?? "");
-  const [help, setHelp] = useState(item?.help ?? "");
-  const [required, setRequired] = useState(item?.required ?? true);
+// an item can hang a condition on any unconditional yes/no or choice item already in the request; its position is its key here
+const parentsOfRequest = (items: Item[]): Parent[] =>
+  items.filter((i) => i.show_if_pos === null && (i.kind === "yesno" || i.kind === "choice" || i.kind === "multi")).map((i) => ({ key: i.position, label: i.label, kind: i.kind, options: i.options ?? [] }));
+
+function answerText(item: Item): string {
+  const a = item.answer;
+  if (a === null) return "";
+  if (Array.isArray(a)) return a.join(", ");
+  return item.kind === "yesno" ? t(a === "yes" ? "detail.yes" : "detail.no") : a;
+}
+
+function condition(items: Item[], item: Item): string {
+  const parent = items.find((p) => p.position === item.show_if_pos);
+  const value = parent?.kind === "yesno" ? t(`items.answer_${item.show_if_value}`) : (item.show_if_value ?? "");
+  return t("items.condition", { label: parent?.label ?? "", value });
+}
+
+// An existing item changes only its wording; a new one can also be a question that depends on an earlier item, named by its position.
+function ItemForm({ requestId, item, parents, onSaved, onCancel }: { requestId: string; item?: Item; parents?: Parent[]; onSaved: () => void; onCancel: () => void }) {
+  const [edit, setEdit] = useState<EditItem>(() => ({ ...newItem(), label: item?.label ?? "", help: item?.help ?? "", required: item?.required ?? true }));
   const { busy, error, run } = useAction();
 
   async function submit(e: Event) {
     e.preventDefault();
-    const body = { label, help, required };
+    const [added] = toPayload([{ ...edit, showKey: null }]);
+    const body = item
+      ? { label: edit.label, help: edit.help, required: edit.required }
+      : { ...added, ...(edit.showKey === null ? {} : { show_if: { item: edit.showKey, value: edit.showValue } }) };
     const call = item ? () => patch(`/requests/${requestId}/items/${item.id}`, body) : () => post(`/requests/${requestId}/items`, body);
     if (await run(call)) onSaved();
   }
 
+  const change = (patch: Partial<EditItem>) => setEdit({ ...edit, ...patch });
   return (
     <form class="editor-row" onSubmit={submit}>
-      <Field label={t("items.label")}>
-        <input required maxLength={200} value={label} onInput={(e) => setLabel(e.currentTarget.value)} />
+      <Field label={edit.kind === "file" ? t("items.label") : t("items.question")}>
+        <input required maxLength={200} value={edit.label} onInput={(e) => change({ label: e.currentTarget.value })} />
       </Field>
       <Field label={t("items.help")}>
-        <input maxLength={500} value={help} onInput={(e) => setHelp(e.currentTarget.value)} />
+        <input maxLength={500} value={edit.help} onInput={(e) => change({ help: e.currentTarget.value })} />
       </Field>
-      <Check label={t("items.required")} checked={required} onChange={setRequired} />
+      {!item && <QuestionFields item={edit} parents={parents ?? []} dependedOn={false} onChange={change} />}
+      <Check label={t("items.required")} checked={edit.required} onChange={(required) => change({ required })} />
       <ErrorNote error={error} />
       <div class="row-actions">
         <button class="primary small" disabled={busy}>

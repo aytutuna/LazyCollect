@@ -685,5 +685,7 @@
   "client.items_hidden_one": "{n} item no longer applies to you.",
   "client.items_hidden_other": "{n} items no longer apply to you.",
   "error.has_dependents": "Other items are shown only for an answer to this one. Remove those first.",
-  "activity.action.item.answer": "Client answered a question"
+  "activity.action.item.answer": "Client answered a question",
+  "detail.reject_hint_question": "The client sees this note next to the question and can change their answer.",
+  "items.untitled": "(untitled)"
 }
