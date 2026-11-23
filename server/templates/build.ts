@@ -1,7 +1,7 @@
 import type { Item, Kind } from "../src/questions";
 
 type When = string | [string, string];
-type Spec = { label: string; help?: string; required: boolean; kind?: Kind; options?: string[]; when?: When; example?: string };
+type Spec = { label: string; help?: string; required: boolean; kind?: Kind; options?: string[]; when?: When; example?: string } & Pick<Item, "per_person" | "expiry" | "valid_months" | "translation">;
 
 export const doc = (label: string, help?: string, when?: When, required = true, example?: string): Spec => ({ label, help, required, when, example });
 export const ask = (label: string, help?: string, required = true): Spec => ({ label, help, required, kind: "yesno" });

@@ -283,15 +283,21 @@ describe("request delete", () => {
 });
 
 describe("item cap", () => {
-  it("refuses a 101st item", async () => {
+  it("refuses a 301st item", async () => {
     const { cookie, client } = await setup();
     const items = Array.from({ length: 100 }, (_, i) => ({ label: `Item ${i}` }));
     const r = await (await make(cookie, { client_id: client.id, title: "A", deadline: inDays(7), items })).json<any>();
+    // a request made of templates with people and translations can hold more than a template does
+    await env.DB_NA.prepare(
+      "INSERT INTO items (id, firm_id, request_id, position, label) SELECT lower(hex(randomblob(16))), i.firm_id, i.request_id, 100 + j.value, 'Extra' FROM items i, json_each(?) j WHERE i.id = ?",
+    )
+      .bind(JSON.stringify(Array.from({ length: 200 }, (_, i) => i)), r.items[0].id)
+      .run();
     const res = await api(`/api/requests/${r.id}/items`, { method: "POST", cookie, body: item });
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "too_many_items" });
     const count = await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM items").first<{ n: number }>();
-    expect(count!.n).toBe(100);
+    expect(count!.n).toBe(300);
     await api(`/api/requests/${r.id}/items/${r.items[0].id}`, { method: "DELETE", cookie });
     expect((await api(`/api/requests/${r.id}/items`, { method: "POST", cookie, body: item })).status).toBe(201);
   });

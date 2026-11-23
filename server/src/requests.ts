@@ -1,11 +1,13 @@
 import { Hono, type Context } from "hono";
 import { audit } from "./audit";
-import { itemsFromTemplate } from "./copy";
+import { insertRows } from "./copy";
+import { MAX_ITEMS, expandItems, matches, relabel, rowsFor, parsePeople, type Person, type Row } from "./expand";
+import { deadlineDay, flagOf, today } from "./expiry";
 import { ownsExamples, parseExample } from "./examples";
 import { usable } from "./firm";
 import { LINK_GRACE, sealToken } from "./links";
 import { MANUAL_SEQ, addressStopped, deliver, hasRoom, unsubUrl } from "./mail";
-import { ITEM_COLS, conditionOk, isQuestion, presentItem } from "./questions";
+import { ITEM_COLS, conditionOk, isQuestion, parseDay, presentItem } from "./questions";
 import { regionOf, type Region } from "./regions";
 import { parseReasons } from "./reasons";
 import { listRequests } from "./search";
@@ -20,7 +22,6 @@ import { exampleGone, invalid, maybe, notFound, readBody, setClause, text } from
 export const requests = new Hono<AppEnv>();
 
 const COLS = "id, client_id, title, note, deadline, firm_name, status, sent_at, closed_at, created_at, first_opened_at, reminders_on, next_reminder_at, ended_at, keep_until, hold_at";
-const MAX_ITEMS = 100;
 const MAX_PER_DAY = 300;
 // requests made by a batch have a cap of their own
 export const SINGLE_TODAY = `(SELECT COUNT(*) FROM requests WHERE firm_id = ? AND created_at > ? AND id NOT IN (SELECT request_id FROM batch_items WHERE firm_id = ?)) < ${MAX_PER_DAY}`;
@@ -47,6 +48,9 @@ requests.post("/requests", async (c) => {
   const due = deadline(body.deadline);
   if (!title || note === undefined || due === undefined || typeof body.client_id !== "string") return invalid(c);
   if (body.template_id !== undefined && body.items !== undefined) return invalid(c);
+  const people = body.people === undefined ? [] : parsePeople(body.people);
+  const validUntil = "valid_until" in body ? parseDay(body.valid_until) : null;
+  if (!people || validUntil === undefined) return invalid(c);
   const db = c.get("db");
   const firmId = c.get("firm").id;
 
@@ -79,15 +83,24 @@ requests.post("/requests", async (c) => {
 
   const id = randomId();
   const now = Date.now();
+  const { rows, perPerson } = expandItems(items, people, today(now, c.get("firm").tz).today);
+  if (rows.length > MAX_ITEMS) return c.json({ error: "too_many_items" }, 409);
   const made = { sql: "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ?)", binds: [firmId, id] };
   const [res] = await db.batch([
     db
       .prepare(
-        `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, created_by, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?
+        `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, created_by, created_at, per_person_json, valid_until) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
          WHERE ${SINGLE_TODAY}`,
       )
-      .bind(id, firmId, body.client_id, title, note, due, c.get("session")!.userId, now, firmId, now - DAY, firmId),
-    itemsFromTemplate(db, firmId, [id], items),
+      .bind(id, firmId, body.client_id, title, note, due, c.get("session")!.userId, now, perPerson.length ? JSON.stringify(perPerson) : null, validUntil, firmId, now - DAY, firmId),
+    db
+      .prepare(
+        `INSERT INTO people (id, firm_id, request_id, position, role, name, dob, created_at)
+         SELECT lower(hex(randomblob(16))), ?1, ?2, json_extract(value, '$.position'), json_extract(value, '$.role'), json_extract(value, '$.name'), json_extract(value, '$.dob'), ?3
+         FROM json_each(?4) WHERE EXISTS (SELECT 1 FROM requests WHERE firm_id = ?1 AND id = ?2)`,
+      )
+      .bind(firmId, id, now, JSON.stringify(people)),
+    insertRows(db, firmId, [id], rows),
     audit(c, "request.create", "request", id, undefined, made),
   ]);
   if (!res.meta.changes) return c.json({ error: "too_many_requests" }, 429);
@@ -97,7 +110,16 @@ requests.post("/requests", async (c) => {
 export async function loadRequest(c: Context<AppEnv>, id: string) {
   const db = c.get("db");
   const firmId = c.get("firm").id;
-  const row = await db.prepare(`SELECT ${COLS} FROM requests WHERE firm_id = ? AND id = ?`).bind(firmId, id).first<{ reminders_on: number }>();
+  const now = today(Date.now(), c.get("firm").tz);
+  const day = deadlineDay("requests", now.offset);
+  const { per_person_json, valid_until, must_last, deadline_day, ...row } = (await db
+    .prepare(`SELECT ${COLS}, per_person_json, valid_until, COALESCE(valid_until, date(${day}, '+6 months')) AS must_last, ${day} AS deadline_day FROM requests WHERE firm_id = ? AND id = ?`)
+    .bind(firmId, id)
+    .first<any>())!;
+  const { results: people } = await db
+    .prepare("SELECT id, position, role, name, dob FROM people WHERE firm_id = ? AND request_id = ? ORDER BY position")
+    .bind(firmId, id)
+    .all();
   const { results } = await db
     .prepare(`SELECT ${ITEM_COLS} FROM items WHERE firm_id = ? AND request_id = ? ORDER BY position`)
     .bind(firmId, id)
@@ -108,9 +130,14 @@ export async function loadRequest(c: Context<AppEnv>, id: string) {
     .all<{ item_id: string }>();
   return {
     ...row,
-    reminders_on: row!.reminders_on === 1,
+    reminders_on: row.reminders_on === 1,
+    valid_until: must_last as string,
+    valid_until_set: valid_until !== null,
+    per_person_items: per_person_json ? (JSON.parse(per_person_json) as unknown[]).length : 0,
+    people,
     items: results.map((i) => ({
       ...presentItem(i),
+      expiry_flag: flagOf({ status: i.status, valid_to: i.valid_to, hidden: i.hidden === 1 }, i.expiry_rule === "issue" ? deadline_day : must_last, now),
       files: files.filter((f) => f.item_id === i.id).map(({ item_id: _item, ...f }) => f),
     })),
   };
@@ -141,6 +168,11 @@ requests.patch("/requests/:id", async (c) => {
     const due = deadline(body.deadline);
     if (due === undefined) return invalid(c);
     fields.deadline = due;
+  }
+  if ("valid_until" in body) {
+    const day = parseDay(body.valid_until);
+    if (day === undefined) return invalid(c);
+    fields.valid_until = day;
   }
   if ("reminders_on" in body) {
     if (typeof body.reminders_on !== "boolean") return invalid(c);
@@ -180,14 +212,51 @@ requests.patch("/requests/:id", async (c) => {
   return c.json(await loadRequest(c, req.id));
 });
 
-const editable = (req: Req) => req.status === "draft" || req.status === "open" || req.status === "complete";
+export const editable = (req: Req) => req.status === "draft" || req.status === "open" || req.status === "complete";
 
 // repeated in the write itself so a close that lands after the read still wins
-const LIVE = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('draft', 'open', 'complete') AND deleted_at IS NULL)";
+export const LIVE = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('draft', 'open', 'complete') AND deleted_at IS NULL)";
 
 async function refused(c: Context<AppEnv>) {
   const req = await findRequest(c);
   return req && !editable(req) ? c.json({ error: "locked" }, 409) : notFound(c);
+}
+
+// an item for each person, or one with a translation set, takes its places at the end of the request
+async function addTagged(c: Context<AppEnv>, req: Req, item: Item) {
+  const db = c.get("db");
+  const firmId = c.get("firm").id;
+  const state = await db
+    .prepare(
+      `SELECT per_person_json, (SELECT COALESCE(MAX(position), -1) + 1 FROM items WHERE firm_id = ?1 AND request_id = ?2) AS base,
+         (SELECT COUNT(*) FROM items WHERE firm_id = ?1 AND request_id = ?2) AS count FROM requests WHERE firm_id = ?1 AND id = ?2`,
+    )
+    .bind(firmId, req.id)
+    .first<{ per_person_json: string | null; base: number; count: number }>();
+  const { results: people } = await db
+    .prepare("SELECT position, role, name, dob FROM people WHERE firm_id = ? AND request_id = ? ORDER BY position")
+    .bind(firmId, req.id)
+    .all<Person>();
+  const now = today(Date.now(), c.get("firm").tz).today;
+  const rows: Row[] = [];
+  if (item.per_person) {
+    for (const p of people) if (matches(item.per_person, p, now)) rows.push(...rowsFor(item, p, state!.base + rows.length, null));
+  } else {
+    rows.push(...rowsFor(item, null, state!.base, null));
+  }
+  if (state!.count + rows.length > MAX_ITEMS) return c.json({ error: "too_many_items" }, 409);
+  const live = { sql: LIVE, binds: [firmId, req.id] };
+  const kept = item.per_person ? JSON.stringify([...(state!.per_person_json ? JSON.parse(state!.per_person_json) : []), item]) : null;
+  const [res] = await db.batch([
+    kept
+      ? db.prepare(`UPDATE requests SET per_person_json = ? WHERE firm_id = ? AND id = ? AND status IN ('draft', 'open', 'complete') AND deleted_at IS NULL`).bind(kept, firmId, req.id)
+      : insertRows(db, firmId, [req.id], rows, live),
+    ...(kept ? [insertRows(db, firmId, [req.id], rows, live)] : []),
+    audit(c, "item.add", "request", req.id, { request: req.id }, live),
+    syncStatus(db, firmId, req.id),
+  ]);
+  if (!res.meta.changes) return refused(c);
+  return c.json(await loadRequest(c, req.id), 201);
 }
 
 requests.post("/requests/:id/items", async (c) => {
@@ -201,24 +270,26 @@ requests.post("/requests/:id/items", async (c) => {
   const firmId = c.get("firm").id;
   const db = c.get("db");
   if (!(await ownsExamples(db, firmId, [item.example]))) return exampleGone(c);
+  if (item.per_person || item.translation) return addTagged(c, req, item);
   if (item.show_if) {
     // here the condition names a position that is already in the request
     const p = await db
-      .prepare("SELECT kind, options_json, show_if_pos FROM items WHERE firm_id = ? AND request_id = ? AND position = ?")
+      .prepare("SELECT kind, options_json, show_if_pos, person_pos FROM items WHERE firm_id = ? AND request_id = ? AND position = ?")
       .bind(firmId, req.id, item.show_if.item)
-      .first<{ kind: string; options_json: string | null; show_if_pos: number | null }>();
-    if (!conditionOk(item.show_if, p ? { kind: p.kind, options: p.options_json ? JSON.parse(p.options_json) : null, conditional: p.show_if_pos !== null } : undefined)) return invalid(c);
+      .first<{ kind: string; options_json: string | null; show_if_pos: number | null; person_pos: number | null }>();
+    if (!conditionOk(item.show_if, p ? { kind: p.kind, options: p.options_json ? JSON.parse(p.options_json) : null, conditional: p.show_if_pos !== null || p.person_pos !== null } : undefined)) return invalid(c);
   }
   const [res] = await db.batch([
     db
       .prepare(
-        `INSERT INTO items (id, firm_id, request_id, position, label, help, required, kind, options_json, show_if_pos, show_if_value, example)
-         SELECT ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM items WHERE firm_id = ? AND request_id = ?), ?, ?, ?, ?, ?, ?, ?, ?
+        `INSERT INTO items (id, firm_id, request_id, position, label, help, required, kind, options_json, show_if_pos, show_if_value, example, expiry_rule, valid_months)
+         SELECT ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM items WHERE firm_id = ? AND request_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
          WHERE ${LIVE} AND (SELECT COUNT(*) FROM items WHERE firm_id = ? AND request_id = ?) < ${MAX_ITEMS}`,
       )
       .bind(
         id, firmId, req.id, firmId, req.id, item.label, item.help ?? null, item.required ? 1 : 0,
         item.kind ?? "file", item.options ? JSON.stringify(item.options) : null, item.show_if?.item ?? null, item.show_if?.value ?? null, item.example ?? null,
+        item.expiry ?? null, item.valid_months ?? null,
         firmId, req.id, firmId, req.id,
       ),
     audit(c, "item.add", "item", id, { request: req.id }, { sql: "EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND id = ?)", binds: [firmId, id] }),
@@ -255,6 +326,17 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
     if (example === undefined) return invalid(c);
     fields.example = example;
   }
+  for (const date of ["expires_on", "issued_on"]) {
+    if (!(date in body)) continue;
+    const day = parseDay(body[date]);
+    if (day === undefined) return invalid(c);
+    fields[date] = day;
+  }
+  if ("valid_months" in body) {
+    const n = body.valid_months;
+    if (!Number.isInteger(n) || (n as number) < 1 || (n as number) > 120) return invalid(c);
+    fields.valid_months = n as number;
+  }
   if (!Object.keys(fields).length) return invalid(c);
   const req = await findRequest(c);
   if (!req) return notFound(c);
@@ -264,6 +346,13 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
   const firmId = c.get("firm").id;
   if (!(await ownsExamples(db, firmId, [fields.example as string | null]))) return exampleGone(c);
   const itemId = c.req.param("itemId");
+  // the dates belong to documents that ask for them, and the months only to one counted from its issue date
+  const asked = ["expires_on", "issued_on", "valid_months"].filter((k) => k in fields);
+  if (asked.length) {
+    const rule = (await db.prepare("SELECT expiry_rule FROM items WHERE firm_id = ? AND request_id = ? AND id = ?").bind(firmId, req.id, itemId).first<{ expiry_rule: string | null }>())?.expiry_rule;
+    if (rule === undefined) return notFound(c);
+    if (!rule || ("valid_months" in fields && rule !== "issue")) return invalid(c);
+  }
   const [res] = await db.batch([
     db
       .prepare(`UPDATE items SET ${set.sql} WHERE firm_id = ? AND request_id = ? AND id = ? AND ${LIVE}`)
@@ -273,6 +362,14 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
       binds: [firmId, req.id, itemId, firmId, req.id],
     }),
     syncStatus(db, firmId, req.id),
+    ...("label" in fields
+      ? [
+          // a renamed document keeps its person's name, and a companion follows it; a companion renamed by hand stops following
+          db.prepare("UPDATE items SET label_base = ? WHERE firm_id = ? AND request_id = ? AND id = ? AND label_base IS NOT NULL AND companion IS NULL").bind(fields.label, firmId, req.id, itemId),
+          db.prepare("UPDATE items SET companion = NULL WHERE firm_id = ? AND request_id = ? AND id = ?").bind(firmId, req.id, itemId),
+          ...relabel(db, firmId, req.id),
+        ]
+      : []),
   ]);
   if (!res.meta.changes) return refused(c);
   const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(c.req.param("itemId")).first<any>();
@@ -286,11 +383,17 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
   if (req.hold_at) return c.json({ error: "legal_hold" }, 409);
   const db = c.get("db");
   const item = await db
-    .prepare("SELECT status FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
+    .prepare("SELECT status, position FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
     .bind(c.get("firm").id, req.id, c.req.param("itemId"))
-    .first<{ status: string }>();
+    .first<{ status: string; position: number }>();
   if (!item) return notFound(c);
   if (item.status !== "empty") return c.json({ error: "has_upload" }, 409);
+  // a document's translation question and companions go with it, unless the client has already answered or uploaded there
+  const started = await db
+    .prepare("SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND for_pos = ? AND (status != 'empty' OR EXISTS (SELECT 1 FROM files WHERE firm_id = items.firm_id AND item_id = items.id AND deleted_at IS NULL))")
+    .bind(c.get("firm").id, req.id, item.position)
+    .first();
+  if (started) return c.json({ error: "has_dependents" }, 409);
   const dependent = await db
     .prepare("SELECT 1 FROM items d JOIN items i ON i.firm_id = d.firm_id AND i.request_id = d.request_id AND i.position = d.show_if_pos WHERE d.firm_id = ? AND d.request_id = ? AND i.id = ?")
     .bind(c.get("firm").id, req.id, c.req.param("itemId"))
@@ -313,6 +416,9 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
       .prepare(`DELETE FROM files WHERE firm_id = ? AND item_id = ? AND deleted_at IS NOT NULL AND ${free} RETURNING r2_key`)
       .bind(firmId, itemId, firmId, req.id),
     db.prepare(`DELETE FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND ${bare} AND ${LIVE} AND ${free}`).bind(...binds),
+    db
+      .prepare(`DELETE FROM items WHERE firm_id = ? AND request_id = ? AND for_pos = ? AND ${bare} AND NOT EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ?)`)
+      .bind(firmId, req.id, item.position, firmId, req.id, itemId),
     syncStatus(db, firmId, req.id),
   ]);
   const keys = (gone.results as { r2_key: string }[]).map((f) => f.r2_key);
@@ -356,7 +462,7 @@ requests.post("/requests/:id/items/:itemId/review", async (c) => {
   const [, res] = await db.batch([
     audit(c, "item.review", "item", itemId, { request: req.id, decision: body.decision, ...(reasons.length ? { reasons } : {}) }, { sql: `${ready} AND ${same}`, binds: [...binds, ...sameBinds] }),
     db
-      .prepare(`UPDATE items SET status = ?, reject_note = ?, reject_reasons = ?, reviewed_by = ?, reviewed_at = ? WHERE firm_id = ? AND request_id = ? AND id = ? AND ${ready} AND ${same}`)
+      .prepare(`UPDATE items SET status = ?, reject_note = ?, reject_reasons = ?, reviewed_by = ?, reviewed_at = ?${reasons.includes("expired") ? ", expires_on = NULL, issued_on = NULL" : ""} WHERE firm_id = ? AND request_id = ? AND id = ? AND ${ready} AND ${same}`)
       .bind(status, note, reasons.length ? JSON.stringify(reasons) : null, c.get("session")!.userId, at, firmId, req.id, itemId, ...binds, ...sameBinds),
     syncStatus(db, firmId, req.id),
     // the client hears about rejections from the reminder pass, once they stop coming in

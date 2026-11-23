@@ -70,6 +70,7 @@ export async function purgeRequest(db: D1Database, bucket: R2Bucket, req: Target
       db.prepare(`UPDATE audit SET meta = json_remove(meta, '$.reasons') WHERE firm_id = ? AND request_id = ? AND action = 'item.review' AND ${mine}`).bind(...own, ...held),
       db.prepare(`DELETE FROM files WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db.prepare(`DELETE FROM items WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
+      db.prepare(`DELETE FROM people WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db.prepare(`DELETE FROM links WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db
         .prepare(

@@ -43,7 +43,7 @@ export async function findLink(env: Env, token: string): Promise<LiveLink | null
 export async function clientItems(db: D1Database, firmId: string, requestId: string) {
   const { results } = await db
     .prepare(
-      `SELECT id, label, help, required, status, reject_note, reject_reasons, unavailable_note, kind, example, options_json, answer FROM items i
+      `SELECT id, label, help, required, status, reject_note, reject_reasons, unavailable_note, kind, example, options_json, answer, person_pos, expiry_rule, valid_months, expires_on, issued_on FROM items i
        WHERE firm_id = ? AND request_id = ? AND ${visible("i")} ORDER BY position`,
     )
     .bind(firmId, requestId)
@@ -66,6 +66,10 @@ client.get("/c/:token", async (c) => {
   const items = await clientItems(db, req.firm_id, req.id);
   const { results: notes } = await db
     .prepare(NEWEST)
+    .bind(req.firm_id, req.id)
+    .all();
+  const { results: people } = await db
+    .prepare("SELECT position, role, name FROM people WHERE firm_id = ? AND request_id = ? ORDER BY position")
     .bind(req.firm_id, req.id)
     .all();
   // only what the emails to this client already show
@@ -93,6 +97,7 @@ client.get("/c/:token", async (c) => {
     expires_at: req.expires_at,
     contact: canSend(sender, now) ? { name: sender.legal_name ?? sender.name, email: sender.owner_email, phone: sender.phone, address: sender.address } : null,
     notes,
+    people,
     items,
   });
 });
