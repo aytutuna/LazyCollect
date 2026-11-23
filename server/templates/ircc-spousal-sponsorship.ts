@@ -8,6 +8,7 @@ const married = "Are you and your partner legally married?";
 const inCanada = "Is the person being sponsored living in Canada now?";
 const before = "Has either of you been married before?";
 const children = "Do you have dependent children?";
+const quebecSponsor = "Does the sponsor live in Quebec?";
 const translated = "Are any of your documents in a language other than English or French?";
 
 export default template("ircc-spousal-sponsorship", "Spousal or common-law sponsorship", [
@@ -27,10 +28,12 @@ export default template("ircc-spousal-sponsorship", "Spousal or common-law spons
   doc("Proof of the applicant's status in Canada", "Their permit, visitor record or other document, and any receipt for an extension.", inCanada),
   ask(before),
   doc("Divorce or death certificate", "For each earlier marriage or common-law union, for either of you.", before),
+  ask(quebecSponsor, "Quebec has its own sponsorship undertaking for sponsors who live there.", false),
+  doc("Quebec sponsorship undertaking (follow IRCC's and Quebec's instructions)", "Quebec's immigration ministry gives you the undertaking to sign. Send the signed copy once you have it.", quebecSponsor, false),
   ask(children),
   doc("Children's birth certificates and IDs", "Birth certificates showing the parents, and a passport or ID for each child.", children),
-  tag(doc("Police certificates", "From each country where they lived 6 months or more in a row since turning 18. Get the certificate after you leave that country, or within the time IRCC allows.", undefined, false), { per_person: "adults", expiry: "issue", valid_months: 6, translation: true }),
-  tag(doc("Medical exam receipt", "After IRCC tells you to, book with a panel physician. Each person needs an exam, including children.", undefined, false), { per_person: "everyone", expiry: "issue", valid_months: 12 }),
+  tag(doc("Police certificates", "For the person being sponsored and any adult family member who is not a citizen or permanent resident; not for the sponsor. From each country where they lived 6 months or more in a row since turning 18. Get the certificate after you leave that country, or within the time IRCC allows.", undefined, false), { per_person: "adults", expiry: "issue", valid_months: 6, translation: true }),
+  tag(doc("Medical exam receipt", "For the person being sponsored and any adult family member who is not a citizen or permanent resident; not for the sponsor. After IRCC tells you to, book with a panel physician. Each person being sponsored needs an exam, including children.", undefined, false), { per_person: "everyone", expiry: "issue", valid_months: 12 }),
   tag(doc("Digital photos", "Meeting IRCC photo specifications.", undefined, false), { per_person: "everyone" }),
   doc("Fee payment receipt", "The receipt from the online payment."),
   ask(translated),
