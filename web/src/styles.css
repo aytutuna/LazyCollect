@@ -1368,3 +1368,20 @@ td.pick {
 .client-page .question button.keep {
   margin-top: 0.75rem;
 }
+
+.person {
+  margin-top: 1.75rem;
+}
+
+.person > h3 {
+  font-size: 1.0625rem;
+  margin-bottom: 0;
+}
+
+.person > p {
+  margin-bottom: 0.5rem;
+}
+
+.flag {
+  margin: 0.25rem 0 0;
+}

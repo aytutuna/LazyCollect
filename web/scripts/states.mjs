@@ -11,7 +11,7 @@ const now = Date.now();
 const DAY = 86_400_000;
 
 const file = (id, name, size, o = {}) => ({ id, name, size, uploaded_at: now - DAY, sent_back_at: null, ...o });
-const item = (id, label, o = {}) => ({ id, label, help: null, required: true, status: "empty", reject_note: null, reject_reasons: [], unavailable_note: null, files: [], kind: "file", example: null, options: null, answer: null, ...o });
+const item = (id, label, o = {}) => ({ id, label, help: null, required: true, status: "empty", reject_note: null, reject_reasons: [], unavailable_note: null, files: [], kind: "file", example: null, options: null, answer: null, person_pos: null, expiry_rule: null, valid_months: null, expires_on: null, issued_on: null, ...o });
 // a question; `when` is [parent id, value] and keeps the item out of the page until the parent has that answer
 const ask = (id, label, kind, o = {}) => item(id, label, { kind, ...o });
 
@@ -25,6 +25,7 @@ const base = {
   status: "open",
   contact: { name: "Tuna Tax Services Inc.", email: "hello@tunatax.example", phone: "416-555-0100", address: "12 King St W\nToronto ON M5H 1A1" },
   notes: [],
+  people: [],
   items: [
     item("i1", "Passport", { help: "The page with your photo" }),
     item("i2", "T4 slip", { status: "submitted", files: [file("f1", "t4.pdf", 182_000)] }),
@@ -87,6 +88,38 @@ const reasons = {
   ],
 };
 
+// a family case: each person's items under their name, with dates asked for next to the upload
+const family = {
+  ...base,
+  title: "Spousal sponsorship",
+  people: [
+    { position: 0, role: "principal", name: "Omar Haddad" },
+    { position: 1, role: "spouse", name: "Amira Haddad" },
+    { position: 2, role: "child", name: "Layla Haddad" },
+  ],
+  items: [
+    item("g1", "Marriage certificate", { status: "submitted", files: [file("f1", "marriage.pdf", 210_000)] }),
+    item("p1", "Passport — Omar Haddad", { person_pos: 0, expiry_rule: "expiry", status: "submitted", expires_on: "2031-05-01", files: [file("f2", "omar-passport.jpg", 1_400_000)] }),
+    item("p2", "Police certificate — Omar Haddad", { person_pos: 0, expiry_rule: "issue", valid_months: 6, help: "From each country where he lived for 6 months or more" }),
+    item("p3", "Passport — Amira Haddad", { person_pos: 1, expiry_rule: "expiry" }),
+    item("p4", "Spouse's employment letter — Amira Haddad", { person_pos: 1, required: false }),
+    item("p5", "Passport — Layla Haddad", { person_pos: 2, expiry_rule: "expiry", status: "approved", expires_on: "2030-02-10", files: [file("f3", "layla.jpg", 900_000)] }),
+    item("p6", "School letter — Layla Haddad", { person_pos: 2 }),
+  ],
+};
+
+// a document that may need a translation: the yes/no question, and the companions once the answer is no
+const translation = {
+  ...base,
+  title: "Study permit",
+  items: [
+    item("t1", "Birth certificate", { status: "submitted", files: [file("f1", "birth.pdf", 180_000)] }),
+    ask("t2", "Is Birth certificate in English or French?", "yesno", { status: "submitted", answer: "no" }),
+    item("t3", "Certified translation of Birth certificate", { help: "A translation into English or French by a certified translator. The original you uploaded above goes with it.", when: ["t2", "no"] }),
+    item("t4", "Translator's affidavit (if the translator is not certified)", { required: false, help: "If the translator is not certified, IRCC asks for an affidavit from the translator with the translation.", when: ["t2", "no"] }),
+  ],
+};
+
 // a 1x1 PNG is enough for the page to prepare and send
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const photo = { name: "passport.png", mimeType: "image/png", buffer: PNG };
@@ -116,6 +149,19 @@ export const states = [
   { name: "thread", view: thread },
   { name: "questions", view: questions },
   { name: "reasons", view: reasons },
+  { name: "family", view: family },
+  { name: "translation", view: translation },
+  {
+    // a date typed next to the upload is saved
+    name: "family-date",
+    view: family,
+    async run(page) {
+      const field = page.getByLabel("Expiry date").first();
+      await field.fill("2032-01-15");
+      await field.blur();
+      await page.getByText("Date saved.", { exact: false }).first().waitFor({ state: "attached" });
+    },
+  },
   {
     // the example opens under the help text
     name: "example",
@@ -248,6 +294,11 @@ export async function mock(page, state) {
     if (req.method() === "PUT" && path.endsWith("/answer")) {
       const target = view.items.find((i) => path.includes(`/items/${i.id}/`));
       Object.assign(target, { answer: req.postDataJSON().answer, status: req.postDataJSON().answer === null ? "empty" : "submitted" });
+      return json(200, { items: shown().items });
+    }
+    if (req.method() === "PUT" && path.endsWith("/dates")) {
+      const target = view.items.find((i) => path.includes(`/items/${i.id}/`));
+      Object.assign(target, req.postDataJSON());
       return json(200, { items: shown().items });
     }
     if (req.method() === "PUT") {
