@@ -2,23 +2,21 @@
 // - forms and documents: canada.ca/en/immigration-refugees-citizenship/services/canadian-citizenship/adult-minor/how/adult-forms-documents.html
 // - document checklist CIT 0007: canada.ca/content/dam/ircc/documents/pdf/english/kits/forms/cit0007/01-03-2024/cit0007e.pdf (that version may be replaced)
 // IRCC checks tax filing with the CRA, so the notices of assessment are optional. The online account lists the documents for the applicant.
-import { ask, doc, template, text } from "./build";
+import { ask, doc, template, text, tag } from "./build";
 
 const adult = "Are you between 18 and 54 years old?";
-const lived = "Have you lived in another country for 183 days or more in a row during the last 4 years?";
 const renamed = "Has your name or date of birth changed since it was on your PR card?";
 const translated = "Are any of your documents in a language other than English or French?";
 
 export default template("ircc-citizenship", "Citizenship application (adult)", [
   doc("PR card", "Front and back in one file. If you have no PR card or it is not valid, say so in the notes."),
-  doc("Passport pages", "Colour copies of your passports and travel documents for the whole period you are counting, so IRCC can check your days in Canada.", undefined, true, "passport"),
+  tag(doc("Passport pages", "Colour copies of your passports and travel documents for the whole period you are counting, so IRCC can check your days in Canada.", undefined, true, "passport"), { per_person: "everyone" }),
   doc("Physical presence calculation", "Your count of the days you were in Canada, worked out as the IRCC guide explains.", undefined, false),
   ask(adult, "Language proof is needed between these ages."),
   doc("Language proof", "A diploma or transcript in English or French, an accepted test result (CELPIP-G, CELPIP-LS, IELTS General, PTE Core, TEF, TCF), or a LINC or CLIC certificate.", adult),
   doc("Government ID", "Two pieces of ID that show your name and date of birth. At least one must have your photo."),
-  doc("Digital photos", "Meeting IRCC photo specifications. A paper application takes two identical printed photos."),
-  ask(lived, "IRCC asks for police certificates in some cases."),
-  doc("Police certificates", "From each country where you lived that long. The certificate must be recent; your IRCC checklist gives the rule.", lived),
+  tag(doc("Digital photos", "Meeting IRCC photo specifications. A paper application takes two identical printed photos."), { per_person: "everyone" }),
+  tag(doc("Police certificates", "From each country where they lived that long. The certificate must be recent; your IRCC checklist gives the rule.", undefined, false), { per_person: "adults", expiry: "issue", valid_months: 6, translation: true }),
   ask(renamed),
   doc("Name change evidence", "Marriage certificate, court order or the official document that changed it.", renamed),
   doc("Notices of Assessment", "IRCC checks tax filing with the CRA. Send these only if your representative asks.", undefined, false, "noa"),

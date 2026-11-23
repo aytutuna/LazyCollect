@@ -203,11 +203,12 @@ describe("built-in examples", () => {
 
   it("carry onto a request made from the template and show on the client page", async () => {
     const { cookie, client } = await setup();
-    const req = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "Study", deadline: inDays(9), template_id: "ircc-study-permit" } })).json<any>();
-    expect(req.items[0]).toMatchObject({ label: "Passport", example: "passport" });
+    const req = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "Study", deadline: inDays(9), template_id: "ircc-study-permit", people: [{ role: "principal", name: "Omar" }] } })).json<any>();
+    const passport = req.items.findIndex((i: any) => i.label === "Passport — Omar");
+    expect(req.items[passport]).toMatchObject({ example: "passport" });
     const url = (await (await api(`/api/requests/${req.id}/link`, { method: "POST", cookie })).json<any>()).url;
     const view = await (await api(`/api/c/${url.split("/c/")[1]}`)).json<any>();
-    expect(view.items[0].example).toBe("passport");
+    expect(view.items[passport].example).toBe("passport");
     expect(await count()).toBe(0);
   });
 

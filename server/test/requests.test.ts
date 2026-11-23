@@ -30,8 +30,11 @@ describe("requests", () => {
     const templates = await (await api("/api/templates", { cookie })).json<any[]>();
     const built = templates.find((t) => t.id === "ircc-study-permit");
     const body = await (await make(cookie, { client_id: client.id, title: "Study permit", deadline: inDays(7), template_id: "ircc-study-permit" })).json<any>();
-    expect(body.items.map((i: any) => i.label)).toEqual(built.items.map((i: any) => i.label));
-    expect(body.items.map((i: any) => i.required)).toEqual(built.items.map((i: any) => i.required));
+    // what is asked for each person waits for the people; the rest is copied in order
+    const plain = built.items.filter((i: any) => !i.per_person);
+    const copied = body.items.filter((i: any) => plain.some((p: any) => p.label === i.label));
+    expect(copied.map((i: any) => i.label)).toEqual(plain.map((i: any) => i.label));
+    expect(copied.map((i: any) => i.required)).toEqual(plain.map((i: any) => i.required));
   });
 
   it("copies a firm template and keeps later template edits out of the request", async () => {

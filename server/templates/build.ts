@@ -4,6 +4,8 @@ type When = string | [string, string];
 type Spec = { label: string; help?: string; required: boolean; kind?: Kind; options?: string[]; when?: When; example?: string } & Pick<Item, "per_person" | "expiry" | "valid_months" | "translation">;
 
 export const doc = (label: string, help?: string, when?: When, required = true, example?: string): Spec => ({ label, help, required, when, example });
+// adds per-person, date or translation options to an item
+export const tag = (spec: Spec, more: Pick<Spec, "per_person" | "expiry" | "valid_months" | "translation">): Spec => ({ ...spec, ...more });
 export const ask = (label: string, help?: string, required = true): Spec => ({ label, help, required, kind: "yesno" });
 export const text = (label: string, help?: string, when?: When, required = true, kind: Kind = "text"): Spec => ({ label, help, required, kind, when });
 
