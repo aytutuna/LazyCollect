@@ -22,7 +22,12 @@ staff.get("/staff", async (c) => {
   const firmId = c.get("firm").id;
   const db = c.env.CONTROL;
   const [people, invites] = await db.batch([
-    db.prepare("SELECT id, email, name, role, created_at FROM users WHERE firm_id = ? AND disabled_at IS NULL ORDER BY created_at, id").bind(firmId),
+    db
+      .prepare(
+        `SELECT id, email, name, role, created_at, (SELECT COUNT(*) FROM sessions s WHERE s.user_id = users.id AND s.expires_at > ?) AS sessions
+         FROM users WHERE firm_id = ? AND disabled_at IS NULL ORDER BY created_at, id`,
+      )
+      .bind(Date.now(), firmId),
     db.prepare(`SELECT id, email, name, created_at, expires_at FROM invites WHERE firm_id = ? AND ${LIVE} ORDER BY created_at DESC, id`).bind(firmId),
   ]);
   return c.json({ people: people.results, invites: invites.results });
@@ -119,6 +124,16 @@ staff.delete("/staff/invites/:id", async (c) => {
   const res = await c.env.CONTROL.prepare(`UPDATE invites SET revoked_at = ? WHERE id = ? AND firm_id = ? AND ${LIVE}`).bind(Date.now(), id, c.get("firm").id).run();
   if (!res.meta.changes) return notFound(c);
   await audit(c, "invite.revoke", "invite", id).run();
+  return c.json({ ok: true });
+});
+
+staff.post("/staff/:id/sign-out", async (c) => {
+  const id = c.req.param("id");
+  const db = c.env.CONTROL;
+  if (!(await db.prepare("SELECT 1 FROM users WHERE id = ? AND firm_id = ? AND disabled_at IS NULL").bind(id, c.get("firm").id).first())) return notFound(c);
+  if (id === c.get("session")!.userId) return c.json({ error: "cannot_target_self" }, 409);
+  const res = await db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(id).run();
+  await audit(c, "staff.sign_out", "user", id, { count: res.meta.changes }).run();
   return c.json({ ok: true });
 });
 

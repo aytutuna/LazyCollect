@@ -134,7 +134,8 @@ export async function addMember(owner: string, email = "member@firm.test"): Prom
   const userId = randomId();
   await env.CONTROL.batch([
     env.CONTROL.prepare("INSERT INTO users (id, firm_id, email, role, created_at) VALUES (?, ?, ?, 'member', ?)").bind(userId, me.firm.id, email, now),
-    env.CONTROL.prepare("INSERT INTO sessions (token_hash, user_id, firm_id, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)").bind(
+    env.CONTROL.prepare("INSERT INTO sessions (id, token_hash, user_id, firm_id, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(
+      randomId(),
       await sha256(token),
       userId,
       me.firm.id,
