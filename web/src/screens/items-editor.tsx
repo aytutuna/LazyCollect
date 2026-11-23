@@ -1,12 +1,15 @@
 import { t } from "../i18n";
 import type { Kind, TemplateItem } from "../types";
 import { Check, Field } from "../ui";
+import { ExampleField } from "./example-field";
 
 export type EditItem = {
   key: number;
   label: string;
   help: string;
   required: boolean;
+  // an uploaded example's id or a standard one's name; empty for none
+  example: string;
   kind: Kind;
   // one choice per line
   options: string;
@@ -24,7 +27,7 @@ const PARENTS: Kind[] = ["yesno", "choice", "multi"];
 
 let keys = 0;
 
-export const newItem = (): EditItem => ({ key: ++keys, label: "", help: "", required: true, kind: "file", options: "", showKey: null, showValue: "" });
+export const newItem = (): EditItem => ({ key: ++keys, label: "", help: "", required: true, example: "", kind: "file", options: "", showKey: null, showValue: "" });
 
 export function toEditItems(items: TemplateItem[]): EditItem[] {
   const made: EditItem[] = items.map((i) => ({
@@ -32,6 +35,7 @@ export function toEditItems(items: TemplateItem[]): EditItem[] {
     label: i.label,
     help: i.help ?? "",
     required: i.required,
+    example: i.example ?? "",
     kind: i.kind ?? "file",
     options: (i.options ?? []).join("\n"),
     showKey: null,
@@ -52,6 +56,7 @@ export function toPayload(items: EditItem[]) {
       label: i.label.trim(),
       help: i.help.trim(),
       required: i.required,
+      ...(i.example ? { example: i.example } : {}),
       ...(i.kind === "file" ? {} : { kind: i.kind }),
       ...(CHOICES.includes(i.kind) ? { options: lines(i.options) } : {}),
       ...(at >= 0 ? { show_if: { item: at, value: i.showValue } } : {}),
@@ -139,6 +144,7 @@ export function ItemsEditor({ items, onChange }: { items: EditItem[]; onChange: 
           <Field label={t("items.help")}>
             <input maxLength={500} value={item.help} onInput={(e) => change(item.key, { help: e.currentTarget.value })} />
           </Field>
+          <ExampleField value={item.example} onChange={(example) => change(item.key, { example })} />
           <QuestionFields item={item} parents={parentsOf(items, index)} dependedOn={items.some((i) => i.showKey === item.key)} onChange={(patch) => change(item.key, patch)} />
           <Check label={t("items.required")} checked={item.required} onChange={(required) => change(item.key, { required })} />
           <div class="row-actions">

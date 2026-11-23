@@ -4,6 +4,7 @@ import { ApiError, del, get, post, put, useAction, useLoad } from "./api";
 import { fmtDate, fmtDateTime, fmtSize, isLate, relative, setZone } from "./format";
 import { t } from "./i18n";
 import { UploadQueue, sendJob, type Job } from "./queue";
+import { Example, FixList, exampleSrc } from "./reasons";
 import type { ClientItem, ClientView, Note } from "./types";
 import { Badge, LegalLink, Loading, errorText } from "./ui";
 import { MAX_SIZE, combineToPdf, prepareImage, type Prepared } from "./upload";
@@ -248,13 +249,15 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
           </Badge>
         </div>
         {item.help && <div class="muted">{item.help}</div>}
+        <Example item={item} src={exampleSrc(item.example ?? "", `/api${base}/items/${item.id}/example`)} />
         <p class="item-status" id={`status-${item.id}`} tabIndex={-1}>
           {statusText(item, firm)}
         </p>
-        {item.status === "rejected" && item.reject_note && (
+        {item.status === "rejected" && (item.reject_note || item.reject_reasons?.length > 0) && (
           <div class="callout">
             <strong>{t("client.rejected_title")}</strong>
-            <p>{item.reject_note}</p>
+            <FixList item={item} />
+            {item.reject_note && <p>{item.reject_note}</p>}
           </div>
         )}
         {item.status === "unavailable" && item.unavailable_note && <p class="muted reason-text">{t("client.unavailable_reason", { note: item.unavailable_note })}</p>}
@@ -266,6 +269,7 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
               <li key={f.id}>
                 <span class="name">
                   {f.name} <span class="muted">({fmtSize(f.size)})</span>
+                  {f.sent_back_at && <span class="tag">{t("client.sent_back")}</span>}
                 </span>
                 {open && (
                   <button class="small quiet" disabled={action.busy} aria-label={t("client.remove_file", { name: f.name })} onClick={() => remove(f.id, f.name)}>
@@ -439,13 +443,15 @@ function Question({ item, firm, save }: { item: ClientItem; firm: string; save: 
             {item.help}
           </div>
         )}
+        <Example item={item} src={exampleSrc(item.example ?? "", `/api${base}/items/${item.id}/example`)} />
         <p class="item-status" id={`status-${item.id}`} tabIndex={-1}>
           {status}
         </p>
-        {item.status === "rejected" && item.reject_note && (
+        {item.status === "rejected" && (item.reject_note || item.reject_reasons?.length > 0) && (
           <div class="callout">
             <strong>{t("client.rejected_question")}</strong>
-            <p>{item.reject_note}</p>
+            <FixList item={item} />
+            {item.reject_note && <p>{item.reject_note}</p>}
           </div>
         )}
         {open ? input() : <p class="answer">{answerText(item)}</p>}

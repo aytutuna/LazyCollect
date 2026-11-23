@@ -18,10 +18,11 @@ export function onApiEvents(h: typeof hooks) {
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   if (method !== "GET") headers["X-Collect"] = "1";
-  if (body !== undefined) headers["content-type"] = "application/json";
+  const raw = body instanceof Blob;
+  if (body !== undefined && !raw) headers["content-type"] = "application/json";
   let res: Response;
   try {
-    res = await fetch(`/api${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    res = await fetch(`/api${path}`, { method, headers, body: body === undefined ? undefined : raw ? body : JSON.stringify(body) });
   } catch {
     throw new ApiError(0, "network");
   }
@@ -38,6 +39,7 @@ export const get = <T>(path: string) => call<T>("GET", path);
 export const post = <T = { ok: true }>(path: string, body?: unknown) => call<T>("POST", path, body);
 export const put = <T = { ok: true }>(path: string, body: unknown) => call<T>("PUT", path, body);
 export const patch = <T = { ok: true }>(path: string, body: unknown) => call<T>("PATCH", path, body);
+export const send = <T>(path: string, blob: Blob) => call<T>("POST", path, blob);
 export const del = (path: string) => call<{ ok: true }>("DELETE", path);
 
 export function useLoad<T>(load: () => Promise<T>, deps: unknown[] = []) {

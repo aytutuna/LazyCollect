@@ -5,6 +5,8 @@ import { fmtDate, fmtDateTime, fmtSize, fromInput, inDays, isLate, relative, toI
 import { t } from "../i18n";
 import type { ActivityRow, Client, Firm, Item, ItemWithFiles, LinkResult, Message, RequestDetail } from "../types";
 import { ActivityList } from "./activity";
+import { Why } from "../reasons";
+import { ExampleField } from "./example-field";
 import { QuestionFields, newItem, toPayload, type EditItem, type Parent } from "./items-editor";
 import { Review } from "./review";
 import { Thread } from "./thread";
@@ -316,7 +318,8 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
                         <strong>{t("detail.answer")}:</strong> {answerText(item) || <span class="muted">{t("detail.no_answer")}</span>}
                       </p>
                     )}
-                    {item.status === "rejected" && item.reject_note && <p class="reject">{item.reject_note}</p>}
+                    {item.status === "rejected" && <Why item={item} />}
+                    {item.example && <p class="muted">{t("example.has")}</p>}
                     {item.status === "unavailable" && (req.status === "open" || req.status === "complete") && <Unavailable requestId={id} item={item} onDone={reload} />}
                     {item.status === "waived" && item.unavailable_note && <p class="muted">{t("detail.unavailable_reason", { note: item.unavailable_note })}</p>}
                     {item.files.length > 0 && (
@@ -328,6 +331,7 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
                                 {f.name}
                               </button>{" "}
                               <span class="muted">({fmtSize(f.size)})</span>
+                              {f.sent_back_at && <span class="tag">{t("detail.sent_back")}</span>}
                             </span>
                             <a class="small-link" href={`/api/files/${f.id}`}>
                               {t("viewer.download")}
@@ -466,14 +470,14 @@ function condition(items: Item[], item: Item): string {
 
 // An existing item changes only its wording; a new one can also be a question that depends on an earlier item, named by its position.
 function ItemForm({ requestId, item, parents, onSaved, onCancel }: { requestId: string; item?: Item; parents?: Parent[]; onSaved: () => void; onCancel: () => void }) {
-  const [edit, setEdit] = useState<EditItem>(() => ({ ...newItem(), label: item?.label ?? "", help: item?.help ?? "", required: item?.required ?? true }));
+  const [edit, setEdit] = useState<EditItem>(() => ({ ...newItem(), label: item?.label ?? "", help: item?.help ?? "", required: item?.required ?? true, example: item?.example ?? "" }));
   const { busy, error, run } = useAction();
 
   async function submit(e: Event) {
     e.preventDefault();
     const [added] = toPayload([{ ...edit, showKey: null }]);
     const body = item
-      ? { label: edit.label, help: edit.help, required: edit.required }
+      ? { label: edit.label, help: edit.help, required: edit.required, example: edit.example || null }
       : { ...added, ...(edit.showKey === null ? {} : { show_if: { item: edit.showKey, value: edit.showValue } }) };
     const call = item ? () => patch(`/requests/${requestId}/items/${item.id}`, body) : () => post(`/requests/${requestId}/items`, body);
     if (await run(call)) onSaved();
@@ -488,6 +492,7 @@ function ItemForm({ requestId, item, parents, onSaved, onCancel }: { requestId: 
       <Field label={t("items.help")}>
         <input maxLength={500} value={edit.help} onInput={(e) => change({ help: e.currentTarget.value })} />
       </Field>
+      <ExampleField value={edit.example} onChange={(example) => change({ example })} />
       {!item && <QuestionFields item={edit} parents={parents ?? []} dependedOn={false} onChange={change} />}
       <Check label={t("items.required")} checked={edit.required} onChange={(required) => change({ required })} />
       <ErrorNote error={error} />

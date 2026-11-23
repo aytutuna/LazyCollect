@@ -10,8 +10,8 @@ const TOKEN = `na_${"a".repeat(43)}`;
 const now = Date.now();
 const DAY = 86_400_000;
 
-const file = (id, name, size) => ({ id, name, size, uploaded_at: now - DAY });
-const item = (id, label, o = {}) => ({ id, label, help: null, required: true, status: "empty", reject_note: null, unavailable_note: null, files: [], kind: "file", options: null, answer: null, ...o });
+const file = (id, name, size, o = {}) => ({ id, name, size, uploaded_at: now - DAY, sent_back_at: null, ...o });
+const item = (id, label, o = {}) => ({ id, label, help: null, required: true, status: "empty", reject_note: null, reject_reasons: [], unavailable_note: null, files: [], kind: "file", example: null, options: null, answer: null, ...o });
 // a question; `when` is [parent id, value] and keeps the item out of the page until the parent has that answer
 const ask = (id, label, kind, o = {}) => item(id, label, { kind, ...o });
 
@@ -69,6 +69,24 @@ const questions = {
   ],
 };
 
+// what a document sent back for reasons looks like, with the file that was sent back and a newer one beside it
+const reasons = {
+  ...base,
+  title: "2025 tax return",
+  items: [
+    item("i4", "Rent receipts", {
+      status: "rejected",
+      reject_reasons: ["blurry", "glare", "other"],
+      reject_note: "Page 2 is cut off at the bottom.",
+      files: [file("f3", "rent.jpg", 2_400_000, { sent_back_at: now - DAY / 2 }), file("f4", "rent-2.jpg", 1_900_000)],
+    }),
+    item("i1", "Passport", { help: "The page with your photo", example: "passport" }),
+    item("i2", "T4 slip", { example: "t4", status: "rejected", reject_reasons: ["wrong_period", "expired"], files: [file("f5", "t4.pdf", 182_000, { sent_back_at: now - DAY / 2 })] }),
+    ask("q1", "Which tax year is this for?", "text", { status: "rejected", answer: "2023", reject_reasons: ["wrong_period"], reject_note: "We need 2025." }),
+    item("i5", "Void cheque", { example: "0123456789abcdef0123456789abcdef", help: "For direct deposit" }),
+  ],
+};
+
 // a 1x1 PNG is enough for the page to prepare and send
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const photo = { name: "passport.png", mimeType: "image/png", buffer: PNG };
@@ -79,6 +97,18 @@ export const states = [
   { name: "unavailable", view: unavailable },
   { name: "thread", view: thread },
   { name: "questions", view: questions },
+  { name: "reasons", view: reasons },
+  {
+    // the example opens under the help text
+    name: "example",
+    view: reasons,
+    async run(page) {
+      await page.getByRole("button", { name: "See an example" }).first().click();
+      await page.getByRole("img", { name: "Example of Passport" }).waitFor();
+      await page.getByRole("button", { name: "See an example" }).last().click();
+      await page.getByRole("img", { name: "Example of Void cheque" }).waitFor();
+    },
+  },
   {
     // answering yes brings the receipts item onto the page, and the live region says so
     name: "questions-answered",
@@ -152,6 +182,8 @@ export async function mock(page, state) {
     if (net.down) return route.abort("internetdisconnected");
     const path = new URL(req.url()).pathname;
     const json = (status, body) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+    // an uploaded example is any image; one of the illustrations stands in for it
+    if (req.method() === "GET" && path.endsWith("/example")) return route.fulfill({ status: 200, contentType: "image/svg+xml", body: await readFile(join(dist, "examples/void-cheque.svg")) });
     if (req.method() === "GET") return json(200, shown());
     if (req.method() === "PUT" && path.endsWith("/answer")) {
       const target = view.items.find((i) => path.includes(`/items/${i.id}/`));

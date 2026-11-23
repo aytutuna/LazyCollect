@@ -640,6 +640,76 @@ details summary {
   white-space: pre-wrap;
 }
 
+.reasons {
+  margin: 0.25rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.items .reasons li {
+  display: list-item;
+  padding: 0.125rem 0;
+  border: 0;
+}
+
+.reasons-pick {
+  margin-bottom: 1rem;
+}
+
+.reasons-pick legend {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.reasons-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0 1rem;
+}
+
+.reasons-pick .check {
+  margin-bottom: 0.5rem;
+}
+
+.tag {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0 0.4rem;
+  margin-left: 0.25rem;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.example {
+  margin-top: 0.25rem;
+}
+
+.example img {
+  display: block;
+  max-width: 100%;
+  max-height: 22rem;
+  margin-top: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.example-field {
+  margin-bottom: 1rem;
+}
+
+.example-field img {
+  display: block;
+  max-width: 14rem;
+  max-height: 10rem;
+  margin: 0.5rem 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -751,6 +821,10 @@ dialog.viewer[open] {
   border-top: 1px solid var(--line);
   max-height: 45%;
   overflow-y: auto;
+}
+
+.viewer footer:has(.reasons-pick) {
+  max-height: 70%;
 }
 
 .viewer footer nav {
