@@ -3,6 +3,7 @@ import { audit } from "./audit";
 import { usable } from "./firm";
 import { LINK_GRACE, sealToken } from "./links";
 import { MANUAL_SEQ, addressStopped, deliver, hasRoom, unsubUrl } from "./mail";
+import { ITEM_COLS, conditionOk, presentItem } from "./questions";
 import { regionOf, type Region } from "./regions";
 import { listRequests } from "./search";
 import { missingItems, senderName, sendersOf } from "./reminders";
@@ -16,7 +17,6 @@ import { invalid, maybe, notFound, readBody, setClause, text } from "./validate"
 export const requests = new Hono<AppEnv>();
 
 const COLS = "id, client_id, title, note, deadline, firm_name, status, sent_at, closed_at, created_at, reminders_on, next_reminder_at, ended_at, keep_until, hold_at";
-export const ITEM_COLS = "id, position, label, help, required, status, reject_note, reviewed_at, unavailable_note";
 const MAX_ITEMS = 100;
 const MAX_PER_DAY = 300;
 const MAX_AHEAD = 2 * 365 * DAY;
@@ -83,8 +83,9 @@ requests.post("/requests", async (c) => {
       .bind(id, firmId, body.client_id, title, note, due, c.get("session")!.userId, now, firmId, now - DAY),
     db
       .prepare(
-        `INSERT INTO items (id, firm_id, request_id, position, label, help, required)
-         SELECT lower(hex(randomblob(16))), ?, ?, key, json_extract(value, '$.label'), json_extract(value, '$.help'), json_extract(value, '$.required')
+        `INSERT INTO items (id, firm_id, request_id, position, label, help, required, kind, options_json, show_if_pos, show_if_value)
+         SELECT lower(hex(randomblob(16))), ?, ?, key, json_extract(value, '$.label'), json_extract(value, '$.help'), json_extract(value, '$.required'),
+           COALESCE(json_extract(value, '$.kind'), 'file'), json_extract(value, '$.options'), json_extract(value, '$.show_if.item'), json_extract(value, '$.show_if.value')
          FROM json_each(?) WHERE EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ?)`,
       )
       .bind(firmId, id, JSON.stringify(items), firmId, id),
@@ -101,7 +102,7 @@ async function loadRequest(c: Context<AppEnv>, id: string) {
   const { results } = await db
     .prepare(`SELECT ${ITEM_COLS} FROM items WHERE firm_id = ? AND request_id = ? ORDER BY position`)
     .bind(firmId, id)
-    .all<{ id: string; required: number }>();
+    .all<any>();
   const { results: files } = await db
     .prepare("SELECT id, item_id, name, size, mime, uploaded_at FROM files WHERE firm_id = ? AND request_id = ? AND state = 'live' AND deleted_at IS NULL ORDER BY uploaded_at, rowid")
     .bind(firmId, id)
@@ -110,8 +111,7 @@ async function loadRequest(c: Context<AppEnv>, id: string) {
     ...row,
     reminders_on: row!.reminders_on === 1,
     items: results.map((i) => ({
-      ...i,
-      required: i.required === 1,
+      ...presentItem(i),
       files: files.filter((f) => f.item_id === i.id).map(({ item_id: _item, ...f }) => f),
     })),
   };
@@ -201,14 +201,26 @@ requests.post("/requests/:id/items", async (c) => {
   const id = randomId();
   const firmId = c.get("firm").id;
   const db = c.get("db");
+  if (item.show_if) {
+    // here the condition names a position that is already in the request
+    const p = await db
+      .prepare("SELECT kind, options_json, show_if_pos FROM items WHERE firm_id = ? AND request_id = ? AND position = ?")
+      .bind(firmId, req.id, item.show_if.item)
+      .first<{ kind: string; options_json: string | null; show_if_pos: number | null }>();
+    if (!conditionOk(item.show_if, p ? { kind: p.kind, options: p.options_json ? JSON.parse(p.options_json) : null, conditional: p.show_if_pos !== null } : undefined)) return invalid(c);
+  }
   const [res] = await db.batch([
     db
       .prepare(
-        `INSERT INTO items (id, firm_id, request_id, position, label, help, required)
-         SELECT ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM items WHERE firm_id = ? AND request_id = ?), ?, ?, ?
+        `INSERT INTO items (id, firm_id, request_id, position, label, help, required, kind, options_json, show_if_pos, show_if_value)
+         SELECT ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM items WHERE firm_id = ? AND request_id = ?), ?, ?, ?, ?, ?, ?, ?
          WHERE ${LIVE} AND (SELECT COUNT(*) FROM items WHERE firm_id = ? AND request_id = ?) < ${MAX_ITEMS}`,
       )
-      .bind(id, firmId, req.id, firmId, req.id, item.label, item.help ?? null, item.required ? 1 : 0, firmId, req.id, firmId, req.id),
+      .bind(
+        id, firmId, req.id, firmId, req.id, item.label, item.help ?? null, item.required ? 1 : 0,
+        item.kind ?? "file", item.options ? JSON.stringify(item.options) : null, item.show_if?.item ?? null, item.show_if?.value ?? null,
+        firmId, req.id, firmId, req.id,
+      ),
     audit(c, "item.add", "item", id, { request: req.id }, { sql: "EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND id = ?)", binds: [firmId, id] }),
     syncStatus(db, firmId, req.id),
   ]);
@@ -216,8 +228,8 @@ requests.post("/requests/:id/items", async (c) => {
     const now = await findRequest(c);
     return now && editable(now) ? c.json({ error: "too_many_items" }, 409) : refused(c);
   }
-  const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(id).first<{ required: number }>();
-  return c.json({ ...row, required: row!.required === 1 }, 201);
+  const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(id).first<any>();
+  return c.json(presentItem(row), 201);
 });
 
 requests.patch("/requests/:id/items/:itemId", async (c) => {
@@ -257,8 +269,8 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
     syncStatus(db, firmId, req.id),
   ]);
   if (!res.meta.changes) return refused(c);
-  const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(c.req.param("itemId")).first<{ required: number }>();
-  return c.json({ ...row, required: row!.required === 1 });
+  const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(c.req.param("itemId")).first<any>();
+  return c.json(presentItem(row));
 });
 
 requests.delete("/requests/:id/items/:itemId", async (c) => {
@@ -273,6 +285,11 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
     .first<{ status: string }>();
   if (!item) return notFound(c);
   if (item.status !== "empty") return c.json({ error: "has_upload" }, 409);
+  const dependent = await db
+    .prepare("SELECT 1 FROM items d JOIN items i ON i.firm_id = d.firm_id AND i.request_id = d.request_id AND i.position = d.show_if_pos WHERE d.firm_id = ? AND d.request_id = ? AND i.id = ?")
+    .bind(c.get("firm").id, req.id, c.req.param("itemId"))
+    .first();
+  if (dependent) return c.json({ error: "has_dependents" }, 409);
   const firm = c.get("firm");
   const firmId = firm.id;
   const itemId = c.req.param("itemId");
@@ -302,7 +319,8 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
 requests.post("/requests/:id/items/:itemId/review", async (c) => {
   const body = await readBody(c);
   if (!body || (body.decision !== "approve" && body.decision !== "reject")) return invalid(c);
-  const seen = Array.isArray(body.files) && body.files.every((f) => typeof f === "string") ? [...new Set(body.files as string[])] : null;
+  const answered = body.answered_at === undefined || body.answered_at === null ? null : Number.isInteger(body.answered_at) ? (body.answered_at as number) : undefined;
+  const seen = answered !== undefined && Array.isArray(body.files) && body.files.every((f) => typeof f === "string") ? [...new Set(body.files as string[])] : null;
   if (!seen) return invalid(c);
   const approve = body.decision === "approve";
   const note = approve ? null : text(body.note, 500);
@@ -315,12 +333,13 @@ requests.post("/requests/:id/items/:itemId/review", async (c) => {
   const status = approve ? "approved" : "rejected";
   const ready = `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status IN ('submitted', 'approved'))
     AND EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)`;
-  // the files the reviewer was looking at must still be exactly the item's live files
+  // the files (or the answer) the reviewer was looking at must still be exactly what the item holds
   const live = "firm_id = ? AND item_id = ? AND state = 'live' AND deleted_at IS NULL";
   const same = `(SELECT COUNT(*) FROM files WHERE ${live}) = ?
-    AND NOT EXISTS (SELECT 1 FROM files WHERE ${live} AND id NOT IN (SELECT value FROM json_each(?)))`;
+    AND NOT EXISTS (SELECT 1 FROM files WHERE ${live} AND id NOT IN (SELECT value FROM json_each(?)))
+    AND EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND answer_at IS ?)`;
   const binds = [firmId, req.id, itemId, firmId, req.id];
-  const sameBinds = [firmId, itemId, seen.length, firmId, itemId, JSON.stringify(seen)];
+  const sameBinds = [firmId, itemId, seen.length, firmId, itemId, JSON.stringify(seen), firmId, req.id, itemId, answered];
   // the audit row goes first: its condition reads the status the update changes
   const at = Date.now();
   const [, res] = await db.batch([
@@ -355,8 +374,8 @@ requests.post("/requests/:id/items/:itemId/review", async (c) => {
     const reviewable = (item.status === "submitted" || item.status === "approved") && (now?.status === "open" || now?.status === "complete");
     return c.json({ error: reviewable ? "stale" : "locked" }, 409);
   }
-  const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(itemId).first<{ required: number }>();
-  return c.json({ ...row, required: row!.required === 1 });
+  const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(itemId).first<any>();
+  return c.json(presentItem(row));
 });
 
 requests.post("/requests/:id/close", async (c) => {

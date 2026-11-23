@@ -2,7 +2,8 @@ import { Hono, type Context } from "hono";
 import { audit, auditClient } from "./audit";
 import { rateLimited } from "./auth";
 import { findLink } from "./client";
-import { ITEM_COLS, findRequest } from "./requests";
+import { presentItem, ITEM_COLS } from "./questions";
+import { findRequest } from "./requests";
 import type { AppEnv } from "./session";
 import { syncStatus } from "./status";
 import { nextReminder } from "./tz";
@@ -32,14 +33,14 @@ async function clientSide(c: Context<AppEnv>, mark: boolean) {
   const ipHash = await hmac(c.env.HASH_KEY, ipPrefix(ip ?? "unknown"));
   const from = mark ? "'empty', 'rejected'" : "'unavailable'";
   const here = [req.firm_id, req.id, itemId];
-  const ready = `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status IN (${from})) AND ${OPEN}`;
+  const ready = `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND kind = 'file' AND status IN (${from})) AND ${OPEN}`;
   const readyBinds = [...here, req.firm_id, req.id];
   // the audit row goes first: its condition reads the status the update changes
   const [, res] = await db.batch([
     auditClient(db, req.firm_id, ipHash, mark ? "item.unavailable" : "item.available", "item", itemId, { request: req.id }, { sql: ready, binds: readyBinds }),
     mark
       ? db
-          .prepare(`UPDATE items SET status = 'unavailable', unavailable_note = ?, unavailable_at = ? WHERE firm_id = ? AND request_id = ? AND id = ? AND status IN (${from}) AND ${OPEN}`)
+          .prepare(`UPDATE items SET status = 'unavailable', unavailable_note = ?, unavailable_at = ? WHERE firm_id = ? AND request_id = ? AND id = ? AND kind = 'file' AND status IN (${from}) AND ${OPEN}`)
           .bind(note, now, ...readyBinds)
       : db
           .prepare(
@@ -48,7 +49,7 @@ async function clientSide(c: Context<AppEnv>, mark: boolean) {
                  WHEN EXISTS (SELECT 1 FROM files WHERE firm_id = items.firm_id AND item_id = items.id AND state = 'live' AND deleted_at IS NULL AND uploaded_at > COALESCE(items.reviewed_at, 0)) THEN 'submitted'
                  WHEN reject_note IS NOT NULL THEN 'rejected'
                  ELSE 'empty' END
-             WHERE firm_id = ? AND request_id = ? AND id = ? AND status IN (${from}) AND ${OPEN}`,
+             WHERE firm_id = ? AND request_id = ? AND id = ? AND kind = 'file' AND status IN (${from}) AND ${OPEN}`,
           )
           .bind(...readyBinds),
     syncStatus(db, req.firm_id, req.id),
@@ -119,6 +120,6 @@ unavailable.post("/requests/:id/items/:itemId/unavailable", async (c) => {
     const item = await db.prepare("SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ?").bind(firmId, req.id, itemId).first();
     return item ? c.json({ error: "stale" }, 409) : notFound(c);
   }
-  const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(itemId).first<{ required: number }>();
-  return c.json({ ...row, required: row!.required === 1 });
+  const row = await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(itemId).first<any>();
+  return c.json(presentItem(row));
 });

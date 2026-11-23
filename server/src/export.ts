@@ -4,6 +4,7 @@ import { keyLimited } from "./util";
 import { fileKey, decryptStream } from "./crypt";
 import { disposition } from "./files";
 import { firmDek } from "./keys";
+import { visible } from "./questions";
 import { regionOf, type Region } from "./regions";
 import { findRequest } from "./requests";
 import type { AppEnv } from "./session";
@@ -25,6 +26,22 @@ async function checklistText(db: D1Database, firmId: string, requestId: string):
   const state = (i: { status: string; reject_note: string | null }) =>
     i.status === "waived" ? "accepted as not needed" : i.status === "unavailable" ? "client says they do not have it, waiting for an answer" : i.reject_note ? `asked again: ${i.reject_note}` : "client has it after all";
   return results.map((i) => `${i.label}\n  ${state(i)}\n  ${i.unavailable_note ? `client's reason: ${i.unavailable_note}` : "no reason given"}\n`).join("\n");
+}
+
+// the questions that apply to the client and what they answered, in checklist order; null when there are none
+async function answersText(db: D1Database, firmId: string, requestId: string): Promise<string | null> {
+  const { results } = await db
+    .prepare(
+      `SELECT label, kind, answer, status, reject_note FROM items i WHERE firm_id = ? AND request_id = ? AND kind != 'file' AND ${visible("i")} ORDER BY position`,
+    )
+    .bind(firmId, requestId)
+    .all<{ label: string; kind: string; answer: string | null; status: string; reject_note: string | null }>();
+  if (!results.length) return null;
+  const shown = (i: { kind: string; answer: string | null }) =>
+    i.answer === null ? "no answer" : i.kind === "multi" ? (JSON.parse(i.answer) as string[]).join(", ") : i.kind === "yesno" ? (i.answer === "yes" ? "Yes" : "No") : i.answer;
+  return results
+    .map((i) => `${i.label}\n  ${shown(i)}${i.status === "rejected" && i.reject_note ? `\n  sent back: ${i.reject_note}` : ""}\n`)
+    .join("\n");
 }
 
 // the thread with the client as plain text, oldest first; null when there is none
@@ -62,7 +79,8 @@ exportZip.get("/requests/:id/export", async (c) => {
     .all<{ id: string; item_id: string; r2_key: string; name: string; size: number; uploaded_at: number; label: string }>();
   const thread = await messagesText(c.get("db"), firm.id, req.id);
   const checklist = await checklistText(c.get("db"), firm.id, req.id);
-  if (!results.length && !thread && !checklist) return c.json({ error: "no_files" }, 409);
+  const given = await answersText(c.get("db"), firm.id, req.id);
+  if (!results.length && !thread && !checklist && !given) return c.json({ error: "no_files" }, 409);
   if (results.length > MAX_ENTRIES) return c.json({ error: "export_too_big" }, 413);
 
   const region = firm.region as Region;
@@ -88,7 +106,7 @@ exportZip.get("/requests/:id/export", async (c) => {
 
   const encoder = new TextEncoder();
   const sizes = results.map((f) => f.size);
-  for (const [name, content] of [["messages.txt", thread], ["checklist.txt", checklist]] as const) {
+  for (const [name, content] of [["messages.txt", thread], ["checklist.txt", checklist], ["answers.txt", given]] as const) {
     if (!content) continue;
     const bytes = encoder.encode(content);
     entries.push({ name, mtime: Date.now(), open: async () => new Blob([bytes]).stream() });

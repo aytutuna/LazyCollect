@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { rateLimited } from "./auth";
 import { isRegion, regionOf, type Region } from "./regions";
 import { NEWEST } from "./notes";
+import { presentItem, visible } from "./questions";
 import { canSend, sendersOf } from "./reminders";
 import type { AppEnv } from "./session";
 import { HOUR, hmac, ipPrefix, randomId } from "./util";
@@ -38,6 +39,22 @@ export async function findLink(env: Env, token: string): Promise<LiveLink | null
   return req ? { region, db, hash, req } : null;
 }
 
+// what the client sees: the items that apply to them, with their files and the answers they gave
+export async function clientItems(db: D1Database, firmId: string, requestId: string) {
+  const { results } = await db
+    .prepare(
+      `SELECT id, label, help, required, status, reject_note, unavailable_note, kind, options_json, answer FROM items i
+       WHERE firm_id = ? AND request_id = ? AND ${visible("i")} ORDER BY position`,
+    )
+    .bind(firmId, requestId)
+    .all<any>();
+  const { results: files } = await db
+    .prepare("SELECT id, item_id, name, size, uploaded_at FROM files WHERE firm_id = ? AND request_id = ? AND state = 'live' AND deleted_at IS NULL ORDER BY uploaded_at, rowid")
+    .bind(firmId, requestId)
+    .all<{ item_id: string }>();
+  return results.map((i) => ({ ...presentItem(i), files: files.filter((f) => f.item_id === i.id).map(({ item_id: _item, ...f }) => f) }));
+}
+
 client.get("/c/:token", async (c) => {
   const ip = c.req.header("CF-Connecting-IP");
   if (await rateLimited(c.env, c.env.CLIENT, ip)) return c.json({ error: "rate_limited" }, 429);
@@ -46,14 +63,7 @@ client.get("/c/:token", async (c) => {
   const { db, hash, req } = link;
   const now = Date.now();
 
-  const { results } = await db
-    .prepare("SELECT id, label, help, required, status, reject_note, unavailable_note FROM items WHERE firm_id = ? AND request_id = ? ORDER BY position")
-    .bind(req.firm_id, req.id)
-    .all<{ id: string; required: number }>();
-  const { results: files } = await db
-    .prepare("SELECT id, item_id, name, size, uploaded_at FROM files WHERE firm_id = ? AND request_id = ? AND state = 'live' AND deleted_at IS NULL ORDER BY uploaded_at, rowid")
-    .bind(req.firm_id, req.id)
-    .all<{ item_id: string }>();
+  const items = await clientItems(db, req.firm_id, req.id);
   const { results: notes } = await db
     .prepare(NEWEST)
     .bind(req.firm_id, req.id)
@@ -79,10 +89,6 @@ client.get("/c/:token", async (c) => {
     expires_at: req.expires_at,
     contact: canSend(sender, now) ? { name: sender.legal_name ?? sender.name, email: sender.owner_email, phone: sender.phone, address: sender.address } : null,
     notes,
-    items: results.map((i) => ({
-      ...i,
-      required: i.required === 1,
-      files: files.filter((f) => f.item_id === i.id).map(({ item_id: _item, ...f }) => f),
-    })),
+    items,
   });
 });

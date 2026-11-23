@@ -2,6 +2,7 @@ import { sendMail } from "./email";
 import { usable } from "./firm";
 import { linkUrl } from "./links";
 import { MANUAL_SEQ, deliver, stopHash, unsubUrl, type Missing } from "./mail";
+import { visible } from "./questions";
 import { regionIds, regionOf, type Region } from "./regions";
 import { SPACING, dayOf, inHours, nextOpening, nextReminder, sameDay } from "./tz";
 import { DAY, HOUR, MINUTE } from "./util";
@@ -45,7 +46,7 @@ export const canSend = (s: Sender | undefined, now: number): s is Sender & { add
 export async function missingItems(db: D1Database, firmId: string, requestId: string, onlyRejected: boolean): Promise<Missing[]> {
   const { results } = await db
     .prepare(
-      `SELECT label, required, reject_note FROM items WHERE firm_id = ? AND request_id = ?
+      `SELECT label, required, reject_note FROM items i WHERE firm_id = ? AND request_id = ? AND ${visible("i")}
        AND status IN (${onlyRejected ? "'rejected'" : "'empty', 'rejected'"}) ORDER BY required DESC, position`,
     )
     .bind(firmId, requestId)
@@ -275,12 +276,13 @@ async function noticePass(env: Env, db: D1Database, now: number) {
          (SELECT COUNT(*) FROM files f WHERE f.firm_id = r.firm_id AND f.request_id = r.id AND f.uploaded_by = 'client'
            AND f.state = 'live' AND f.deleted_at IS NULL AND f.uploaded_at > COALESCE(r.notified_at, 0)) AS n,
          (SELECT COUNT(*) FROM notes q WHERE q.firm_id = r.firm_id AND q.request_id = r.id AND q.author = 'client' AND q.created_at > COALESCE(r.notified_at, 0)) AS q,
-         (SELECT COUNT(*) FROM items i WHERE i.firm_id = r.firm_id AND i.request_id = r.id AND i.status = 'unavailable' AND i.unavailable_at > COALESCE(r.notified_at, 0)) AS u
+         (SELECT COUNT(*) FROM items i WHERE i.firm_id = r.firm_id AND i.request_id = r.id AND i.status = 'unavailable' AND i.unavailable_at > COALESCE(r.notified_at, 0)) AS u,
+         (SELECT COUNT(*) FROM items i WHERE i.firm_id = r.firm_id AND i.request_id = r.id AND i.kind != 'file' AND i.answer_at > COALESCE(r.notified_at, 0)) AS a
        ${JOIN} WHERE r.notice_due_at IS NOT NULL AND (r.notified_at IS NULL OR r.notified_at <= ?) AND r.deleted_at IS NULL
        ORDER BY r.notice_due_at LIMIT ${BATCH}`,
     )
     .bind(now - HOUR)
-    .all<{ id: string; firm_id: string; title: string; notified_at: number | null; due: number; tries: number; client_name: string; n: number; q: number; u: number }>();
+    .all<{ id: string; firm_id: string; title: string; notified_at: number | null; due: number; tries: number; client_name: string; n: number; q: number; u: number; a: number }>();
   const owners = await ownersOf(env, results.map((r) => r.firm_id));
 
   await each(results, async (r) => {
@@ -289,13 +291,14 @@ async function noticePass(env: Env, db: D1Database, now: number) {
       .bind(now, r.firm_id, r.id, r.due)
       .run();
     const to = owners.get(r.firm_id);
-    if (claimed.meta.changes !== 1 || !to || !(r.n || r.q || r.u)) return;
+    if (claimed.meta.changes !== 1 || !to || !(r.n || r.q || r.u || r.a)) return;
     const parts = [
       r.n && `uploaded ${r.n} ${r.n === 1 ? "document" : "documents"}`,
+      r.a && `answered ${r.a} ${r.a === 1 ? "question" : "questions"}`,
       r.u && `said they don't have ${r.u} ${r.u === 1 ? "item" : "items"}`,
       r.q && `sent ${r.q} ${r.q === 1 ? "message" : "messages"}`,
     ].filter(Boolean);
-    const what = `${r.client_name} ${parts.join(", ")} ${r.u || r.q ? "on" : "to"} ${r.title}`;
+    const what = `${r.client_name} ${parts.join(", ")} ${r.u || r.q || r.a ? "on" : "to"} ${r.title}`;
     try {
       await sendMail(env, {
         from: env.EMAIL_FROM,

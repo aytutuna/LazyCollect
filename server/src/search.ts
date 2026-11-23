@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { visible } from "./questions";
 import type { AppEnv } from "./session";
 import { DAY } from "./util";
 import { invalid } from "./validate";
@@ -75,17 +76,17 @@ export async function listRequests(c: Context<AppEnv>) {
   }
   const grouped = (withActivity: boolean) =>
     `SELECT r.id, r.client_id, cl.name AS client_name, r.title, r.deadline, r.status, r.sent_at, r.created_at,
-       COALESCE(SUM(i.status = 'empty'), 0) AS empty,
-       COALESCE(SUM(i.status = 'submitted'), 0) AS submitted,
-       COALESCE(SUM(i.status = 'approved'), 0) AS approved,
-       COALESCE(SUM(i.status = 'rejected'), 0) AS rejected,
-       COALESCE(SUM(i.status = 'unavailable'), 0) AS unavailable,
-       COALESCE(SUM(i.status = 'waived'), 0) AS waived,
+       COALESCE(SUM(i.status = 'empty' AND ${visible("i")}), 0) AS empty,
+       COALESCE(SUM(i.status = 'submitted' AND ${visible("i")}), 0) AS submitted,
+       COALESCE(SUM(i.status = 'approved' AND ${visible("i")}), 0) AS approved,
+       COALESCE(SUM(i.status = 'rejected' AND ${visible("i")}), 0) AS rejected,
+       COALESCE(SUM(i.status = 'unavailable' AND ${visible("i")}), 0) AS unavailable,
+       COALESCE(SUM(i.status = 'waived' AND ${visible("i")}), 0) AS waived,
        (SELECT COUNT(*) FROM notes n WHERE n.firm_id = r.firm_id AND n.request_id = r.id AND n.author = 'client'
          AND n.created_at > COALESCE((SELECT MAX(created_at) FROM notes WHERE firm_id = r.firm_id AND request_id = r.id AND author = 'user'), 0)) AS unanswered,
-       COALESCE(SUM(i.required = 1 AND i.status IN ('empty', 'rejected')), 0) AS missing${
+       COALESCE(SUM(i.required = 1 AND i.status IN ('empty', 'rejected') AND ${visible("i")}), 0) AS missing${
          withActivity
-           ? `, NULLIF(MAX(COALESCE(MAX(i.reviewed_at), 0), COALESCE((SELECT MAX(f.uploaded_at) FROM files f WHERE f.firm_id = r.firm_id AND f.request_id = r.id AND f.state = 'live' AND f.deleted_at IS NULL), 0), COALESCE(MAX(i.unavailable_at), 0), COALESCE((SELECT MAX(n.created_at) FROM notes n WHERE n.firm_id = r.firm_id AND n.request_id = r.id), 0)), 0) AS last_at`
+           ? `, NULLIF(MAX(COALESCE(MAX(i.reviewed_at), 0), COALESCE((SELECT MAX(f.uploaded_at) FROM files f WHERE f.firm_id = r.firm_id AND f.request_id = r.id AND f.state = 'live' AND f.deleted_at IS NULL), 0), COALESCE(MAX(i.unavailable_at), 0), COALESCE(MAX(i.answer_at), 0), COALESCE((SELECT MAX(n.created_at) FROM notes n WHERE n.firm_id = r.firm_id AND n.request_id = r.id), 0)), 0) AS last_at`
            : ""
        }
      FROM requests r

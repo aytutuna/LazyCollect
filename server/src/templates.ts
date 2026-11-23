@@ -10,12 +10,13 @@ import t1SelfEmployed from "../templates/t1-self-employed.json";
 import t2YearEnd from "../templates/t2-year-end.json";
 import { audit } from "./audit";
 import type { AppEnv } from "./session";
+import { parseKind, checkConditions, type Item } from "./questions";
 import { randomId } from "./util";
 import { invalid, locale, maybe, notFound, readBody, setClause, text } from "./validate";
 
 const MAX_TEMPLATES = 200;
 
-export type Item = { label: string; help?: string; required: boolean };
+export type { Item };
 type Template = { id: string; name: string; items: Item[] };
 
 export const builtinTemplates: Template[] = [
@@ -39,13 +40,15 @@ export function parseItem(v: unknown): Item | undefined {
   const label = text(o.label, 200);
   const help = maybe(o.help, 500);
   if (!label || help === undefined || (o.required !== undefined && typeof o.required !== "boolean")) return undefined;
-  return { label, ...(help ? { help } : {}), required: o.required ?? true };
+  const kind = parseKind(o);
+  if (!kind) return undefined;
+  return { label, ...(help ? { help } : {}), required: o.required ?? true, ...kind };
 }
 
 export function parseItems(v: unknown): Item[] | undefined {
   if (!Array.isArray(v) || !v.length || v.length > MAX_ITEMS) return undefined;
   const items = v.map(parseItem);
-  return items.every((i) => i) ? (items as Item[]) : undefined;
+  return items.every((i) => i) && checkConditions(items as Item[]) ? (items as Item[]) : undefined;
 }
 
 type Row = { id: string; name: string; locale: string; items_json: string; created_at: number; updated_at: number };

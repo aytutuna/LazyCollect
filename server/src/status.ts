@@ -1,8 +1,11 @@
-// An open request is complete once every required item is submitted, approved or waived and some item has a live file or was waived,
-// and goes back when that stops being true. An item the client has no document for waits for the account's answer before it counts.
+import { visible } from "./questions";
+
+// An open request is complete once every shown required item is submitted, approved or waived and some item has a live file,
+// an answer or was waived, and goes back when that stops being true. An item the client has no document for waits for the
+// account's answer before it counts. A hidden item (its yes/no or choice question says it does not apply) is never missing.
 const DONE = `(EXISTS (SELECT 1 FROM files WHERE firm_id = requests.firm_id AND request_id = requests.id AND state = 'live' AND deleted_at IS NULL)
-    OR EXISTS (SELECT 1 FROM items WHERE firm_id = requests.firm_id AND request_id = requests.id AND status = 'waived'))
-  AND NOT EXISTS (SELECT 1 FROM items WHERE firm_id = requests.firm_id AND request_id = requests.id AND required = 1 AND status NOT IN ('submitted', 'approved', 'waived'))`;
+    OR EXISTS (SELECT 1 FROM items WHERE firm_id = requests.firm_id AND request_id = requests.id AND (status = 'waived' OR (kind != 'file' AND status IN ('submitted', 'approved')))))
+  AND NOT EXISTS (SELECT 1 FROM items i WHERE i.firm_id = requests.firm_id AND i.request_id = requests.id AND i.required = 1 AND i.status NOT IN ('submitted', 'approved', 'waived') AND ${visible("i")})`;
 
 export const YEAR = 31_557_600_000;
 export const DEFAULT_YEARS = 7;

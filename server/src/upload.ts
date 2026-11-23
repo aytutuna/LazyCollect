@@ -96,7 +96,7 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
 
   const itemId = c.req.param("itemId");
   const item = await db
-    .prepare("SELECT status FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
+    .prepare("SELECT status FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND kind = 'file'")
     .bind(req.firm_id, req.id, itemId)
     .first<{ status: string }>();
   if (!item) return notFound(c);
