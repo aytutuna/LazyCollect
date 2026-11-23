@@ -132,13 +132,15 @@ export function Requests() {
 }
 
 function Progress({ r }: { r: RequestRow }) {
-  const total = r.empty + r.submitted + r.approved + r.rejected;
-  const done = r.submitted + r.approved;
+  const total = r.empty + r.submitted + r.approved + r.rejected + r.unavailable + r.waived;
+  const done = r.submitted + r.approved + r.waived;
   return (
     <>
       <progress max={total || 1} value={done} aria-label={t("progress", { done, total })} />
       <span class="sub">{t("progress", { done, total })}</span>
       {r.submitted > 0 && <Badge tone="teal">{t("requests.to_review_n", { n: r.submitted })}</Badge>}
+      {r.unavailable > 0 && <Badge tone="amber">{t("requests.unavailable_n", { n: r.unavailable })}</Badge>}
+      {r.unanswered > 0 && <Badge tone="amber">{t("requests.unanswered_n", { n: r.unanswered })}</Badge>}
     </>
   );
 }
