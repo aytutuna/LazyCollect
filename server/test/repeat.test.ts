@@ -60,17 +60,17 @@ describe("repeating one request", () => {
   });
 
   it("copies an item column added later without it being named in the code", async () => {
-    await env.DB_NA.prepare("ALTER TABLE items ADD COLUMN kind TEXT").run();
+    await env.DB_NA.prepare("ALTER TABLE items ADD COLUMN tag TEXT").run();
     try {
       const { cookie, req } = await openRequest();
-      await env.DB_NA.prepare("UPDATE items SET kind = 'question' WHERE id = ?").bind(req.items[1].id).run();
+      await env.DB_NA.prepare("UPDATE items SET tag = 'question' WHERE id = ?").bind(req.items[1].id).run();
       const made = await (await repeat(cookie, req.id)).json<any>();
-      expect((await q("SELECT label, kind FROM items WHERE request_id = ? ORDER BY position", made.id))).toEqual([
-        { label: "Passport", kind: null },
-        { label: "Visa", kind: "question" },
+      expect((await q("SELECT label, tag FROM items WHERE request_id = ? ORDER BY position", made.id))).toEqual([
+        { label: "Passport", tag: null },
+        { label: "Visa", tag: "question" },
       ]);
     } finally {
-      await env.DB_NA.prepare("ALTER TABLE items DROP COLUMN kind").run();
+      await env.DB_NA.prepare("ALTER TABLE items DROP COLUMN tag").run();
     }
   });
 
@@ -175,5 +175,47 @@ describe("repeating many requests", () => {
     await api(`/api/requests/${ids[1]}`, { method: "DELETE", cookie });
     expect((await api("/api/batches", { method: "POST", cookie, body: { request_ids: ids, title: "x", reminders_on: true } })).status).toBe(404);
     expect(await q("SELECT 1 FROM batches")).toHaveLength(0);
+  });
+});
+
+describe("repeating a request with questions", () => {
+  async function answered() {
+    const { cookie, client } = await setup();
+    await api("/api/firm", { method: "PATCH", cookie, body: { address: "12 King St W\nToronto ON M5H 1A1" } });
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'active'").run();
+    const items = [
+      { label: "Did you move?", kind: "yesno", required: true },
+      { label: "Moving receipts", required: true, show_if: { item: 0, value: "yes" } },
+      { label: "Province", kind: "choice", options: ["ON", "QC"], required: false },
+    ];
+    const req = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "2025 taxes", deadline: at(2027, 4, 30, 23, 59), items } })).json<any>();
+    const { url } = await (await api(`/api/requests/${req.id}/link`, { method: "POST", cookie })).json<any>();
+    const path = `/api/c/${url.split("/c/")[1]}`;
+    for (const [i, value] of [[0, "yes"], [2, "QC"]] as const) {
+      expect((await api(`${path}/items/${req.items[i].id}/answer`, { method: "PUT", body: { answer: value } })).status).toBe(200);
+    }
+    return { cookie, req };
+  }
+
+  const shape = (id: string) => q("SELECT label, kind, options_json, show_if_pos, show_if_value, status, answer, answer_at FROM items WHERE request_id = ? ORDER BY position", id);
+  const unanswered = [
+    { label: "Did you move?", kind: "yesno", options_json: null, show_if_pos: null, show_if_value: null, status: "empty", answer: null, answer_at: null },
+    { label: "Moving receipts", kind: "file", options_json: null, show_if_pos: 0, show_if_value: "yes", status: "empty", answer: null, answer_at: null },
+    { label: "Province", kind: "choice", options_json: JSON.stringify(["ON", "QC"]), show_if_pos: null, show_if_value: null, status: "empty", answer: null, answer_at: null },
+  ];
+
+  it("copies the questions and conditions without the answers", async () => {
+    const { cookie, req } = await answered();
+    expect((await q("SELECT answer, answer_at FROM items WHERE id = ?", req.items[0].id))[0]).toEqual({ answer: "yes", answer_at: expect.any(Number) });
+    const made = await (await repeat(cookie, req.id)).json<any>();
+    expect(await shape(made.id)).toEqual(unanswered);
+  });
+
+  it("does the same through a batch", async () => {
+    const { cookie, req } = await answered();
+    const res = await api("/api/batches", { method: "POST", cookie, body: { request_ids: [req.id], title: "Repeat", reminders_on: true } });
+    expect(res.status).toBe(201);
+    const [copy] = await q("SELECT r.id FROM requests r JOIN batch_items i ON i.request_id = r.id");
+    expect(await shape(copy.id)).toEqual(unanswered);
   });
 });

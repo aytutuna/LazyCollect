@@ -359,7 +359,7 @@ describe("the batch page", () => {
     const reqs = await q("SELECT r.id FROM requests r JOIN clients c ON c.id = r.client_id ORDER BY c.name");
     await env.DB_NA.prepare("UPDATE requests SET first_opened_at = ? WHERE id IN (?, ?)").bind(NOW, reqs[0].id, reqs[1].id).run();
     await env.DB_NA.prepare("UPDATE requests SET status = 'complete' WHERE id = ?").bind(reqs[0].id).run();
-    await env.DB_NA.prepare("UPDATE items SET status = 'submitted' WHERE id = (SELECT id FROM items WHERE request_id = ? LIMIT 1)").bind(reqs[1].id).run();
+    await env.DB_NA.prepare("UPDATE items SET status = 'submitted' WHERE request_id = ? AND position = 0").bind(reqs[1].id).run();
     expect(await one(batch.id, cookie)).toMatchObject({ total: 4, sent: 4, opened: 2, complete: 1, review: 1 });
     const rows = async (filter: string) => (await (await api(`/api/batches/${batch.id}/rows?filter=${filter}`, { cookie })).json<any>()).rows.map((r: any) => r.client_name);
     expect(await rows("opened")).toEqual(["Client 0", "Client 1"]);
@@ -415,5 +415,46 @@ describe("existing rows", () => {
     expect((await q("SELECT reference, email_ok_at FROM clients"))[0].reference).toBe("R-1");
     const made = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: list[0].id, title: "T", deadline: inDays(9), items: [{ label: "A" }] } })).json<any>();
     expect(made.first_opened_at).toBeNull();
+  });
+});
+
+describe("a batch with questions", () => {
+  it("gives every client the questions and conditions of the built-in template", async () => {
+    const { cookie, ids } = await ready(2);
+    expect((await create(cookie, body(ids))).status).toBe(201);
+    const rows = await q("SELECT request_id, position, kind, options_json, show_if_pos, show_if_value FROM items ORDER BY request_id, position");
+    const first = rows.filter((r) => r.request_id === rows[0].request_id);
+    expect(first.some((i) => i.kind === "yesno")).toBe(true);
+    expect(first.some((i) => i.show_if_pos !== null && i.show_if_value === "yes")).toBe(true);
+    const shape = (r: any[]) => r.map(({ position, kind, options_json, show_if_pos, show_if_value }) => [position, kind, options_json, show_if_pos, show_if_value]);
+    expect(shape(rows.filter((r) => r.request_id !== rows[0].request_id))).toEqual(shape(first));
+  });
+
+  it("counts a request as complete and a hidden item as not needing review", async () => {
+    const { cookie, ids } = await ready(1);
+    mockOutbound();
+    const items = [
+      { label: "Did you move?", kind: "yesno", required: true },
+      { label: "Moving receipts", required: true, show_if: { item: 0, value: "yes" } },
+    ];
+    const src = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: ids[0], title: "Source", deadline: inDays(30), items } })).json<any>();
+    const batch = await (await create(cookie, { request_id: src.id, client_ids: ids, title: "Copy", deadline: inDays(60), reminders_on: true })).json<any>();
+    await runBatches(env, NOW);
+    const [copy] = await q("SELECT r.id FROM requests r JOIN batch_items i ON i.request_id = r.id");
+    const link = await (await api(`/api/requests/${copy.id}/link`, { method: "POST", cookie })).json<any>();
+    const path = `/api/c/${link.url.split("/c/")[1]}`;
+    const [moved, receipts] = (await q("SELECT id FROM items WHERE request_id = ? ORDER BY position", copy.id)).map((r) => r.id);
+    expect(await one(batch.id, cookie)).toMatchObject({ complete: 0, review: 0 });
+    await api(`${path}/items/${moved}/answer`, { method: "PUT", body: { answer: "yes" } });
+    // the answer to a question waits for review; the receipts it asks for are still missing
+    expect(await one(batch.id, cookie)).toMatchObject({ complete: 0, review: 1 });
+    await api(`${path}/items/${moved}/answer`, { method: "PUT", body: { answer: "no" } });
+    await env.DB_NA.prepare("UPDATE items SET status = 'submitted' WHERE id = ?").bind(receipts).run();
+    const done = await one(batch.id, cookie);
+    expect(done).toMatchObject({ complete: 1, review: 1 });
+    await env.DB_NA.prepare("UPDATE items SET status = 'approved' WHERE id = ?").bind(moved).run();
+    expect(await one(batch.id, cookie)).toMatchObject({ complete: 1, review: 0 });
+    const rows = async (filter: string) => (await (await api(`/api/batches/${batch.id}/rows?filter=${filter}`, { cookie })).json<any>()).rows.length;
+    expect([await rows("complete"), await rows("review")]).toEqual([1, 0]);
   });
 });
