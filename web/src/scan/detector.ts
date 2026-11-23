@@ -2,7 +2,7 @@ import type { Found } from "./corners";
 import type { Pixels } from "./geometry";
 import type { Reply, Request } from "./detect.worker";
 
-const MODEL = "/models/fastvit_t8_h_e_bifpn_256_fp32.onnx";
+const MODEL = "/models/1.1.1/docaligner-int8.onnx";
 
 // The page finder, running in a worker. `ready` says whether the model loaded; without it `detect` answers null and the
 // scanner falls back to placing the corners by hand.

@@ -297,7 +297,7 @@ SOFTWARE.
 DocAligner FastViT-T8 page corner model 1.1.1 (Apache-2.0)
 ------------------------------------------------------------------------
 
-Copyright DocsaidLab (https://github.com/DocsaidLab/DocAligner). Used unchanged.
+Copyright DocsaidLab (https://github.com/DocsaidLab/DocAligner). Its convolution weights are stored as int8 (web/scripts/shrink_model.py); the network is otherwise unchanged.
 The full licence text is served with the model at /models/DocAligner-LICENSE.txt.
 
 ------------------------------------------------------------------------

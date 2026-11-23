@@ -7,7 +7,7 @@ import { chromium } from "playwright-core";
 import { createServer } from "vite";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-if (!existsSync(`${root}/public/models/fastvit_t8_h_e_bifpn_256_fp32.onnx`)) {
+if (!existsSync(`${root}/public/models/1.1.1/docaligner-int8.onnx`)) {
   console.log("skipped: the corner model is not fetched");
   process.exit(0);
 }
