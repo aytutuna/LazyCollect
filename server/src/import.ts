@@ -28,9 +28,11 @@ function clean(raw: unknown): Clean | string {
 }
 
 // the address names a client; without one, the same name does, unless the references say they are different people
-const keyOf = (r: Clean) => (r.email ? `e:${r.email}` : `n:${r.name.toLowerCase()}|${r.reference ?? ""}`);
+// SQLite lower() only folds ASCII, so names are compared here
+const fold = (name: string) => name.normalize("NFC").toLowerCase();
+const keyOf = (r: Clean) => (r.email ? `e:${r.email}` : `n:${fold(r.name)}|${r.reference ?? ""}`);
 const sameClient = (r: Clean, f: Found) =>
-  r.email ? f.email?.toLowerCase() === r.email : f.email === null && f.name.toLowerCase() === r.name.toLowerCase() && (!r.reference || !f.reference || r.reference === f.reference);
+  r.email ? f.email?.toLowerCase() === r.email : f.email === null && fold(f.name) === fold(r.name) && (!r.reference || !f.reference || r.reference === f.reference);
 
 // what an existing client would gain: empty fields are filled, nothing is overwritten
 function gains(r: Clean, f: Found): boolean {
@@ -50,17 +52,23 @@ importer.post("/clients/import", async (c) => {
   const rows = body.rows.map(clean);
   const good = rows.filter((r): r is Clean => typeof r !== "string");
   const emails = good.flatMap((r) => (r.email ? [r.email] : []));
-  const names = good.flatMap((r) => (r.email ? [] : [r.name.toLowerCase()]));
-  const [known, total] = await db.batch([
+  const names = good.flatMap((r) => (r.email ? [] : [fold(r.name)]));
+  const [known, nameless, total] = await db.batch([
     db
       .prepare(
         `SELECT id, name, email, phone, reference, email_ok_at, sms_ok_at, consent_by FROM clients WHERE firm_id = ? AND deleted_at IS NULL
-         AND (lower(email) IN (SELECT value FROM json_each(?)) OR (email IS NULL AND lower(name) IN (SELECT value FROM json_each(?))))`,
+         AND lower(email) IN (SELECT value FROM json_each(?))`,
       )
-      .bind(firm.id, JSON.stringify(emails), JSON.stringify(names)),
+      .bind(firm.id, JSON.stringify(emails)),
+    db
+      .prepare(
+        `SELECT id, name, email, phone, reference, email_ok_at, sms_ok_at, consent_by FROM clients WHERE firm_id = ? AND deleted_at IS NULL AND email IS NULL AND ? > 0`,
+      )
+      .bind(firm.id, names.length),
     db.prepare("SELECT COUNT(*) AS n FROM clients WHERE firm_id = ?").bind(firm.id),
   ]);
-  const found = known.results as Found[];
+  const wanted = new Set(names);
+  const found = [...(known.results as Found[]), ...(nameless.results as Found[]).filter((f) => wanted.has(fold(f.name)))];
   let room = MAX_CLIENTS - (total.results[0] as { n: number }).n;
 
   const seen = new Set<string>();

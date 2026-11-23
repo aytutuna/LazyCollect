@@ -155,3 +155,13 @@ describe("client import", () => {
     expect(found.rows.map((r: any) => r.name)).toEqual(["Amy"]);
   });
 });
+
+describe("matching names without an email", () => {
+  it("ignores case on accented letters too", async () => {
+    const cookie = await login();
+    await run(cookie, [{ name: "Élodie Côté" }]);
+    const again = await (await run(cookie, [{ name: "ÉLODIE CÔTÉ" }, { name: "élodie côté" }])).json<any>();
+    expect(again.rows.map((r: any) => [r.status, r.reason])).toEqual([["skip", "nothing_new"], ["skip", "duplicate_in_file"]]);
+    expect(await clients()).toHaveLength(1);
+  });
+});
