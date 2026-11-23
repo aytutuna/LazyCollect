@@ -143,11 +143,13 @@ async function purgeFirm(env: Env, id: string, regionId: string, now: number) {
     db.prepare("DELETE FROM templates WHERE firm_id = ?").bind(id),
     db.prepare("DELETE FROM firm_settings WHERE firm_id = ?").bind(id),
     db.prepare("DELETE FROM email_stops WHERE firm_id = ?").bind(id),
+    db.prepare("DELETE FROM staff_mail WHERE firm_id = ?").bind(id),
   ]);
   // the wrapped key goes with the firm row, which is what makes anything left in the bucket unreadable
   await env.CONTROL.batch([
     env.CONTROL.prepare("DELETE FROM login_codes WHERE email IN (SELECT email FROM users WHERE firm_id = ?)").bind(id),
     env.CONTROL.prepare("DELETE FROM sessions WHERE firm_id = ?").bind(id),
+    env.CONTROL.prepare("DELETE FROM invites WHERE firm_id = ?").bind(id),
     env.CONTROL.prepare("DELETE FROM users WHERE firm_id = ?").bind(id),
     env.CONTROL.prepare("DELETE FROM firms WHERE id = ?").bind(id),
   ]);

@@ -63,3 +63,18 @@ export async function sendMail(env: Env, m: Outgoing): Promise<string | null> {
   const body = await res.json<{ id?: string }>().catch(() => null);
   return body?.id ?? null;
 }
+
+export async function sendInviteEmail(env: Env, to: string, inviter: string, account: string): Promise<void> {
+  const who = inviter.replace(/[\r\n]+/g, " ").trim();
+  const place = account.replace(/[\r\n]+/g, " ").trim();
+  const subject = `${who} invited you to ${place} on Lazy Collect`;
+  const text = `${who} invited you to ${place} on Lazy Collect.\n\nSign in with this email address to join:\n${env.APP_URL}/\n\nThe invitation expires in 7 days.\nIf you weren't expecting it, you can ignore this email.\n`;
+  const html = `<!doctype html><html lang="en"><body style="margin:0;padding:32px 16px;background:#f6f6f4;font-family:Arial,sans-serif;color:#1c1c1c">
+<div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;padding:32px">
+<p style="font-size:20px;margin:0 0 16px">Lazy Collect</p>
+<p style="font-size:16px;margin:0 0 24px">${escapeHtml(who)} invited you to ${escapeHtml(place)} on Lazy Collect.</p>
+<p style="margin:0 0 24px"><a href="${escapeHtml(env.APP_URL)}/" style="display:inline-block;background:#1c5d99;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px">Sign in to join</a></p>
+<p style="font-size:13px;line-height:1.5;color:#666666;margin:0">Sign in with this email address. The invitation expires in 7 days.<br>If you weren't expecting it, you can ignore this email.</p>
+</div></body></html>`;
+  await sendMail(env, { from: env.EMAIL_FROM, to, subject, text, html });
+}
