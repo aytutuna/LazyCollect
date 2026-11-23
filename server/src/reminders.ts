@@ -277,7 +277,7 @@ async function noticePass(env: Env, db: D1Database, now: number) {
            AND f.state = 'live' AND f.deleted_at IS NULL AND f.uploaded_at > COALESCE(r.notified_at, 0)) AS n,
          (SELECT COUNT(*) FROM notes q WHERE q.firm_id = r.firm_id AND q.request_id = r.id AND q.author = 'client' AND q.created_at > COALESCE(r.notified_at, 0)) AS q,
          (SELECT COUNT(*) FROM items i WHERE i.firm_id = r.firm_id AND i.request_id = r.id AND i.status = 'unavailable' AND i.unavailable_at > COALESCE(r.notified_at, 0)) AS u,
-         (SELECT COUNT(*) FROM items i WHERE i.firm_id = r.firm_id AND i.request_id = r.id AND i.kind != 'file' AND i.answer_at > COALESCE(r.notified_at, 0)) AS a
+         (SELECT COUNT(*) FROM items i WHERE i.firm_id = r.firm_id AND i.request_id = r.id AND i.kind != 'file' AND i.answer IS NOT NULL AND ${visible("i")} AND i.answer_at > COALESCE(r.notified_at, 0)) AS a
        ${JOIN} WHERE r.notice_due_at IS NOT NULL AND (r.notified_at IS NULL OR r.notified_at <= ?) AND r.deleted_at IS NULL
        ORDER BY r.notice_due_at LIMIT ${BATCH}`,
     )

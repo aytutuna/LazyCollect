@@ -21,6 +21,8 @@ answers.put("/c/:token/items/:itemId/answer", async (c) => {
   const body = await readBody(c);
   if (!body || !("answer" in body)) return invalid(c);
   const { db, req } = link;
+  const held = await db.prepare("SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND hold_at IS NOT NULL").bind(req.firm_id, req.id).first();
+  if (held) return c.json({ error: "legal_hold" }, 409);
   const itemId = c.req.param("itemId") ?? "";
   const item = await db
     .prepare("SELECT kind, options_json FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND kind != 'file'")
@@ -33,7 +35,7 @@ answers.put("/c/:token/items/:itemId/answer", async (c) => {
   const now = Date.now();
   const ipHash = await hmac(c.env.HASH_KEY, ipPrefix(ip ?? "unknown"));
   const mine = `firm_id = ? AND request_id = ? AND id = ? AND status != 'approved' AND ${visible("items")}`;
-  const open = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)";
+  const open = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL AND hold_at IS NULL)";
   const binds = [req.firm_id, req.id, itemId, req.firm_id, req.id];
   // the audit row goes first: its condition reads the status the update changes; the answer itself is not logged
   const [, res] = await db.batch([
@@ -45,7 +47,7 @@ answers.put("/c/:token/items/:itemId/answer", async (c) => {
     db
       .prepare(
         `UPDATE requests SET notice_due_at = COALESCE(notice_due_at, ?) WHERE firm_id = ? AND id = ?
-         AND EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND id = ? AND answer_at = ?)`,
+         AND EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND id = ? AND answer_at = ? AND answer IS NOT NULL)`,
       )
       .bind(now, req.firm_id, req.id, req.firm_id, itemId, now),
     // a reopened request, or one with a newly shown question, picks its reminders up again

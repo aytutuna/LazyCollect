@@ -352,6 +352,33 @@ describe("reminders and notices", () => {
     expect(notice?.subject).toContain("answered 1 question");
     expect(JSON.stringify(sent)).not.toContain("Hidden Corp");
   });
+
+  it("sets no notice for a cleared answer", async () => {
+    const o = await remindable();
+    await answer(o.path, o.req.items[2].id, "");
+    expect((await env.DB_NA.prepare("SELECT notice_due_at FROM requests WHERE id = ?").bind(o.req.id).first<any>())!.notice_due_at).toBeNull();
+  });
+
+  it("does not count an answer to an item that is hidden by now", async () => {
+    const o = await remindable();
+    await answer(o.path, o.req.items[2].id, "Acme");
+    await env.DB_NA.prepare("UPDATE items SET show_if_pos = 0, show_if_value = 'yes' WHERE id = ?").bind(o.req.items[2].id).run();
+    const sent = mockOutbound();
+    await runReminders(env, Date.now() + 2 * HOUR);
+    expect(sent.filter((m) => m.subject.includes("answered"))).toHaveLength(0);
+  });
+});
+
+describe("legal hold", () => {
+  it("refuses answers on a request on hold", async () => {
+    const { cookie, req, path } = await make();
+    await api(`/api/requests/${req.id}/hold`, { method: "PUT", cookie, body: { on: true } });
+    const res = await answer(path, req.items[2].id, "Acme");
+    expect([res.status, await res.json()]).toEqual([409, { error: "legal_hold" }]);
+    expect(await stored(req.items[2].id)).toBeNull();
+    await api(`/api/requests/${req.id}/hold`, { method: "PUT", cookie, body: { on: false } });
+    expect((await answer(path, req.items[2].id, "Acme")).status).toBe(200);
+  });
 });
 
 describe("send back", () => {
