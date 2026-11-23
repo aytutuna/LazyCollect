@@ -66,7 +66,7 @@ describe("home views", () => {
     expect(titles(await list(cookie, "?view=due_soon"))).toEqual(["soon"]);
     expect(titles(await list(cookie, "?view=done"))).toEqual(["finished", "review done", "shut"]);
     expect((await list(cookie, "?view=all")).rows).toHaveLength(9);
-    expect((await list(cookie)).counts).toEqual({ all: 9, to_review: 2, waiting: 4, overdue: 1, due_soon: 1, done: 3 });
+    expect((await list(cookie)).counts).toEqual({ all: 9, to_review: 2, waiting: 4, expiring: 0, overdue: 1, due_soon: 1, done: 3 });
   });
 
   it("carries the item counts the progress bar needs", async () => {
@@ -80,7 +80,7 @@ describe("home views", () => {
     const { cookie } = await nine();
     const page = await list(cookie, "?status=complete&view=to_review");
     expect(titles(page)).toEqual(["review done"]);
-    expect(page.counts).toEqual({ all: 2, to_review: 1, waiting: 0, overdue: 0, due_soon: 0, done: 2 });
+    expect(page.counts).toEqual({ all: 2, to_review: 1, waiting: 0, expiring: 0, overdue: 0, due_soon: 0, done: 2 });
   });
 
   it("answers counts only on the first page", async () => {
