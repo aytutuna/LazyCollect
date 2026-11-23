@@ -11,7 +11,7 @@ devices.get("/sessions", async (c) => {
     .prepare("SELECT id, label, created_at, last_seen_at FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY last_seen_at DESC, created_at DESC")
     .bind(session.userId, Date.now())
     .all<{ id: string | null; label: string | null; created_at: number; last_seen_at: number }>();
-  return c.json(results.map((r) => ({ ...r, current: r.id === session.id })));
+  return c.json(results.map((r) => ({ ...r, current: r.id !== null && r.id === session.id })));
 });
 
 devices.post("/sessions/end-others", async (c) => {

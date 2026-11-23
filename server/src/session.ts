@@ -75,6 +75,11 @@ export const loadSession: MiddlewareHandler<AppEnv> = async (c, next) => {
       .bind(tokenHash, now)
       .first<{ id: string | null; user_id: string; firm_id: string; last_seen_at: number }>();
     if (row) {
+      // a session made before the id column existed gets one now, so it can be ended on its own
+      if (row.id === null) {
+        row.id = randomId();
+        await c.env.CONTROL.prepare("UPDATE sessions SET id = ? WHERE token_hash = ? AND id IS NULL").bind(row.id, tokenHash).run();
+      }
       c.set("session", { id: row.id, tokenHash, userId: row.user_id, firmId: row.firm_id });
       if (now - row.last_seen_at > HOUR) {
         await c.env.CONTROL.prepare("UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?")

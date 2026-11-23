@@ -42,6 +42,21 @@ describe("signed-in devices", () => {
     expect((await api("/api/sessions")).status).toBe(401);
   });
 
+  it("gives a session without an id one, so it can be ended alone", async () => {
+    const mine = await loginAs("owner@firm.test", CHROME_WIN);
+    const phone = await loginAs("owner@firm.test", SAFARI_IPHONE);
+    await env.CONTROL.prepare("UPDATE sessions SET id = NULL").run();
+    // not marked as this device while the id is missing, and a request from each fills it in
+    expect((await sessions(mine)).filter((s) => s.current)).toHaveLength(1);
+    expect(await me(phone)).toBe(200);
+    const list = await sessions(mine);
+    expect(list.every((s) => typeof s.id === "string")).toBe(true);
+    const other = list.find((s) => !s.current);
+    expect((await api(`/api/sessions/${other.id}`, { method: "DELETE", cookie: mine })).status).toBe(200);
+    expect(await me(phone)).toBe(401);
+    expect(await me(mine)).toBe(200);
+  });
+
   it("does not keep the raw user agent", async () => {
     await loginAs("owner@firm.test", CHROME_WIN);
     const row = await env.CONTROL.prepare("SELECT * FROM sessions").first<any>();
