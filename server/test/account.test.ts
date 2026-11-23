@@ -1,9 +1,9 @@
-import { env } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { purgeClosed } from "../src/account";
 import { purgeExpired } from "../src/purge";
 import { canSend } from "../src/reminders";
-import { stopHash } from "../src/mail";
+import { stopHash, unsubUrl } from "../src/mail";
 import { DAY } from "../src/util";
 import { addMember, api, firmRow, inDays, login, mockOutbound, openRequest, pdf, upload } from "./helpers";
 import { stripeFake } from "./stripe-fake";
@@ -337,8 +337,7 @@ describe("purge of a closed account", () => {
     const clients = await env.DB_NA.prepare("SELECT id FROM clients WHERE firm_id = ?").bind(firm.id).all<any>();
     expect(clients.results).toEqual([{ id: kept.id }]);
     expect(solo.id).not.toBe(kept.id);
-    const stops = await env.DB_NA.prepare("SELECT email_hash FROM email_stops WHERE firm_id = ?").bind(firm.id).all<any>();
-    expect(stops.results).toEqual([{ email_hash: await stopHash(env, kept.email) }]);
+    expect(await count(env.DB_NA, "email_stops", firm.id)).toBe(2);
     expect(stripeFake.gone.has("cus_h")).toBe(true);
     expect(stripeFake.calls.filter((c) => c.method === "DELETE" && c.path === "/v1/customers/cus_h")).toHaveLength(1);
     expect((await env.CONTROL.prepare("SELECT dek_wrapped, stripe_customer_id FROM firms WHERE id = ?").bind(firm.id).first<any>())).toEqual({ dek_wrapped: expect.any(String), stripe_customer_id: null });
@@ -354,7 +353,46 @@ describe("purge of a closed account", () => {
     expect(await count(env.DB_NA, "clients", firm.id)).toBe(0);
     expect(await count(env.DB_NA, "audit", firm.id)).toBe(0);
     expect((await env.FILES_NA.list({ prefix: `f/${firm.id}/` })).objects).toHaveLength(0);
+    expect(await count(env.DB_NA, "email_stops", firm.id)).toBe(0);
     expect(stripeFake.calls.filter((c) => c.method === "DELETE" && c.path === "/v1/customers/cus_h")).toHaveLength(1);
+  });
+
+  it("still refuses an address that opted out after a held account is reopened", async () => {
+    const { cookie, req, firm } = await withUpload();
+    const bo = await (await api("/api/clients", { method: "POST", cookie, body: { name: "Bo", email: "bo@mail.test", contact_ok: true } })).json<any>();
+    const url = await unsubUrl(env, "na", bo.id, firm.id, "bo@mail.test");
+    const res = await exports.default.fetch(`https://collect.alazy.app${new URL(url).pathname}`, { method: "POST", headers: { "CF-Connecting-IP": "198.51.100.7" } });
+    expect(res.status).toBe(200);
+    await api(`/api/requests/${req.id}/hold`, { method: "PUT", cookie, body: { on: true } });
+    await close(cookie);
+    await ageClose(31);
+    await purgeClosed(env);
+    expect(await count(env.DB_NA, "clients", firm.id)).toBe(1);
+
+    const back = await login();
+    expect((await reopen(back)).status).toBe(200);
+    const again = await (await api("/api/clients", { method: "POST", cookie: back, body: { name: "Bo", email: "bo@mail.test", contact_ok: true } })).json<any>();
+    const next = await (
+      await api("/api/requests", { method: "POST", cookie: back, body: { client_id: again.id, title: "2026", deadline: inDays(7), items: [{ label: "ID", required: true }] } })
+    ).json<any>();
+    await api("/api/firm", { method: "PATCH", cookie: back, body: { address: "1 King St, Toronto" } });
+    mockOutbound();
+    const sent = await api(`/api/requests/${next.id}/link`, { method: "POST", cookie: back, body: { send_email: true } });
+    expect(sent.status).toBe(400);
+    expect((await sent.json<any>()).error).toBe("client_unsubscribed");
+  });
+
+  it("finishes the purge although a stale session names another account", async () => {
+    const a = await withUpload("a@firm.test");
+    const b = await withUpload("b@firm.test");
+    const user = await env.CONTROL.prepare("SELECT id FROM users WHERE firm_id = ?").bind(a.firm.id).first<any>();
+    await env.CONTROL.prepare("INSERT INTO sessions (token_hash, user_id, firm_id, created_at, last_seen_at, expires_at) VALUES ('stale', ?, ?, 1, 1, ?)")
+      .bind(user.id, b.firm.id, Date.now() + DAY)
+      .run();
+    await close(a.cookie);
+    await ageClose(31);
+    await purgeClosed(env);
+    expect(await env.CONTROL.prepare("SELECT 1 FROM firms WHERE id = ?").bind(a.firm.id).first()).toBeNull();
   });
 
   it("leaves other accounts alone", async () => {
