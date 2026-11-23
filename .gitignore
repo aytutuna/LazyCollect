@@ -3,3 +3,4 @@ dist
 .wrangler
 server/test/dev.vars
 .dev.vars
+web/public/models/*.onnx

@@ -17,6 +17,8 @@ jobs:
       - run: test -n "${{ vars.TURNSTILE_SITEKEY }}"
       - run: npm ci
         working-directory: web
+      - run: bash scripts/fetch_docaligner.sh
+        working-directory: web
       - run: npm run build
         working-directory: web
         env:
