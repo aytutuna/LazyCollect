@@ -19,11 +19,11 @@ const ITEM_COLS = "id, position, label, help, required, status, reject_note, rev
 const MAX_ITEMS = 100;
 const MAX_AHEAD = 2 * 365 * DAY;
 
-type Req = { id: string; client_id: string; title: string; status: string; deadline: number; reminders_on: number };
+type Req = { id: string; client_id: string; title: string; status: string; deadline: number; reminders_on: number; hold_at: number | null };
 
 export const findRequest = (c: Context<AppEnv>) =>
   c.get("db")
-    .prepare("SELECT id, client_id, title, status, deadline, reminders_on FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
+    .prepare("SELECT id, client_id, title, status, deadline, reminders_on, hold_at FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
     .bind(c.get("firm").id, c.req.param("id"))
     .first<Req>();
 
@@ -271,6 +271,7 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
   const req = await findRequest(c);
   if (!req) return notFound(c);
   if (!editable(req)) return c.json({ error: "locked" }, 409);
+  if (req.hold_at) return c.json({ error: "legal_hold" }, 409);
   const db = c.get("db");
   const item = await db
     .prepare("SELECT status FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")

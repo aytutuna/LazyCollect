@@ -3,14 +3,16 @@ import { regionIds, regionOf } from "./regions";
 
 const BATCH = 200;
 
-// objects of uploads that never finished and of files a client removed; soft-deleted requests are left for the retention job
+// objects of uploads that never finished and of files a client removed (kept while the request is on legal hold); soft-deleted requests are left for the retention job
 export async function sweepFiles(env: Env, now = Date.now()) {
   for (const id of regionIds) {
     const { db, bucket } = regionOf(env, id);
     const { results } = await db
       .prepare(
         `SELECT id, firm_id, r2_key FROM files
-         WHERE (state = 'pending' AND uploaded_at < ?) OR deleted_at IS NOT NULL LIMIT ${BATCH}`,
+         WHERE (state = 'pending' AND uploaded_at < ?)
+         OR (deleted_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM requests r WHERE r.firm_id = files.firm_id AND r.id = files.request_id AND r.hold_at IS NOT NULL))
+         LIMIT ${BATCH}`,
       )
       .bind(now - HOUR)
       .all<{ id: string; firm_id: string; r2_key: string }>();

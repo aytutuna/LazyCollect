@@ -248,9 +248,13 @@ uploads.delete("/c/:token/files/:fileId", async (c) => {
     .first<{ r2_key: string; item_id: string; status: string }>();
   if (!file) return notFound(c);
   if (file.status === "approved") return c.json({ error: "approved" }, 409);
+  const held = "EXISTS (SELECT 1 FROM requests WHERE firm_id = files.firm_id AND id = files.request_id AND hold_at IS NOT NULL)";
+  if (await db.prepare("SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND hold_at IS NOT NULL").bind(req.firm_id, req.id).first()) {
+    return c.json({ error: "legal_hold" }, 409);
+  }
 
   const now = Date.now();
-  const live = "firm_id = ? AND id = ? AND state = 'live' AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM items WHERE firm_id = files.firm_id AND id = files.item_id AND status != 'approved')";
+  const live = "firm_id = ? AND id = ? AND state = 'live' AND deleted_at IS NULL AND NOT " + held + " AND EXISTS (SELECT 1 FROM items WHERE firm_id = files.firm_id AND id = files.item_id AND status != 'approved')";
   const binds = [req.firm_id, fileId];
   const ipHash = await hmac(c.env.HASH_KEY, ipPrefix(c.req.header("CF-Connecting-IP") ?? "unknown"));
   // the audit row goes first: its condition reads the file the next statement marks deleted
@@ -268,7 +272,10 @@ uploads.delete("/c/:token/files/:fileId", async (c) => {
       .bind(req.firm_id, req.id, file.item_id, req.firm_id, file.item_id),
     syncStatus(db, req.firm_id, req.id),
   ]);
-  if (!marked.meta.changes) return c.json({ error: "approved" }, 409);
+  if (!marked.meta.changes) {
+    const onHold = await db.prepare("SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND hold_at IS NOT NULL").bind(req.firm_id, req.id).first();
+    return c.json({ error: onHold ? "legal_hold" : "approved" }, 409);
+  }
   // a failed object delete leaves ciphertext behind; the retention sweep removes objects of deleted rows
   await regionOf(c.env, region).bucket.delete(file.r2_key).catch((e) => console.error(e instanceof Error ? e.message : "error"));
   return c.json({ ok: true });
