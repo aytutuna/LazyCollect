@@ -4,7 +4,8 @@
   "items": [
     {
       "label": "Passport",
-      "required": true
+      "required": true,
+      "example": "passport"
     },
     {
       "label": "Job offer letter",

@@ -154,6 +154,7 @@ async function purgeFirm(env: Env, id: string, regionId: string, now: number) {
       )
       .bind(randomId(), id, id, id, now, id),
     db.prepare("DELETE FROM audit WHERE firm_id = ?").bind(id),
+    db.prepare("DELETE FROM examples WHERE firm_id = ?").bind(id),
     db.prepare("DELETE FROM clients WHERE firm_id = ?").bind(id),
     db.prepare("DELETE FROM firm_settings WHERE firm_id = ?").bind(id),
     db.prepare("DELETE FROM email_stops WHERE firm_id = ?").bind(id),

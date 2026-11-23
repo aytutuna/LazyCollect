@@ -9,7 +9,8 @@
     {
       "label": "Passport pages",
       "help": "Every page, to show travel for physical presence",
-      "required": true
+      "required": true,
+      "example": "passport"
     },
     {
       "label": "Language proof",
@@ -19,7 +20,8 @@
     {
       "label": "Notices of Assessment",
       "help": "Or CRA tax summaries for the required years",
-      "required": true
+      "required": true,
+      "example": "noa"
     },
     {
       "label": "Government ID",

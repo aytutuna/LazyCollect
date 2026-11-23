@@ -11,7 +11,7 @@ const credit = "Did you issue credit notes or write off any unpaid invoices in t
 export default template("gst-hst-return", "GST/HST return period", [
   doc("Sales records for the period", "A sales report or invoice list. Show taxable, zero-rated and exempt sales separately if you can."),
   doc("Purchase and expense records for the period", "Receipts and supplier invoices for input tax credits. Receipts of $100 or more need the seller's GST/HST number; $500 or more also need your name and a description of what you bought."),
-  doc("Bank statements for the period", "To check the deposits against your sales.", undefined, false),
+  doc("Bank statements for the period", "To check the deposits against your sales.", undefined, false, "bank-statement"),
 
   ask(credit),
   doc("Credit notes or write-off list", undefined, credit),

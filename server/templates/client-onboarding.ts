@@ -11,8 +11,8 @@ const moved = "Has your name or address changed since your last return?";
 export default template("client-onboarding", "New client onboarding", [
   doc("Photo ID", "Used only to confirm who you are. The front of your licence or the passport photo page is enough."),
   doc("Confirmation of SIN letter", "Please do not send a photo of your SIN card. If you have the Service Canada letter you can send it. Otherwise leave this empty and we will arrange a safer way to get the number.", undefined, false),
-  doc("Notice of assessment for the last tax year", "Sign in to CRA My Account and look under Tax returns, or use the copy that came in the mail."),
-  doc("Notice of assessment for the year before", "Same place as the last one."),
+  doc("Notice of assessment for the last tax year", "Sign in to CRA My Account and look under Tax returns, or use the copy that came in the mail.", undefined, true, "noa"),
+  doc("Notice of assessment for the year before", "Same place as the last one.", undefined, true, "noa"),
 
   ask("Have you authorized us as your representative with the CRA?", "In CRA My Account choose Profile, then Add under Authorized representative. If we send you a request, you confirm it there. The paper form only gives us phone and mail access."),
   doc("Engagement letter, signed", "We send you the letter. Sign it, then add a photo or scan of the signed page."),
