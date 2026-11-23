@@ -45,6 +45,17 @@ describe("restore", () => {
     expect((await env.DB_NA.prepare("SELECT action FROM audit WHERE action = 'request.restore'").all()).results).toHaveLength(1);
   });
 
+  it("starts a new clock when the old one had already run out", async () => {
+    const { cookie, req } = await openRequest();
+    await api(`/api/requests/${req.id}/close`, { method: "POST", cookie });
+    await api(`/api/requests/${req.id}`, { method: "DELETE", cookie });
+    await env.DB_NA.prepare("UPDATE requests SET ended_at = ?, keep_until = ?").bind(Date.now() - 8 * 365 * DAY, Date.now() - 365 * DAY).run();
+    await api(`/api/requests/${req.id}/restore`, { method: "POST", cookie });
+    const row = (await env.DB_NA.prepare("SELECT ended_at, keep_until FROM requests").first<any>())!;
+    expect(row.ended_at).toBeGreaterThan(Date.now() - 60_000);
+    expect(row.keep_until).toBeGreaterThan(Date.now() + 6 * 365 * DAY);
+  });
+
   it("refuses after 30 days, for a live request and for another firm", async () => {
     const { cookie, req } = await openRequest();
     expect((await api(`/api/requests/${req.id}/restore`, { method: "POST", cookie })).status).toBe(404);

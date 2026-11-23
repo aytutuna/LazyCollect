@@ -41,14 +41,16 @@ trash.post("/requests/:id/restore", async (c) => {
   if (!alive) return c.json({ error: "client_deleted" }, 409);
   const open = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND deleted_at > ? AND purging_at IS NULL)";
   // a request the retention period took starts a fresh clock, so the next run does not take it again
-  const start = "CASE WHEN deleted_reason = 'retention' THEN ?1 ELSE COALESCE(ended_at, ?1) END";
+  // the same goes for any request whose clock has already run out, or the next run would retire it again
+  const years = `COALESCE((SELECT retention_years FROM firm_settings WHERE firm_id = requests.firm_id), ${DEFAULT_YEARS}) * ${YEAR}`;
+  const start = `CASE WHEN deleted_reason = 'retention' OR COALESCE(ended_at, ?1) + ${years} <= ?1 THEN ?1 ELSE COALESCE(ended_at, ?1) END`;
   const [, res] = await db.batch([
     audit(c, "request.restore", "request", id, undefined, { sql: open, binds: [firmId, id, now - RESTORE_WINDOW] }),
     db
       .prepare(
         `UPDATE requests SET deleted_at = NULL, deleted_reason = NULL, status = 'closed', closed_at = COALESCE(closed_at, ?1), next_reminder_at = NULL,
            ended_at = ${start},
-           keep_until = ${start} + COALESCE((SELECT retention_years FROM firm_settings WHERE firm_id = requests.firm_id), ${DEFAULT_YEARS}) * ${YEAR}
+           keep_until = ${start} + ${years}
          WHERE firm_id = ?2 AND id = ?3 AND deleted_at > ?4 AND purging_at IS NULL`,
       )
       .bind(now, firmId, id, now - RESTORE_WINDOW),
