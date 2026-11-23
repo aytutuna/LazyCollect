@@ -156,7 +156,7 @@ describe("example on the client page", () => {
     const a = await withExample("a@firm.test");
     const b = await openRequest("b@firm.test");
     expect((await link(b.path, a.item)).status).toBe(404);
-    expect((await link(a.path, b.item)).status).toBe(404);
+    expect((await link(a.path, b.req.items[0].id)).status).toBe(404);
     expect((await link(a.path, "0".repeat(32))).status).toBe(404);
     expect((await link(`/api/c/na_${"a".repeat(43)}`, a.item)).status).toBe(404);
 
