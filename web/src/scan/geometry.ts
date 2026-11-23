@@ -55,6 +55,23 @@ export function fromCorners(corners: Point[]): Quad {
   return [p[start], p[(start + 1) & 3], p[(start + 2) & 3], p[(start + 3) & 3]];
 }
 
+// a corner rectangle `inset` in from the photo's edges, for a photo where no page was found
+export const startQuad = (width: number, height: number, inset = 0.1): Quad => [
+  [width * inset, height * inset],
+  [width * (1 - inset), height * inset],
+  [width * (1 - inset), height * (1 - inset)],
+  [width * inset, height * (1 - inset)],
+];
+
+// every corner moved into the photo so the editor's handles stay where they can be seen; the start rectangle when that leaves no usable outline
+export const clampToPhoto = (q: Quad, width: number, height: number): Quad =>
+  q.map((p) => [Math.min(Math.max(p[0], 0), width), Math.min(Math.max(p[1], 0), height)] as Point) as Quad;
+
+export function clampedToPhoto(q: Quad, width: number, height: number): Quad {
+  const c = clampToPhoto(q, width, height);
+  return usable(c) ? c : startQuad(width, height);
+}
+
 // the corners the editor can cut a page out along: convex, every edge at least `min` pixels long
 export function usable(q: Quad, min = 16): boolean {
   return isConvex(q) && [0, 1, 2, 3].every((i) => edge(q, i) >= min);

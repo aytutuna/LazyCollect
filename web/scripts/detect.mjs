@@ -39,7 +39,7 @@ const run = async ({ fixtures, base }) => {
     const { readPixels } = await import("/src/scan/pipeline.ts");
     const { acceptable } = await import("/src/scan/corners.ts");
     const { fromCorners, warp, aspect } = await import("/src/scan/geometry.ts");
-    const { refine, trusted } = await import("/src/scan/refine.ts");
+    const { refine, placement } = await import("/src/scan/refine.ts");
     const { applyFilter } = await import("/src/scan/filters.ts");
     const detector = new Detector();
     const t0 = performance.now();
@@ -63,6 +63,8 @@ const run = async ({ fixtures, base }) => {
       let worst = null;
       let refined = null;
       let support = null;
+      let ours = null;
+      let sure = null;
       let refineMs = null;
       let filterMs = null;
       if (found) {
@@ -72,8 +74,12 @@ const run = async ({ fixtures, base }) => {
         // the edge refinement on the full-size photo, and its cost on a 3200 px still (the photo drawn larger)
         const photo = readPixels(img, img.naturalWidth, img.naturalHeight, 2000);
         const r1 = refine(photo, got);
-        refined = off(trusted(r1, got));
+        // Lazy Scan's own plan takes the refined corners; ours starts the editor from the model's when the edges back them below 0.7
+        refined = off(r1.quad);
         support = r1.support;
+        const plan = placement(r1, got, found.confidence, img.naturalWidth, img.naturalHeight);
+        ours = off(plan.quad);
+        sure = plan.sure;
         const big = document.createElement("canvas");
         big.width = 3200;
         big.height = 1800;
@@ -91,7 +97,7 @@ const run = async ({ fixtures, base }) => {
         filterMs = performance.now() - t2;
       }
       times.sort((a, b) => a - b);
-      out.runs.push({ file: f.file, found: Boolean(found), confidence: found?.confidence ?? null, accepted: found ? acceptable(found, frame.width, frame.height) : false, worst, refined, support, refineMs, filterMs, median: times[6], first: times[0] });
+      out.runs.push({ file: f.file, found: Boolean(found), confidence: found?.confidence ?? null, accepted: found ? acceptable(found, frame.width, frame.height) : false, worst, refined, support, ours, sure, refineMs, filterMs, median: times[6], first: times[0] });
     }
     return out;
 };
@@ -108,9 +114,9 @@ for (let attempt = 0; !results; attempt++) {
 console.log(`model loaded: ${results.ok} in ${results.load.toFixed(0)} ms`);
 let failures = results.ok ? 0 : 1;
 for (const r of results.runs) {
-  const bad = !r.found || !r.accepted || r.worst > 25 || r.refined > r.worst + 1;
+  const bad = !r.found || !r.accepted || r.worst > 25 || r.ours > r.worst + 1;
   if (bad) failures++;
-  console.log(`${bad ? "FAIL" : "ok  "} ${r.file}: confidence ${r.confidence?.toFixed(2)}, worst corner off by ${r.worst?.toFixed(1)} px of 1280 (${r.refined?.toFixed(1)} refined at support ${r.support?.toFixed(2)}, ${r.refineMs?.toFixed(0)} ms on a 3200 px still; enhanced filter ${r.filterMs?.toFixed(0)} ms at 1600 px), inference median ${r.median.toFixed(0)} ms`);
+  console.log(`${bad ? "FAIL" : "ok  "} ${r.file}: confidence ${r.confidence?.toFixed(2)}, worst corner off by ${r.worst?.toFixed(1)} px of 1280 (${r.refined?.toFixed(1)} with Lazy Scan's refined corners at support ${r.support?.toFixed(2)}; we use ${r.ours?.toFixed(1)}, ${r.sure ? "placed" : "editor"}; ${r.refineMs?.toFixed(0)} ms on a 3200 px still; enhanced filter ${r.filterMs?.toFixed(0)} ms at 1600 px), inference median ${r.median.toFixed(0)} ms`);
 }
 await browser.close();
 await server.close();

@@ -1,4 +1,4 @@
-import { scaled, signedArea, isConvex, type Pixels, type Point, type Quad } from "./geometry";
+import { clampToPhoto, isConvex, scaled, signedArea, startQuad, usable, type Pixels, type Point, type Quad } from "./geometry";
 
 // Moves each side of a page outline found roughly (the corner model's) onto the photo's edge. A port of Lazy Scan's
 // QuadRefiner and the parts of its PhotoDocumentDetector it uses (Field, Line, fitLine), the same arithmetic in the same
@@ -17,9 +17,9 @@ const SUPPORT_REACH = 1.5;
 const OUTER_SHARE = 0.7;
 const OUTER_REACH = 1 / 3;
 
-// Lazy Scan corrects a page without asking only when the edges back its weakest side this much (PhotoImport.minSureSupport);
-// below it the refined outline is not trusted, and the model's corners stay.
-export const MIN_SURE_SUPPORT = 0.7;
+// Lazy Scan corrects a page without asking when the model's confidence and the edges' support for the weakest side both reach
+// this (PhotoImport.sureConfidence and minSureSupport); anything less opens the corner editor.
+export const SURE = 0.7;
 
 export type Refinement = { quad: Quad; refined: boolean; support: number };
 
@@ -413,8 +413,18 @@ export function minified(img: Pixels, width: number, height: number): Pixels {
   return { width, height, data: out };
 }
 
-// the refined corners when edges back them well enough, else the corners as given
-export const trusted = (r: Refinement, given: Quad): Quad => (r.refined && r.support >= MIN_SURE_SUPPORT ? r.quad : given);
+// Where a page found by the model goes, as in Lazy Scan's PhotoImport.modelPlan: the refined corners (kept within the photo),
+// placed straight away when the model and the edges are both sure, else shown in the corner editor. One difference: when the
+// edges back the refined outline below SURE, the editor starts from the model's corners, not the refined ones. The refiner
+// can latch onto a stack of sheets under the page (patent002 of the fixtures: 41 px off at support 0.31 where the model was
+// 2.6 px off), and a client asked to check the corners should start from the better guess.
+export function placement(r: Refinement | null, given: Quad, confidence: number, width: number, height: number): { quad: Quad; sure: boolean } {
+  const found = r ?? { quad: given, refined: false, support: 0 };
+  const start = found.refined && found.support < SURE ? given : found.quad;
+  const clamped = clampToPhoto(start, width, height);
+  const fine = usable(clamped);
+  return { quad: fine ? clamped : startQuad(width, height), sure: fine && confidence >= SURE && found.support >= SURE };
+}
 
 // `quad` (the photo's pixels) moved onto the edges of `image`, with its edge support
 export function refine(image: Pixels, quad: Quad): Refinement {

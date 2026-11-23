@@ -949,6 +949,7 @@
   "scan.bottom_left": "Bottom left",
   "scan.corner_at": "{name} corner, {x}% from the left, {y}% from the top",
   "scan.use_corners": "Use these corners",
+  "scan.applying": "Applying...",
   "scan.working": "Straightening the page...",
   "scan.page_added": "Page {n} added",
   "scan.page_issues": "Page {n} added. It may be hard to read.",

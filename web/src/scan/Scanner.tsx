@@ -6,8 +6,8 @@ import { CornerEditor } from "./CornerEditor";
 import { acceptable } from "./corners";
 import { Detector } from "./detector";
 import { FILTERS, applyFilter, type Filter } from "./filters";
-import { rotate, scaled, type Pixels, type Quad } from "./geometry";
-import { draw, finalPage, flatPreview, pause, refinedQuad, readPixels, release, shotOf, startQuad, toCanvas, type Shot } from "./pipeline";
+import { rotate, scaled, startQuad, type Pixels, type Quad } from "./geometry";
+import { draw, finalPage, flatPreview, pause, placeFound, readPixels, release, shotOf, toCanvas, type Shot } from "./pipeline";
 import { frameIssues, pageIssues, type Issue } from "./quality";
 
 type Page = {
@@ -100,18 +100,18 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
     else onClose();
   }
 
-  async function makePage(shot: Shot, quad: Quad, confidence: number | null, turns = 0, filter: Filter = "enhanced"): Promise<Page | null> {
-    const base = await flatPreview(shot, quad, turns);
+  async function makePage(shot: Shot, quad: Quad, confidence: number | null, turns = 0, filter: Filter = "enhanced", decoded?: Pixels): Promise<Page | null> {
+    const base = await flatPreview(shot, quad, turns, decoded);
     if (!base) return null;
     const shown = applyFilter(base, filter);
     return { id: ++seq, shot, quad, turns, filter, base, shown, thumb: thumbOf(shown), issues: [...frameIssues(quad, confidence, shot.width, shot.height), ...pageIssues(base)], accepted: false };
   }
 
   // a new page, or the page being re-cut, from corners already placed
-  async function place(shot: Shot, quad: Quad, confidence: number | null, replacing: number | null) {
+  async function place(shot: Shot, quad: Quad, confidence: number | null, replacing: number | null, decoded?: Pixels) {
     setWorking(t("scan.working"));
     const old = replacing === null ? null : pages[replacing];
-    const made = await makePage(shot, quad, confidence, old?.turns ?? 0, old?.filter ?? "enhanced");
+    const made = await makePage(shot, quad, confidence, old?.turns ?? 0, old?.filter ?? "enhanced", decoded);
     setWorking("");
     if (!made) return edit(shot, startQuad(shot.width, shot.height), null, replacing);
     const index = replacing ?? pages.length;
@@ -122,9 +122,18 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
     say(t(made.issues.length ? "scan.page_issues" : "scan.page_added", { n: index + 1 }));
   }
 
+  // A page the model found: its corners are moved onto the page's edges, and the page is placed when the model and the edges are
+  // both sure; otherwise the corner editor opens on the corners for a check.
+  async function settle(shot: Shot, quad: Quad, confidence: number) {
+    setWorking(t("scan.working"));
+    const found = await placeFound(detector, shot, quad, confidence);
+    if (found.sure) return place(shot, found.quad, confidence, null, found.pixels);
+    setWorking("");
+    edit(shot, found.quad, confidence, null);
+  }
+
   async function captured(c: Capture) {
-    if (c.quad) setWorking(t("scan.working"));
-    if (c.quad) return place(c.shot, await refinedQuad(c.shot, c.quad), c.confidence, null);
+    if (c.quad) return settle(c.shot, c.quad, c.confidence ?? 0);
     edit(c.shot, startQuad(c.shot.width, c.shot.height), null, null);
   }
 
@@ -143,8 +152,8 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
       const small = readPixels(bitmap, bitmap.width, bitmap.height, 800);
       bitmap.close();
       const found = await detector.detect({ ...small, data: small.data.slice() });
+      if (found && acceptable(found, small.width, small.height)) return await settle(shot, scaled(found.quad, shot.width, shot.height), found.confidence);
       setWorking("");
-      if (found && acceptable(found, small.width, small.height)) return place(shot, await refinedQuad(shot, scaled(found.quad, shot.width, shot.height)), found.confidence, null);
       edit(shot, startQuad(shot.width, shot.height), null, null);
     } catch {
       setWorking("");
@@ -157,15 +166,29 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
     setPages(pages.map((p, k) => (k === i ? { ...p, ...change } : p)));
   }
 
-  function setFilter(filter: Filter) {
-    const shown = applyFilter(page.base, filter);
+  // A filter that took more than 100 ms last time shows the busy text first, which needs a frame to paint before the work blocks.
+  const slow = useRef(false);
+  async function filtered(base: Pixels, filter: Filter): Promise<Pixels> {
+    if (slow.current) {
+      setWorking(t("scan.applying"));
+      await new Promise((done) => requestAnimationFrame(() => setTimeout(done)));
+    }
+    const started = performance.now();
+    const shown = applyFilter(base, filter);
+    slow.current = performance.now() - started > 100;
+    setWorking("");
+    return shown;
+  }
+
+  async function setFilter(filter: Filter) {
+    const shown = await filtered(page.base, filter);
     update(at, { filter, shown, thumb: thumbOf(shown) });
     say(t(`scan.filter_${filter}`));
   }
 
-  function turn() {
+  async function turn() {
     const base = rotate(page.base, 1);
-    const shown = applyFilter(base, page.filter);
+    const shown = await filtered(base, page.filter);
     update(at, { base, shown, thumb: thumbOf(shown), turns: (page.turns + 1) % 4 });
   }
 

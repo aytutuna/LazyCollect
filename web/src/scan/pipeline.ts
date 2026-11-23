@@ -1,6 +1,7 @@
 import { applyFilter, type Filter } from "./filters";
 import { aspect, edge, rotate, warp, type Pixels, type Quad } from "./geometry";
-import { refine, trusted } from "./refine";
+import type { Detector } from "./detector";
+import { placement } from "./refine";
 
 // The photo a page is cut from is kept at no more than this on its long side
 export const SOURCE_MAX = 3200;
@@ -66,13 +67,12 @@ async function decode(shot: Shot): Promise<Pixels> {
   }
 }
 
-// the model's corners moved onto the page's edges in the photo (Lazy Scan's QuadRefiner), or as they were when edges back them too little
-export async function refinedQuad(shot: Shot, quad: Quad): Promise<Quad> {
-  try {
-    return trusted(refine(await decode(shot), quad), quad);
-  } catch {
-    return quad;
-  }
+// A page the model found in `shot`: its corners moved onto the page's edges by the worker (Lazy Scan's QuadRefiner), whether
+// to place it straight away, and the decoded photo for cutting the page out of, so the JPEG is read once.
+export async function placeFound(detector: Detector, shot: Shot, quad: Quad, confidence: number): Promise<{ quad: Quad; sure: boolean; pixels: Pixels | undefined }> {
+  const pixels = await decode(shot);
+  const back = await detector.refine(pixels, quad);
+  return { ...placement(back?.refinement ?? null, quad, confidence, shot.width, shot.height), pixels: back?.image };
 }
 
 // width and height of the flat page with `long` pixels on its long side, in the sheet's own proportions
@@ -82,9 +82,9 @@ function pageSize(quad: Quad, shot: Shot, long: number): [number, number] {
 }
 
 // the page cut out of the photo, flat and unfiltered, small enough to filter quickly while the person looks at it
-export async function flatPreview(shot: Shot, quad: Quad, turns: number): Promise<Pixels | null> {
+export async function flatPreview(shot: Shot, quad: Quad, turns: number, decoded?: Pixels): Promise<Pixels | null> {
   const [w, h] = pageSize(quad, shot, PREVIEW);
-  const flat = warp(await decode(shot), quad, w, h);
+  const flat = warp(decoded ?? (await decode(shot)), quad, w, h);
   return flat && rotate(flat, turns);
 }
 
@@ -101,13 +101,5 @@ export async function finalPage(shot: Shot, quad: Quad, turns: number, filter: F
     release(canvas);
   }
 }
-
-// a corner rectangle `inset` in from the photo's edges, for a photo where no page was found
-export const startQuad = (width: number, height: number, inset = 0.1): Quad => [
-  [width * inset, height * inset],
-  [width * (1 - inset), height * inset],
-  [width * (1 - inset), height * (1 - inset)],
-  [width * inset, height * (1 - inset)],
-];
 
 export const pause = () => new Promise<void>((done) => setTimeout(done));
