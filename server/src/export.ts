@@ -12,6 +12,18 @@ import { END_RECORD, cleanName, entryOverhead, uniqueName, zipStream, type ZipEn
 
 export const exportZip = new Hono<AppEnv>();
 
+// the thread with the client as plain text, oldest first; null when there is none
+async function messagesText(db: D1Database, firmId: string, requestId: string): Promise<string | null> {
+  const { results } = await db
+    .prepare("SELECT author, body, created_at FROM notes WHERE firm_id = ? AND request_id = ? ORDER BY created_at, rowid")
+    .bind(firmId, requestId)
+    .all<{ author: string; body: string; created_at: number }>();
+  if (!results.length) return null;
+  return results
+    .map((n) => `${new Date(n.created_at).toISOString().slice(0, 16).replace("T", " ")} UTC, ${n.author === "client" ? "client" : "account"}\n${n.body}\n`)
+    .join("\n");
+}
+
 // without zip64 an archive stops at 4 GiB and 65535 entries
 const MAX_BYTES = 0xffff0000;
 const MAX_ENTRIES = 60000;
@@ -57,7 +69,14 @@ exportZip.get("/requests/:id/export", async (c) => {
   });
 
   const encoder = new TextEncoder();
-  const total = entries.reduce((sum, e, i) => sum + results[i].size + entryOverhead(encoder.encode(e.name).length), END_RECORD);
+  const thread = await messagesText(c.get("db"), firm.id, req.id);
+  const sizes = results.map((f) => f.size);
+  if (thread) {
+    const bytes = encoder.encode(thread);
+    entries.push({ name: "messages.txt", mtime: Date.now(), open: async () => new Blob([bytes]).stream() });
+    sizes.push(bytes.length);
+  }
+  const total = entries.reduce((sum, e, i) => sum + sizes[i] + entryOverhead(encoder.encode(e.name).length), END_RECORD);
   if (total > MAX_BYTES) return c.json({ error: "export_too_big" }, 413);
   // the page asks first so it can show a refusal instead of navigating to a JSON error
   if (c.req.query("check") === "1") return c.body(null, 204);
