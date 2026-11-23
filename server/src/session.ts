@@ -14,6 +14,11 @@ export type Firm = {
   region: string;
   plan_status: string;
   trial_ends_at: number | null;
+  current_period_end: number | null;
+  cancel_at_period_end: number;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  closed_at: number | null;
 };
 export type AppEnv = { Bindings: Env; Variables: { session: Session | null; firm: Firm; db: D1Database } };
 

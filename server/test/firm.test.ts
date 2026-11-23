@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { randomId, sha256 } from "../src/util";
+import { usable } from "../src/firm";
+import { DAY, randomId, sha256 } from "../src/util";
 import { api, login } from "./helpers";
 
 describe("firm", () => {
@@ -61,5 +62,33 @@ describe("firm", () => {
     const cookie = `__Host-lc_session=${token}`;
     expect((await api("/api/firm", { cookie })).status).toBe(200);
     expect((await api("/api/firm", { method: "PATCH", cookie, body: { name: "Mine" } })).status).toBe(403);
+  });
+});
+
+describe("usable", () => {
+  const now = 1_000_000_000_000;
+  const f = (over: Partial<Parameters<typeof usable>[0]>) => ({ plan_status: "trialing", trial_ends_at: null, current_period_end: null, closed_at: null, ...over });
+
+  it("follows the plan status", () => {
+    expect(usable(f({ plan_status: "active" }), now)).toBe(true);
+    expect(usable(f({ plan_status: "canceled" }), now)).toBe(false);
+  });
+
+  it("allows a trial until it ends", () => {
+    expect(usable(f({ trial_ends_at: now + 1 }), now)).toBe(true);
+    expect(usable(f({ trial_ends_at: now }), now)).toBe(false);
+    expect(usable(f({ trial_ends_at: null }), now)).toBe(false);
+  });
+
+  it("gives a past due account a week after the period end", () => {
+    const due = f({ plan_status: "past_due", current_period_end: now - 6 * DAY });
+    expect(usable(due, now)).toBe(true);
+    expect(usable(due, now + DAY - 1)).toBe(true);
+    expect(usable(due, now + DAY)).toBe(false);
+    expect(usable(f({ plan_status: "past_due" }), now)).toBe(false);
+  });
+
+  it("never allows a closed account", () => {
+    expect(usable(f({ plan_status: "active", closed_at: now - 1 }), now)).toBe(false);
   });
 });

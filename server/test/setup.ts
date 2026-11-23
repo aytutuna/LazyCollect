@@ -8,7 +8,7 @@ await applyD1Migrations(env.DB_NA, env.TEST_MIGRATIONS_NA);
 beforeEach(async () => {
   vi.restoreAllMocks();
   await env.CONTROL.batch(
-    ["sessions", "login_codes", "users", "firms"].map((t) => env.CONTROL.prepare(`DELETE FROM ${t}`)),
+    ["sessions", "login_codes", "users", "firms", "stripe_events"].map((t) => env.CONTROL.prepare(`DELETE FROM ${t}`)),
   );
   const { objects } = await env.FILES_NA.list();
   await env.FILES_NA.delete(objects.map((o) => o.key));

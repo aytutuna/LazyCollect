@@ -3,32 +3,53 @@ import { audit } from "./audit";
 import { isRegion, regionOf } from "./regions";
 import type { AppEnv, Firm } from "./session";
 import { validZone } from "./tz";
+import { DAY } from "./util";
 import { invalid, maybe, readBody, setClause, text } from "./validate";
 
 export const firm = new Hono<AppEnv>();
 
 const PROVINCES = ["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"];
 
-export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at">, now: number): boolean {
-  return f.plan_status === "active" || (f.plan_status === "trialing" && f.trial_ends_at !== null && f.trial_ends_at > now);
+// how long a failed renewal keeps the account working while the card is fixed
+export const PAST_DUE_GRACE = 7 * DAY;
+
+export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at" | "current_period_end" | "closed_at">, now: number): boolean {
+  if (f.closed_at) return false;
+  switch (f.plan_status) {
+    case "active":
+      return true;
+    case "trialing":
+      return f.trial_ends_at !== null && f.trial_ends_at > now;
+    case "past_due":
+      return f.current_period_end !== null && now < f.current_period_end + PAST_DUE_GRACE;
+    default:
+      return false;
+  }
 }
 
-export const loadFirm: MiddlewareHandler<AppEnv> = async (c, next) => {
-  const session = c.get("session");
-  if (!session) return c.json({ error: "unauthorized" }, 401);
-  const row = await c.env.CONTROL.prepare(
-    "SELECT id, name, legal_name, address, phone, province, tz, region, plan_status, trial_ends_at FROM firms WHERE id = ?",
-  )
-    .bind(session.firmId)
-    .first<Firm>();
-  if (!row || !isRegion(row.region)) return c.json({ error: "unauthorized" }, 401);
-  c.set("firm", row);
-  c.set("db", regionOf(c.env, row.region).db);
-  await next();
-};
+function load(allowClosed: boolean): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    const session = c.get("session");
+    if (!session) return c.json({ error: "unauthorized" }, 401);
+    const row = await c.env.CONTROL.prepare(
+      `SELECT id, name, legal_name, address, phone, province, tz, region, plan_status, trial_ends_at, current_period_end,
+         cancel_at_period_end, stripe_customer_id, stripe_subscription_id, closed_at FROM firms WHERE id = ?`,
+    )
+      .bind(session.firmId)
+      .first<Firm>();
+    if (!row || !isRegion(row.region)) return c.json({ error: "unauthorized" }, 401);
+    if (row.closed_at && !allowClosed) return c.json({ error: "closed" }, 403);
+    c.set("firm", row);
+    c.set("db", regionOf(c.env, row.region).db);
+    await next();
+  };
+}
+
+export const loadFirm = load(false);
+export const loadClosedFirm = load(true);
 
 firm.get("/firm", (c) => {
-  const { region: _region, ...profile } = c.get("firm");
+  const { region: _region, stripe_customer_id: _customer, stripe_subscription_id: _subscription, ...profile } = c.get("firm");
   return c.json(profile);
 });
 

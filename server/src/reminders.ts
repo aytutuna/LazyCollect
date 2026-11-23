@@ -20,12 +20,14 @@ export type Sender = {
   tz: string;
   plan_status: string;
   trial_ends_at: number | null;
+  current_period_end: number | null;
+  closed_at: number | null;
   owner_email: string | null;
 };
 
 export async function sendersOf(env: Env, region: Region, ids: string[]): Promise<Map<string, Sender>> {
   const { results } = await env.CONTROL.prepare(
-    `SELECT f.id, f.name, f.legal_name, f.address, f.phone, f.tz, f.plan_status, f.trial_ends_at,
+    `SELECT f.id, f.name, f.legal_name, f.address, f.phone, f.tz, f.plan_status, f.trial_ends_at, f.current_period_end, f.closed_at,
        (SELECT email FROM users WHERE firm_id = f.id AND role = 'owner' AND disabled_at IS NULL ORDER BY created_at LIMIT 1) AS owner_email
      FROM firms f WHERE f.region = ? AND f.id IN (SELECT value FROM json_each(?))`,
   )
