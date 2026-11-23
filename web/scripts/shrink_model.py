@@ -5,6 +5,7 @@ followed by a DequantizeLinear node. The arithmetic stays fp32 (the runtime fold
 loads the model), so the heatmaps stay close to the original; dynamic quantization of the activations was tried and
 flattened them. Usage: python shrink_model.py <fp32.onnx> <out.onnx>. Needs onnx and numpy (see scripts/requirements.txt).
 """
+import os
 import sys
 
 import numpy as np
@@ -38,7 +39,8 @@ def shrink(src, dst):
     # the new nodes come first so every consumer sees its weights defined
     for node in reversed(added):
         graph.node.insert(0, node)
-    onnx.save(model, dst)
+    onnx.save(model, dst + ".part")
+    os.replace(dst + ".part", dst)
     return len(done)
 
 

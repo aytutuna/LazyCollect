@@ -7,5 +7,5 @@
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
-/models/1.1.1/*
+/models/*
   Cache-Control: public, max-age=31536000, immutable

@@ -7,7 +7,8 @@ import { chromium } from "playwright-core";
 import { createServer } from "vite";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-if (!existsSync(`${root}/public/models/1.1.1/docaligner-int8.onnx`)) {
+const { sha256 } = JSON.parse(readFileSync(`${root}/src/scan/model.json`, "utf8"));
+if (!existsSync(`${root}/public/models/${sha256.slice(0, 12)}/docaligner-int8.onnx`)) {
   console.log("skipped: the corner model is not fetched");
   process.exit(0);
 }

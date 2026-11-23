@@ -1,8 +1,10 @@
+import model from "./model.json";
 import type { Found } from "./corners";
 import type { Pixels } from "./geometry";
 import type { Reply, Request } from "./detect.worker";
 
-const MODEL = "/models/1.1.1/docaligner-int8.onnx";
+// the path carries the file's hash (scripts/fetch_docaligner.sh), so a new model is a new, immutable URL
+const MODEL = `/models/${model.sha256.slice(0, 12)}/docaligner-int8.onnx`;
 
 // The page finder, running in a worker. `ready` says whether the model loaded; without it `detect` answers null and the
 // scanner falls back to placing the corners by hand.
