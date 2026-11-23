@@ -61,7 +61,7 @@ export const loadSession: MiddlewareHandler<AppEnv> = async (c, next) => {
     const now = Date.now();
     const row = await c.env.CONTROL.prepare(
       `SELECT s.user_id, s.firm_id, s.last_seen_at FROM sessions s JOIN users u ON u.id = s.user_id
-       WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled_at IS NULL`,
+       WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled_at IS NULL AND u.firm_id = s.firm_id`,
     )
       .bind(tokenHash, now)
       .first<{ user_id: string; firm_id: string; last_seen_at: number }>();
