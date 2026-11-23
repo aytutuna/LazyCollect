@@ -40,6 +40,13 @@ export function toInput(ms: number): string {
   return `${w.y}-${String(w.m).padStart(2, "0")}-${String(w.d).padStart(2, "0")}`;
 }
 
+// a date and time as a datetime-local input has it, in the account's zone
+export function toLocalInput(ms: number): string {
+  const w = wall(ms);
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${w.y}-${two(w.m)}-${two(w.d)}T${two(w.h)}:${two(w.min)}`;
+}
+
 // the whole deadline day counts, so it ends at 23:59 in the account's zone
 export function fromInput(s: string): number {
   const [y, m, d] = s.split("-").map(Number);

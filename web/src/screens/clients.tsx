@@ -1,8 +1,9 @@
 import { useState } from "preact/hooks";
-import { Link } from "wouter-preact";
+import { Link, useLocation } from "wouter-preact";
 import { del, patch, post, useAction } from "../api";
 import { t } from "../i18n";
 import { usePaged, useSearchBox, useUrlParams } from "../paged";
+import { MAX_SELECT, carried, collect, useSelection } from "../selection";
 import type { Client, ClientRow } from "../types";
 import { Check, Confirm, ErrorNote, Field, Loading } from "../ui";
 
@@ -11,13 +12,14 @@ export function ClientForm({ client, onSaved, onCancel }: { client?: Client; onS
   const [name, setName] = useState(client?.name ?? "");
   const [email, setEmail] = useState(client?.email ?? "");
   const [phone, setPhone] = useState(client?.phone ?? "");
+  const [reference, setReference] = useState(client?.reference ?? "");
   const [ok, setOk] = useState(initialOk);
   const { busy, error, run } = useAction();
 
   async function submit(e: Event) {
     e.preventDefault();
     await run(async () => {
-      const body: Record<string, unknown> = { name, email, phone };
+      const body: Record<string, unknown> = { name, email, phone, reference };
       if (!client) {
         body.contact_ok = ok;
         onSaved(await post<Client>("/clients", body));
@@ -42,6 +44,9 @@ export function ClientForm({ client, onSaved, onCancel }: { client?: Client; onS
       <Field label={t("clients.phone")}>
         <input type="tel" maxLength={40} autoComplete="off" value={phone} onInput={(e) => setPhone(e.currentTarget.value)} />
       </Field>
+      <Field label={t("clients.reference")}>
+        <input maxLength={100} autoComplete="off" value={reference} onInput={(e) => setReference(e.currentTarget.value)} />
+      </Field>
       <Check label={t("clients.permission")} checked={ok} required={!client} onChange={setOk} />
       <ErrorNote error={error} />
       <div class="actions">
@@ -61,6 +66,10 @@ export function Clients() {
   const q = params.get("q") ?? "";
   const [typed, type] = useSearchBox(q, (v) => set({ q: v }, true));
   const list = usePaged<ClientRow>("/clients/search", q ? `q=${encodeURIComponent(q)}` : "");
+  const [, go] = useLocation();
+  const picked = useSelection<ClientRow>(new Map());
+  const everyone = useAction();
+  const [truncated, setTruncated] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [asking, setAsking] = useState<ClientRow | null>(null);
   const remove = useAction();
@@ -77,6 +86,26 @@ export function Clients() {
     }
   }
 
+  const allOnPage = list.rows.length > 0 && list.rows.every((c) => picked.has(c.id));
+
+  async function selectMatching() {
+    await everyone.run(async () => {
+      const all = await collect<ClientRow>("/clients/search", q ? `q=${encodeURIComponent(q)}` : "");
+      picked.add(all);
+      setTruncated(all.length >= MAX_SELECT);
+    });
+  }
+
+  function clearAll() {
+    picked.clear();
+    setTruncated(false);
+  }
+
+  function sendSelected() {
+    carried.clients = new Map(picked.map);
+    go("/batches/new");
+  }
+
   const count = (c: ClientRow) => (c.requests ? t("clients.requests", { n: c.requests }) : t("clients.no_requests"));
   const empty = !list.loading && list.rows.length === 0;
 
@@ -84,9 +113,17 @@ export function Clients() {
     <>
       <div class="head">
         <h1>{t("clients.title")}</h1>
-        <button class="primary" onClick={() => setEditing("new")}>
-          {t("clients.add")}
-        </button>
+        <div class="row-actions">
+          <Link href="/clients/import" class="button">
+            {t("clients.import")}
+          </Link>
+          <Link href="/batches/new" class="button">
+            {t("clients.send_many")}
+          </Link>
+          <button class="primary" onClick={() => setEditing("new")}>
+            {t("clients.add")}
+          </button>
+        </div>
       </div>
       <ErrorNote error={list.error} />
       {editing === "new" && <ClientForm onSaved={done} onCancel={() => setEditing(null)} />}
@@ -95,6 +132,26 @@ export function Clients() {
           <Field label={t("clients.search")}>
             <input type="search" value={typed} maxLength={100} onInput={(e) => type(e.currentTarget.value)} />
           </Field>
+        </div>
+      )}
+      {picked.map.size > 0 && (
+        <div class="callout" role="status">
+          <p>{t("clients.selected", { n: picked.map.size })}</p>
+          <div class="row-actions">
+            <button class="primary small" onClick={sendSelected}>
+              {t("clients.send_selected")}
+            </button>
+            {(list.next !== null || !allOnPage) && (
+              <button class="small" disabled={everyone.busy} onClick={selectMatching}>
+                {t("clients.select_matching")}
+              </button>
+            )}
+            <button class="small quiet" onClick={clearAll}>
+              {t("clients.clear_selection")}
+            </button>
+          </div>
+          {truncated && <p class="muted">{t("clients.select_limit")}</p>}
+          <ErrorNote error={everyone.error} />
         </div>
       )}
       {list.loading && list.rows.length === 0 ? (
@@ -112,6 +169,14 @@ export function Clients() {
             <table class={`stack${list.loading ? " busy" : ""}`}>
               <thead>
                 <tr>
+                  <th class="pick">
+                    <input
+                      type="checkbox"
+                      aria-label={t("clients.select_page")}
+                      checked={allOnPage}
+                      onChange={(e) => (e.currentTarget.checked ? picked.add(list.rows) : picked.remove(list.rows.map((c) => c.id)))}
+                    />
+                  </th>
                   <th>{t("clients.name")}</th>
                   <th class="wide">{t("clients.email")}</th>
                   <th class="wide">{t("clients.phone")}</th>
@@ -123,14 +188,18 @@ export function Clients() {
                 {list.rows.map((c) =>
                   editing === c.id ? (
                     <tr key={c.id}>
-                      <td colSpan={5}>
+                      <td colSpan={6}>
                         <ClientForm client={c} onSaved={done} onCancel={() => setEditing(null)} />
                       </td>
                     </tr>
                   ) : (
                     <tr key={c.id}>
+                      <td class="pick">
+                        <input type="checkbox" aria-label={t("clients.select_one", { name: c.name })} checked={picked.has(c.id)} onChange={() => picked.toggle(c)} />
+                      </td>
                       <td class="name">
                         {c.name}
+                        {c.reference && <div class="muted">{c.reference}</div>}
                         {c.email_stop_at && <div class="muted">{t("clients.unsubscribed")}</div>}
                       </td>
                       <td class="wide">{c.email ?? "-"}</td>

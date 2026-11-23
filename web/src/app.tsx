@@ -4,9 +4,12 @@ import { ApiError, get, onApiEvents, post } from "./api";
 import { fmtDate, setZone } from "./format";
 import { t } from "./i18n";
 import { Activity } from "./screens/activity";
+import { NewBatch } from "./screens/batch-new";
+import { BatchPage, Batches } from "./screens/batches";
 import { Closed } from "./screens/billing";
 import { Clients } from "./screens/clients";
 import { FirmSetup, Settings } from "./screens/firm";
+import { ImportClients } from "./screens/import";
 import { NewRequest } from "./screens/new-request";
 import { RequestPage } from "./screens/request-detail";
 import { Requests } from "./screens/requests";
@@ -137,6 +140,16 @@ export function App() {
           <Route path="/clients">
             <Clients />
           </Route>
+          <Route path="/clients/import">
+            <ImportClients />
+          </Route>
+          <Route path="/batches">
+            <Batches />
+          </Route>
+          <Route path="/batches/new">
+            <NewBatch />
+          </Route>
+          <Route path="/batches/:id">{(params) => <BatchPage key={params.id} id={params.id} />}</Route>
           <Route path="/templates">
             <Templates />
           </Route>

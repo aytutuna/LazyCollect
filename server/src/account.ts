@@ -45,6 +45,9 @@ account.post("/account/close", async (c) => {
   await db.batch([
     db.prepare("INSERT INTO firm_settings (firm_id, closed_at) VALUES (?, ?) ON CONFLICT (firm_id) DO UPDATE SET closed_at = excluded.closed_at").bind(firm.id, at),
     db.prepare("UPDATE links SET revoked_at = ? WHERE firm_id = ? AND revoked_at IS NULL").bind(at, firm.id),
+    // sends that have not gone out stay unsent, even if the account comes back
+    db.prepare("UPDATE batches SET status = 'cancelled', finished_at = ? WHERE firm_id = ? AND status IN ('scheduled', 'sending')").bind(at, firm.id),
+    db.prepare("UPDATE batch_items SET state = 'cancelled' WHERE firm_id = ? AND state = 'pending'").bind(firm.id),
     ...(firm.closed_at ? [] : [audit(c, "account.close", "firm", firm.id)]),
   ]);
   await c.env.CONTROL.prepare(
@@ -135,6 +138,7 @@ async function purgeFirm(env: Env, id: string, regionId: string, now: number) {
   await env.CONTROL.prepare("DELETE FROM invites WHERE firm_id = ?").bind(id).run();
   await db.batch([
     db.prepare("DELETE FROM staff_mail WHERE firm_id = ?").bind(id),
+    db.prepare("DELETE FROM batches WHERE firm_id = ?").bind(id),
     db.prepare("DELETE FROM templates WHERE firm_id = ?").bind(id),
     db.prepare("DELETE FROM clients WHERE firm_id = ? AND NOT EXISTS (SELECT 1 FROM requests WHERE firm_id = clients.firm_id AND client_id = clients.id)").bind(id),
   ]);

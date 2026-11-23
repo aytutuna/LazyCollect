@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { audit } from "./audit";
+import { itemsFromTemplate } from "./copy";
 import { usable } from "./firm";
 import { LINK_GRACE, sealToken } from "./links";
 import { MANUAL_SEQ, addressStopped, deliver, hasRoom, unsubUrl } from "./mail";
@@ -16,9 +17,11 @@ import { invalid, maybe, notFound, readBody, setClause, text } from "./validate"
 
 export const requests = new Hono<AppEnv>();
 
-const COLS = "id, client_id, title, note, deadline, firm_name, status, sent_at, closed_at, created_at, reminders_on, next_reminder_at, ended_at, keep_until, hold_at";
+const COLS = "id, client_id, title, note, deadline, firm_name, status, sent_at, closed_at, created_at, first_opened_at, reminders_on, next_reminder_at, ended_at, keep_until, hold_at";
 const MAX_ITEMS = 100;
 const MAX_PER_DAY = 300;
+// requests made by a batch have a cap of their own
+export const SINGLE_TODAY = `(SELECT COUNT(*) FROM requests WHERE firm_id = ? AND created_at > ? AND id NOT IN (SELECT request_id FROM batch_items WHERE firm_id = ?)) < ${MAX_PER_DAY}`;
 const MAX_AHEAD = 2 * 365 * DAY;
 
 type Req = { id: string; client_id: string; title: string; status: string; deadline: number; reminders_on: number; hold_at: number | null };
@@ -29,7 +32,7 @@ export const findRequest = (c: Context<AppEnv>) =>
     .bind(c.get("firm").id, c.req.param("id"))
     .first<Req>();
 
-function deadline(v: unknown): number | undefined {
+export function deadline(v: unknown): number | undefined {
   const now = Date.now();
   return Number.isInteger(v) && (v as number) > now && (v as number) <= now + MAX_AHEAD ? (v as number) : undefined;
 }
@@ -78,24 +81,17 @@ requests.post("/requests", async (c) => {
     db
       .prepare(
         `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, created_by, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?
-         WHERE (SELECT COUNT(*) FROM requests WHERE firm_id = ? AND created_at > ?) < ${MAX_PER_DAY}`,
+         WHERE ${SINGLE_TODAY}`,
       )
-      .bind(id, firmId, body.client_id, title, note, due, c.get("session")!.userId, now, firmId, now - DAY),
-    db
-      .prepare(
-        `INSERT INTO items (id, firm_id, request_id, position, label, help, required, kind, options_json, show_if_pos, show_if_value)
-         SELECT lower(hex(randomblob(16))), ?, ?, key, json_extract(value, '$.label'), json_extract(value, '$.help'), json_extract(value, '$.required'),
-           COALESCE(json_extract(value, '$.kind'), 'file'), json_extract(value, '$.options'), json_extract(value, '$.show_if.item'), json_extract(value, '$.show_if.value')
-         FROM json_each(?) WHERE EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ?)`,
-      )
-      .bind(firmId, id, JSON.stringify(items), firmId, id),
+      .bind(id, firmId, body.client_id, title, note, due, c.get("session")!.userId, now, firmId, now - DAY, firmId),
+    itemsFromTemplate(db, firmId, [id], items),
     audit(c, "request.create", "request", id, undefined, made),
   ]);
   if (!res.meta.changes) return c.json({ error: "too_many_requests" }, 429);
   return c.json(await loadRequest(c, id), 201);
 });
 
-async function loadRequest(c: Context<AppEnv>, id: string) {
+export async function loadRequest(c: Context<AppEnv>, id: string) {
   const db = c.get("db");
   const firmId = c.get("firm").id;
   const row = await db.prepare(`SELECT ${COLS} FROM requests WHERE firm_id = ? AND id = ?`).bind(firmId, id).first<{ reminders_on: number }>();

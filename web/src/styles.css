@@ -1061,3 +1061,9 @@ button.quiet-link {
     scroll-behavior: auto !important;
   }
 }
+
+th.pick,
+td.pick {
+  width: 2rem;
+  padding-right: 0;
+}

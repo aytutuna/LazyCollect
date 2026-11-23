@@ -100,6 +100,13 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
     }
   }
 
+  async function repeatNextYear() {
+    await act.run(async () => {
+      const made = await post<RequestDetail>(`/requests/${id}/repeat`);
+      go(`/requests/${made.id}`);
+    });
+  }
+
   async function remove() {
     if (await act.run(() => del(`/requests/${id}`))) go("/");
   }
@@ -169,6 +176,12 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
               </dd>
               <dt>{t("requests.progress")}</dt>
               <dd>{t("progress", { done: received, total: shown.length })}</dd>
+              {req.sent_at && (
+                <>
+                  <dt>{t("detail.opened_label")}</dt>
+                  <dd>{req.first_opened_at ? t("detail.opened", { date: fmtDate(req.first_opened_at) }) : t("detail.not_opened")}</dd>
+                </>
+              )}
               {req.note && (
                 <>
                   <dt>{t("new.note")}</dt>
@@ -371,6 +384,9 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
       </section>
 
       <div class="actions">
+        <button disabled={act.busy} onClick={repeatNextYear}>
+          {t("detail.repeat")}
+        </button>
         {req.status !== "closed" && <button onClick={() => setAsk("close")}>{t("detail.close")}</button>}
         <button class="quiet" onClick={() => setAsk("delete")}>
           {t("detail.delete")}
