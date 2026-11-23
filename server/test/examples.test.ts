@@ -57,7 +57,7 @@ describe("example upload", () => {
     expect(new Uint8Array(await got.arrayBuffer())).toEqual(bytes);
     expect(got.headers.get("content-type")).toBe("image/png");
     expect(got.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(got.headers.get("cache-control")).toBe("private, max-age=300");
+    expect(got.headers.get("cache-control")).toBe("private, no-cache");
   });
 
   it("goes by the first bytes and not by what the request says", async () => {
@@ -117,11 +117,12 @@ describe("firm isolation", () => {
 
     const req = await (await api("/api/requests", { method: "POST", cookie: b.cookie, body: { client_id: b.client.id, title: "T", deadline: inDays(9), items: [{ label: "One", required: true }] } })).json<any>();
     const patch = await api(`/api/requests/${req.id}/items/${req.items[0].id}`, { method: "PATCH", cookie: b.cookie, body: { example: a.example.id } });
-    expect(patch.status).toBe(400);
+    expect(patch.status).toBe(409);
+    expect(await patch.json()).toEqual({ error: "example_gone" });
     const items = [{ label: "One", required: true, example: a.example.id }];
-    expect((await api("/api/templates", { method: "POST", cookie: b.cookie, body: { name: "x", items } })).status).toBe(400);
-    expect((await api("/api/requests", { method: "POST", cookie: b.cookie, body: { client_id: b.client.id, title: "T", deadline: inDays(9), items } })).status).toBe(400);
-    expect((await api(`/api/requests/${req.id}/items`, { method: "POST", cookie: b.cookie, body: items[0] })).status).toBe(400);
+    expect((await api("/api/templates", { method: "POST", cookie: b.cookie, body: { name: "x", items } })).status).toBe(409);
+    expect((await api("/api/requests", { method: "POST", cookie: b.cookie, body: { client_id: b.client.id, title: "T", deadline: inDays(9), items } })).status).toBe(409);
+    expect((await api(`/api/requests/${req.id}/items`, { method: "POST", cookie: b.cookie, body: items[0] })).status).toBe(409);
     expect((await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM items WHERE example IS NOT NULL").first<any>())!.n).toBe(1);
   });
 
@@ -129,7 +130,8 @@ describe("firm isolation", () => {
     const { cookie, req } = await openRequest();
     for (const example of ["0".repeat(32), "nope", "../x", 5]) {
       const res = await api(`/api/requests/${req.id}/items/${req.items[0].id}`, { method: "PATCH", cookie, body: { example } });
-      expect([String(example), res.status]).toEqual([String(example), 400]);
+      // an id nobody owns is gone; anything that is not an id or a built-in name is malformed
+      expect([String(example), res.status]).toEqual([String(example), example === "0".repeat(32) ? 409 : 400]);
     }
   });
 });
@@ -146,7 +148,7 @@ describe("example on the client page", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(res.headers.get("cache-control")).toBe("private, max-age=300");
+    expect(res.headers.get("cache-control")).toBe("private, no-cache");
     expect(res.headers.get("content-length")).toBe("3000");
     expect((await res.arrayBuffer()).byteLength).toBe(3000);
     expect((await link(o.path, o.req.items[1].id)).status).toBe(404);
@@ -247,7 +249,7 @@ describe("sharing an example", () => {
     const items = [{ label: "Passport", required: true, example: example.id }];
     const tpl = await (await api("/api/templates", { method: "POST", cookie, body: { name: "Mine", items } })).json<any>();
     const req = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "2025", deadline: inDays(9), template_id: tpl.id } })).json<any>();
-    const later = Date.now() + 2 * HOUR;
+    const later = Date.now() + 2 * DAY;
 
     await sweepFiles(env, later);
     await sameObject(example.id);
@@ -267,6 +269,8 @@ describe("sharing an example", () => {
     await sweepFiles(env, Date.now());
     await sameObject(example.id);
     await sweepFiles(env, Date.now() + 2 * HOUR);
+    await sameObject(example.id);
+    await sweepFiles(env, Date.now() + 2 * DAY);
     expect(await count()).toBe(0);
   });
 
@@ -276,7 +280,7 @@ describe("sharing an example", () => {
     const tpl = await (await api("/api/templates", { method: "POST", cookie, body: { name: "Mine", items: [{ label: "P", required: true, example: example.id }] } })).json<any>();
     const req = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "2025", deadline: inDays(9), template_id: tpl.id } })).json<any>();
     await api(`/api/templates/${tpl.id}`, { method: "PATCH", cookie, body: { items: [{ label: "P", required: true }] } });
-    await sweepFiles(env, Date.now() + 2 * HOUR);
+    await sweepFiles(env, Date.now() + 2 * DAY);
     await sameObject(example.id);
     expect(req.items[0].example).toBe(example.id);
   });

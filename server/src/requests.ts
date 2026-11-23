@@ -15,7 +15,7 @@ import { nextReminder } from "./tz";
 import type { AppEnv } from "./session";
 import { builtinTemplates, parseItem, parseItems, type Item } from "./templates";
 import { DAY, hmac, randomId, randomToken } from "./util";
-import { invalid, maybe, notFound, readBody, setClause, text } from "./validate";
+import { exampleGone, invalid, maybe, notFound, readBody, setClause, text } from "./validate";
 
 export const requests = new Hono<AppEnv>();
 
@@ -72,7 +72,8 @@ requests.post("/requests", async (c) => {
     }
   } else if (body.items !== undefined) {
     const parsed = parseItems(body.items);
-    if (!parsed || !(await ownsExamples(db, firmId, parsed.map((i) => i.example)))) return invalid(c);
+    if (!parsed) return invalid(c);
+    if (!(await ownsExamples(db, firmId, parsed.map((i) => i.example)))) return exampleGone(c);
     items = parsed;
   }
 
@@ -199,7 +200,7 @@ requests.post("/requests/:id/items", async (c) => {
   const id = randomId();
   const firmId = c.get("firm").id;
   const db = c.get("db");
-  if (!(await ownsExamples(db, firmId, [item.example]))) return invalid(c);
+  if (!(await ownsExamples(db, firmId, [item.example]))) return exampleGone(c);
   if (item.show_if) {
     // here the condition names a position that is already in the request
     const p = await db
@@ -261,7 +262,7 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
   const set = setClause(fields);
   const db = c.get("db");
   const firmId = c.get("firm").id;
-  if (!(await ownsExamples(db, firmId, [fields.example as string | null]))) return invalid(c);
+  if (!(await ownsExamples(db, firmId, [fields.example as string | null]))) return exampleGone(c);
   const itemId = c.req.param("itemId");
   const [res] = await db.batch([
     db

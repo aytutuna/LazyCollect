@@ -16,7 +16,7 @@ import type { AppEnv } from "./session";
 import { ownsExamples, parseExample } from "./examples";
 import { parseKind, checkConditions, type Item } from "./questions";
 import { randomId } from "./util";
-import { invalid, locale, maybe, notFound, readBody, setClause, text } from "./validate";
+import { exampleGone, invalid, locale, maybe, notFound, readBody, setClause, text } from "./validate";
 
 const MAX_TEMPLATES = 200;
 
@@ -84,7 +84,7 @@ templates.post("/templates", async (c) => {
   const now = Date.now();
   const db = c.get("db");
   const firmId = c.get("firm").id;
-  if (!(await ownsExamples(db, firmId, items.map((i) => i.example)))) return invalid(c);
+  if (!(await ownsExamples(db, firmId, items.map((i) => i.example)))) return exampleGone(c);
   const [res] = await db.batch([
     db
       .prepare(
@@ -115,7 +115,8 @@ templates.patch("/templates/:id", async (c) => {
   }
   if ("items" in body) {
     const items = parseItems(body.items);
-    if (!items || !(await ownsExamples(c.get("db"), c.get("firm").id, items.map((i) => i.example)))) return invalid(c);
+    if (!items) return invalid(c);
+    if (!(await ownsExamples(c.get("db"), c.get("firm").id, items.map((i) => i.example)))) return exampleGone(c);
     fields.items_json = JSON.stringify(items);
   }
   if (!Object.keys(fields).length) return invalid(c);

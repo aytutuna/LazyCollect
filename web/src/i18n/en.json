@@ -741,6 +741,7 @@
   "example.bank-statement": "Bank statement",
   "example.void-cheque": "Void cheque",
   "example.noa": "Notice of assessment",
+  "error.example_gone": "That example image is no longer stored. Upload it again.",
   "error.too_many_examples": "You can keep up to 200 example images. Remove one you no longer use from a template or request first.",
   "items.untitled": "(untitled)",
   "clients.reference": "File number or reference",

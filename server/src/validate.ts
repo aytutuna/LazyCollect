@@ -1,6 +1,8 @@
 import type { Context } from "hono";
 
 export const invalid = (c: Context) => c.json({ error: "invalid" }, 400);
+// an example the editor holds was removed (nothing used it for a day) before it was saved onto an item or template
+export const exampleGone = (c: Context) => c.json({ error: "example_gone" }, 409);
 export const notFound = (c: Context) => c.json({ error: "not_found" }, 404);
 
 export async function readBody(c: Context): Promise<Record<string, unknown> | null> {

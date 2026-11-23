@@ -1,4 +1,4 @@
-import { HOUR } from "./util";
+import { DAY, HOUR } from "./util";
 import { dropUnused } from "./examples";
 import { regionIds, regionOf } from "./regions";
 
@@ -16,6 +16,6 @@ export async function sweepFiles(env: Env, now = Date.now()) {
       .bind(now - HOUR, now - HOUR)
       .all<{ r2_key: string }>();
     if (results.length) await bucket.delete(results.map((f) => f.r2_key));
-    await dropUnused(db, bucket, now - HOUR);
+    await dropUnused(db, bucket, now - DAY);
   }
 }

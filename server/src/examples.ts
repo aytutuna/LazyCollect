@@ -7,7 +7,7 @@ import { firmDek } from "./keys";
 import { visible } from "./questions";
 import { regionOf, type Region } from "./regions";
 import type { AppEnv } from "./session";
-import { HOUR, randomId } from "./util";
+import { DAY, randomId } from "./util";
 import { invalid, notFound } from "./validate";
 import { sniff } from "./upload";
 
@@ -51,7 +51,7 @@ export async function sendExample(env: Env, region: Region, firmId: string, row:
       "Content-Type": row.mime,
       "Content-Length": String(row.size),
       "X-Content-Type-Options": "nosniff",
-      "Cache-Control": "private, max-age=300",
+      "Cache-Control": "private, no-cache",
       "Content-Security-Policy": "default-src 'none'; sandbox",
     },
   });
@@ -104,7 +104,7 @@ examples.post("/examples", async (c) => {
   let [res] = await reserve();
   if (!res.meta.changes) {
     // examples nothing uses any more do not count against the cap
-    await dropUnused(db, bucket, now - HOUR, firm.id);
+    await dropUnused(db, bucket, now - DAY, firm.id);
     [res] = await reserve();
   }
   if (!res.meta.changes) return c.json({ error: "too_many_examples" }, 409);
