@@ -5,9 +5,12 @@ import ircSpousal from "../templates/ircc-spousal-sponsorship.json";
 import ircStudy from "../templates/ircc-study-permit.json";
 import ircVisitor from "../templates/ircc-visitor-visa.json";
 import ircWork from "../templates/ircc-work-permit.json";
-import t1Personal from "../templates/t1-personal.json";
+import bookkeeping from "../templates/bookkeeping-month-end";
+import onboarding from "../templates/client-onboarding";
+import gstHst from "../templates/gst-hst-return";
+import t1Personal from "../templates/t1-personal";
 import t1SelfEmployed from "../templates/t1-self-employed.json";
-import t2YearEnd from "../templates/t2-year-end.json";
+import t2YearEnd from "../templates/t2-year-end";
 import { audit } from "./audit";
 import type { AppEnv } from "./session";
 import { parseKind, checkConditions, type Item } from "./questions";
@@ -23,6 +26,9 @@ export const builtinTemplates: Template[] = [
   t1Personal,
   t1SelfEmployed,
   t2YearEnd,
+  bookkeeping,
+  gstHst,
+  onboarding,
   ircExpressEntry,
   ircSpousal,
   ircStudy,

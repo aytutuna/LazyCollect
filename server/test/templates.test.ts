@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { api, login } from "./helpers";
+import { checkConditions } from "../src/questions";
+import { builtinTemplates, parseItems } from "../src/templates";
+import { api, inDays, login, setup } from "./helpers";
 
 const IDS = [
   "t1-personal",
   "t1-self-employed",
   "t2-year-end",
+  "bookkeeping-month-end",
+  "gst-hst-return",
+  "client-onboarding",
   "ircc-express-entry",
   "ircc-spousal-sponsorship",
   "ircc-study-permit",
@@ -76,5 +81,38 @@ describe("templates", () => {
     expect(list.some((x) => x.id === t.id)).toBe(false);
     expect((await api(`/api/templates/${t.id}`, { method: "PATCH", cookie: b, body: { name: "x" } })).status).toBe(404);
     expect((await api(`/api/templates/${t.id}`, { method: "DELETE", cookie: b })).status).toBe(404);
+  });
+});
+
+describe("built-in templates", () => {
+  it("parse as items, point at earlier unconditional questions and keep labels unique", async () => {
+    for (const t of builtinTemplates) {
+      expect([t.id, parseItems(t.items)?.length]).toEqual([t.id, t.items.length]);
+      expect([t.id, checkConditions(t.items)]).toEqual([t.id, true]);
+      const labels = t.items.map((i) => i.label);
+      expect([t.id, labels.length - new Set(labels).size]).toEqual([t.id, 0]);
+    }
+  });
+
+  it("gives the Canadian templates questions with conditional documents", async () => {
+    for (const id of ["t1-personal", "t2-year-end", "bookkeeping-month-end", "gst-hst-return", "client-onboarding"]) {
+      const t = builtinTemplates.find((x) => x.id === id)!;
+      expect(t.items.some((i) => i.kind === "yesno")).toBe(true);
+      expect(t.items.some((i) => i.show_if)).toBe(true);
+    }
+  });
+
+  it("start a request with the conditions in place", async () => {
+    const { cookie, client } = await setup();
+    const req = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "t", deadline: inDays(5), template_id: "t1-personal" } })).json<any>();
+    const rl = req.items.find((i: any) => i.label.startsWith("RL-1 "));
+    expect(req.items[rl.show_if_pos].label).toBe("Were you a resident of Quebec on December 31, 2025?");
+    expect(rl.show_if_value).toBe("yes");
+    expect(rl.hidden).toBe(true);
+  });
+
+  it("never ask for the SIN card itself", async () => {
+    const sin = builtinTemplates.flatMap((t) => t.items).filter((i) => /\bSIN\b|social insurance/i.test(i.label));
+    for (const i of sin) expect(i.required).toBe(false);
   });
 });
