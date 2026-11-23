@@ -5,7 +5,8 @@
     {
       "label": "Passport",
       "help": "Every page with stamps or visas",
-      "required": true
+      "required": true,
+      "example": "passport"
     },
     {
       "label": "Language test results",

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { runReminders } from "../src/reminders";
 import { addDays, atHour, dayOf } from "../src/tz";
 import { HOUR, MINUTE, randomId } from "../src/util";
-import { addMember, api, mockOutbound, openRequest, pdf, setup, upload } from "./helpers";
+import { addMember, api, mockOutbound, openRequest, pdf, restoreItemColumns, setup, upload } from "./helpers";
 
 const TZ = "America/Toronto";
 const ADDRESS = "12 King St W\nToronto ON M5H 1A1";
@@ -279,8 +279,7 @@ describe("migration 0014 on existing rows", () => {
     const migration = (env.TEST_MIGRATIONS_NA as { name: string; queries: string[] }[]).find((m) => m.name.startsWith("0014"))!;
     await env.DB_NA.batch(migration.queries.map((q) => env.DB_NA.prepare(q)));
     // the rebuild is back at the 0014 shape; the later columns go on again so the other tests keep their schema
-    const later = (env.TEST_MIGRATIONS_NA as { name: string; queries: string[] }[]).find((m) => m.name.startsWith("0015"))!;
-    await env.DB_NA.batch(later.queries.map((q) => env.DB_NA.prepare(q)));
+    await restoreItemColumns();
 
     expect((await env.DB_NA.prepare("SELECT id, position, label, help, required, status, reject_note, reviewed_at FROM items ORDER BY position").all()).results).toEqual(before.items);
     expect((await env.DB_NA.prepare("SELECT id, item_id FROM files").all()).results).toEqual(before.files);

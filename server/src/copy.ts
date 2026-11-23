@@ -4,6 +4,7 @@ import type { Item } from "./templates";
 const RESET: Record<string, string> = {
   status: "'empty'",
   reject_note: "NULL",
+  reject_reasons: "NULL",
   reviewed_by: "NULL",
   reviewed_at: "NULL",
   unavailable_note: "NULL",
@@ -16,9 +17,9 @@ const RESET: Record<string, string> = {
 export function itemsFromTemplate(db: D1Database, firmId: string, requestIds: string[], items: Item[]) {
   return db
     .prepare(
-      `INSERT INTO items (id, firm_id, request_id, position, label, help, required, kind, options_json, show_if_pos, show_if_value)
+      `INSERT INTO items (id, firm_id, request_id, position, label, help, required, kind, options_json, show_if_pos, show_if_value, example)
        SELECT lower(hex(randomblob(16))), ?, r.value, t.key, json_extract(t.value, '$.label'), json_extract(t.value, '$.help'), json_extract(t.value, '$.required'),
-         COALESCE(json_extract(t.value, '$.kind'), 'file'), json_extract(t.value, '$.options'), json_extract(t.value, '$.show_if.item'), json_extract(t.value, '$.show_if.value')
+         COALESCE(json_extract(t.value, '$.kind'), 'file'), json_extract(t.value, '$.options'), json_extract(t.value, '$.show_if.item'), json_extract(t.value, '$.show_if.value'), json_extract(t.value, '$.example')
        FROM json_each(?) r, json_each(?) t WHERE EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = r.value)`,
     )
     .bind(firmId, JSON.stringify(requestIds), JSON.stringify(items), firmId);

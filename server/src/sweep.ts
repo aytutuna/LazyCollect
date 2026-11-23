@@ -1,9 +1,10 @@
 import { HOUR } from "./util";
+import { dropUnused } from "./examples";
 import { regionIds, regionOf } from "./regions";
 
 const BATCH = 200;
 
-// objects of uploads that never finished and of files a client removed (kept while the request is on legal hold); soft-deleted requests are left for the retention job
+// objects of uploads that never finished and of files a client removed (kept while the request is on legal hold), and examples no item or template uses; soft-deleted requests are left for the retention job
 export async function sweepFiles(env: Env, now = Date.now()) {
   for (const id of regionIds) {
     const { db, bucket } = regionOf(env, id);
@@ -15,5 +16,6 @@ export async function sweepFiles(env: Env, now = Date.now()) {
       .bind(now - HOUR, now - HOUR)
       .all<{ r2_key: string }>();
     if (results.length) await bucket.delete(results.map((f) => f.r2_key));
+    await dropUnused(db, bucket, now - HOUR);
   }
 }

@@ -5,7 +5,7 @@ const payroll = "Did you run payroll this month?";
 const big = "Did you take out a loan, buy equipment, or put in or take out owner money this month?";
 
 export default template("bookkeeping-month-end", "Bookkeeping month-end", [
-  doc("Bank statements for the month", "Every business account, as a PDF from your bank."),
+  doc("Bank statements for the month", "Every business account, as a PDF from your bank.", undefined, true, "bank-statement"),
   doc("Credit card statements for the month", "Every business card."),
   doc("Sales invoices issued", "A list from your invoicing system, or copies of the invoices."),
   doc("Receipts for expenses paid", "Photos are fine. Include anything paid in cash or on a personal card."),

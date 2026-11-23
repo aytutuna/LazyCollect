@@ -21,9 +21,9 @@ describe("review", () => {
     expect((await env.DB_NA.prepare("SELECT reviewed_by, reviewed_at FROM items WHERE id = ?").bind(item).first<any>())!.reviewed_at).toBeGreaterThan(0);
   });
 
-  it("rejects with a note and needs one", async () => {
+  it("rejects with a reason and an optional note", async () => {
     const { cookie, req, item } = await submitted();
-    for (const body of [{ decision: "reject" }, { decision: "reject", note: "  " }, { decision: "reject", note: "x".repeat(501) }, { decision: "reject", note: 5 }]) {
+    for (const body of [{ decision: "reject", reasons: [] }, { decision: "reject", reasons: [], note: "Blurry" }, { decision: "reject", note: "  " }, { decision: "reject", note: "x".repeat(501) }, { decision: "reject", note: 5 }]) {
       expect([JSON.stringify(body), (await review(cookie, req.id, item, body)).status]).toEqual([JSON.stringify(body), 400]);
     }
     const ok = await review(cookie, req.id, item, { decision: "reject", note: "x".repeat(500) });
@@ -77,7 +77,7 @@ describe("review", () => {
   it("lists files per item on the request", async () => {
     const { cookie, req, item, file } = await submitted();
     const got = await (await api(`/api/requests/${req.id}`, { cookie })).json<any>();
-    expect(got.items[0].files).toEqual([{ id: file.id, name: "a.pdf", size: 2000, mime: "application/pdf", uploaded_at: file.uploaded_at }]);
+    expect(got.items[0].files).toEqual([{ id: file.id, name: "a.pdf", size: 2000, mime: "application/pdf", uploaded_at: file.uploaded_at, sent_back_at: null }]);
     expect(got.items[1].files).toEqual([]);
     expect(got.items[0].id).toBe(item);
   });

@@ -3,6 +3,7 @@ import { get } from "../api";
 import { fmtSize } from "../format";
 import { t } from "../i18n";
 import type { FileRow, ItemWithFiles, RequestDetail } from "../types";
+import { Why } from "../reasons";
 import { Badge, ErrorNote, Loading } from "../ui";
 import { Review } from "./review";
 
@@ -114,6 +115,7 @@ export function Viewer({ req, startId, onClose, onChanged }: { req: RequestDetai
           <h2 id="viewer-title">{item.label}</h2>
           <div class="muted">
             {file.name} ({fmtSize(file.size)})
+            {file.sent_back_at && <span class="tag">{t("detail.sent_back")}</span>}
           </div>
         </div>
         <Badge tone={TONES[item.status]}>{t(`item.${item.status}`)}</Badge>
@@ -134,7 +136,7 @@ export function Viewer({ req, startId, onClose, onChanged }: { req: RequestDetai
         </nav>
         <div class="decide">
           {open && item.status === "submitted" && <Review key={item.id} requestId={req.id} item={item as ItemWithFiles} onDone={decided} />}
-          {item.status === "rejected" && item.reject_note && <p class="reject">{item.reject_note}</p>}
+          {item.status === "rejected" && <Why item={item} />}
         </div>
         <div class="row-actions">
           {file.mime === "application/pdf" && (

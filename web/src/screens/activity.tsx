@@ -3,13 +3,14 @@ import { Link } from "wouter-preact";
 import { get, useAction } from "../api";
 import { fmtDateTime } from "../format";
 import { t } from "../i18n";
+import { Why } from "../reasons";
 import type { ActivityRow } from "../types";
 import { ErrorNote, Loading } from "../ui";
 
 type Page = { rows: ActivityRow[]; next: string | null };
 
-function what(action: string): string {
-  const key = `activity.action.${action}`;
+function what(action: string, decision?: string): string {
+  const key = `activity.action.${action}${action === "item.review" && decision === "reject" ? "_reject" : ""}`;
   const text = t(key);
   return text === key ? action : text;
 }
@@ -28,7 +29,8 @@ function collapse(rows: ActivityRow[]): { row: ActivityRow; n: number }[] {
   const out: { row: ActivityRow; n: number }[] = [];
   for (const row of rows) {
     const last = out[out.length - 1];
-    const same = last && last.row.actor_type === row.actor_type && last.row.actor === row.actor && last.row.action === row.action && last.row.request_id === row.request_id;
+    // a review says what it was for, so each one is listed
+    const same = row.action !== "item.review" && last && last.row.actor_type === row.actor_type && last.row.actor === row.actor && last.row.action === row.action && last.row.request_id === row.request_id;
     if (same && last.row.at - row.at <= RUN) last.n++;
     else out.push({ row, n: 1 });
   }
@@ -57,7 +59,10 @@ export function ActivityList({ rows, links }: { rows: ActivityRow[]; links?: boo
           <tr key={r.id}>
             <td>{fmtDateTime(r.at)}</td>
             <td>{who(r)}</td>
-            <td>{n > 1 ? whatMany(r.action, n) : what(r.action)}</td>
+            <td>
+              {n > 1 ? whatMany(r.action, n) : what(r.action, r.decision)}
+              {n === 1 && r.reasons && r.reasons.length > 0 && <Why item={{ reject_reasons: r.reasons, reject_note: null }} />}
+            </td>
             {links && (
               <td class="end">
                 {r.request_id ? <Link href={`/requests/${r.request_id}`}>{t("activity.open")}</Link> : r.client_id ? <Link href="/clients">{t("activity.open")}</Link> : null}

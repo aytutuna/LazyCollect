@@ -32,8 +32,8 @@ const wfh = "Did you work from home because your employer required it?";
 const quebec = "Were you a resident of Quebec on December 31, 2025?";
 
 export default template("t1-personal", "T1 personal tax organizer, 2025", [
-  doc("Notice of assessment for 2024", "Sign in to CRA My Account and look under Tax returns, or use the copy that came in the mail."),
-  doc("T4 slips (employment income)", `${feb} Send one for each employer.`, undefined, false),
+  doc("Notice of assessment for 2024", "Sign in to CRA My Account and look under Tax returns, or use the copy that came in the mail.", undefined, true, "noa"),
+  doc("T4 slips (employment income)", `${feb} Send one for each employer.`, undefined, false, "t4"),
   doc("T4A slips (pension, retirement, annuity and other income)", `${feb} This includes scholarships and some self-employment income.`, undefined, false),
   doc("T4A(P) slip (Canada Pension Plan benefits)", `${feb} Quebec residents: the pension slip from Retraite Québec.`, undefined, false),
   doc("T4A(OAS) slip (Old Age Security)", feb, undefined, false),

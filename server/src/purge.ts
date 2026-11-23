@@ -66,6 +66,8 @@ export async function purgeRequest(db: D1Database, bucket: R2Bucket, req: Target
         .bind(...own, ...held),
       db.prepare(`DELETE FROM messages WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db.prepare(`DELETE FROM notes WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
+      // the audit trail stays, but what a document was sent back for is client data
+      db.prepare(`UPDATE audit SET meta = json_remove(meta, '$.reasons') WHERE firm_id = ? AND request_id = ? AND action = 'item.review' AND ${mine}`).bind(...own, ...held),
       db.prepare(`DELETE FROM files WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db.prepare(`DELETE FROM items WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db.prepare(`DELETE FROM links WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),

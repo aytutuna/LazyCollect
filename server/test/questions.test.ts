@@ -4,7 +4,7 @@ import { purgeExpired } from "../src/purge";
 import { runReminders } from "../src/reminders";
 import { atHour } from "../src/tz";
 import { DAY, HOUR, RESTORE_WINDOW } from "../src/util";
-import { api, inDays, mockOutbound, pdf, review, setup, upload } from "./helpers";
+import { api, inDays, mockOutbound, pdf, restoreItemColumns, review, setup, upload } from "./helpers";
 
 const TZ = "America/Toronto";
 
@@ -398,7 +398,7 @@ describe("send back", () => {
     const { cookie, req, path } = await make(employer);
     const [id] = ids(req);
     await answer(path, id, "Acme");
-    const res = await review(cookie, req.id, id, { decision: "reject", note: "Use the legal name", answered_at: await answeredAt(id) });
+    const res = await review(cookie, req.id, id, { decision: "reject", reasons: [], note: "Use the legal name", answered_at: await answeredAt(id) });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ status: "rejected", reject_note: "Use the legal name", answer: "Acme" });
     expect(await reqStatus(req.id)).toBe("open");
@@ -480,6 +480,7 @@ describe("migration 0015 on existing rows", () => {
     await run("0014");
     expect((await env.DB_NA.prepare("SELECT name FROM pragma_table_info('items') WHERE name = 'kind'").all()).results).toEqual([]);
     await run("0015");
+    await restoreItemColumns(false);
 
     expect((await env.DB_NA.prepare(`SELECT ${cols} FROM items ORDER BY position`).all()).results).toEqual(before);
     const row = await env.DB_NA.prepare("SELECT kind, options_json, show_if_pos, show_if_value, answer, answer_at FROM items WHERE id = ?").bind(req.items[0].id).first<any>();

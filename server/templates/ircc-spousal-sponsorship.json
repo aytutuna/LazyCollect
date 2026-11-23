@@ -4,7 +4,8 @@
   "items": [
     {
       "label": "Passports for sponsor and applicant",
-      "required": true
+      "required": true,
+      "example": "passport"
     },
     {
       "label": "Marriage certificate or proof of relationship",

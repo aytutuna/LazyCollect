@@ -14,7 +14,7 @@ describe("client link", () => {
       ["Passport", "All pages", true, "empty", null],
       ["Visa", null, false, "empty", null],
     ]);
-    expect(Object.keys(body.items[0]).sort()).toEqual(["answer", "files", "help", "id", "kind", "label", "options", "reject_note", "required", "status", "unavailable_note"]);
+    expect(Object.keys(body.items[0]).sort()).toEqual(["answer", "example", "files", "help", "id", "kind", "label", "options", "reject_note", "reject_reasons", "required", "status", "unavailable_note"]);
   });
 
   it("logs a view at most once an hour per link", async () => {

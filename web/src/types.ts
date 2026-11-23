@@ -41,7 +41,7 @@ export type Client = {
 
 export type Kind = "file" | "yesno" | "text" | "longtext" | "number" | "date" | "choice" | "multi";
 
-export type TemplateItem = { label: string; help?: string; required: boolean; kind?: Kind; options?: string[]; show_if?: { item: number; value: string } };
+export type TemplateItem = { label: string; help?: string; required: boolean; kind?: Kind; options?: string[]; show_if?: { item: number; value: string }; example?: string };
 
 export type Template = { id: string; name: string; builtin: boolean; items: TemplateItem[] };
 
@@ -73,8 +73,11 @@ export type Item = {
   required: boolean;
   status: "empty" | "submitted" | "approved" | "rejected" | "unavailable" | "waived";
   reject_note: string | null;
+  reject_reasons: string[];
   unavailable_note: string | null;
   kind: Kind;
+  // the id of an uploaded example, or the name of a built-in one
+  example: string | null;
   options: string[] | null;
   show_if_pos: number | null;
   show_if_value: string | null;
@@ -83,7 +86,7 @@ export type Item = {
   hidden: boolean;
 };
 
-export type FileRow = { id: string; name: string; size: number; mime: string; uploaded_at: number };
+export type FileRow = { id: string; name: string; size: number; mime: string; uploaded_at: number; sent_back_at: number | null };
 
 export type ItemWithFiles = Item & { files: FileRow[] };
 
@@ -118,6 +121,8 @@ export type ActivityRow = {
   object_id: string;
   request_id: string | null;
   client_id: string | null;
+  decision?: string;
+  reasons?: string[];
 };
 
 export type Person = { id: string; email: string; name: string | null; role: "owner" | "member"; created_at: number; sessions: number; passkeys: number };

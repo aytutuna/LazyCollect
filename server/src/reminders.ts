@@ -46,11 +46,11 @@ export const canSend = (s: Sender | undefined, now: number): s is Sender & { add
 export async function missingItems(db: D1Database, firmId: string, requestId: string, onlyRejected: boolean): Promise<Missing[]> {
   const { results } = await db
     .prepare(
-      `SELECT label, required, reject_note FROM items i WHERE firm_id = ? AND request_id = ? AND ${visible("i")}
+      `SELECT label, required, reject_note, reject_reasons FROM items i WHERE firm_id = ? AND request_id = ? AND ${visible("i")}
        AND status IN (${onlyRejected ? "'rejected'" : "'empty', 'rejected'"}) ORDER BY required DESC, position`,
     )
     .bind(firmId, requestId)
-    .all<{ label: string; required: number; reject_note: string | null }>();
+    .all<{ label: string; required: number; reject_note: string | null; reject_reasons: string | null }>();
   return results.map((i) => ({ ...i, required: i.required === 1 }));
 }
 

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 280" font-family="Arial, Helvetica, sans-serif">
+  <rect width="400" height="280" fill="#ffffff"/>
+  <rect x="16" y="14" width="368" height="252" rx="8" fill="#ffffff" stroke="#aeb7bb" stroke-width="2"/>
+  <rect x="16" y="14" width="368" height="40" rx="8" fill="#0f5f66"/>
+  <rect x="16" y="40" width="368" height="14" fill="#0f5f66"/>
+  <text x="32" y="42" font-size="22" font-weight="700" fill="#ffffff">T4</text>
+  <rect x="236" y="26" width="132" height="8" rx="3" fill="#7fb0b4"/>
+  <rect x="268" y="40" width="100" height="6" rx="3" fill="#7fb0b4"/>
+  <g stroke="#aeb7bb" stroke-width="1.5" fill="#ffffff">
+    <rect x="32" y="68" width="160" height="48"/>
+    <rect x="192" y="68" width="176" height="48"/>
+    <rect x="32" y="116" width="112" height="42"/>
+    <rect x="144" y="116" width="112" height="42"/>
+    <rect x="256" y="116" width="112" height="42"/>
+    <rect x="32" y="158" width="112" height="42"/>
+    <rect x="144" y="158" width="112" height="42"/>
+    <rect x="256" y="158" width="112" height="42"/>
+    <rect x="32" y="200" width="112" height="42"/>
+    <rect x="144" y="200" width="112" height="42"/>
+    <rect x="256" y="200" width="112" height="42"/>
+  </g>
+  <g font-size="10" fill="#5d666c">
+    <text x="38" y="80">Employer</text>
+    <text x="198" y="80">Employee</text>
+    <text x="38" y="129">14</text>
+    <text x="150" y="129">22</text>
+    <text x="262" y="129">24</text>
+    <text x="38" y="171">16</text>
+    <text x="150" y="171">26</text>
+    <text x="262" y="171">44</text>
+    <text x="38" y="213">18</text>
+    <text x="150" y="213">46</text>
+    <text x="262" y="213">52</text>
+  </g>
+  <g fill="#e6eaec">
+    <rect x="40" y="90" width="120" height="8" rx="3"/>
+    <rect x="200" y="90" width="140" height="8" rx="3"/>
+  </g>
+</svg>

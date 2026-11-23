@@ -8,6 +8,7 @@ import { answers } from "./answers";
 import { client } from "./client";
 import { clients } from "./clients";
 import { devices } from "./devices";
+import { examples } from "./examples";
 import { exportZip } from "./export";
 import { files } from "./files";
 import { firm, loadClosedFirm, loadFirm } from "./firm";
@@ -43,7 +44,7 @@ app.onError((e, c) => {
 app.use("/api/*", async (c, next) => {
   await next();
   c.header("X-Content-Type-Options", "nosniff");
-  c.header("Cache-Control", "no-store");
+  if (!c.res.headers.has("Cache-Control")) c.header("Cache-Control", "no-store");
 });
 // Stripe's calls carry no cookie or X-Collect header, so this goes in before the csrf check and is verified by its signature
 app.route("/api", stripeWebhook);
@@ -70,6 +71,7 @@ app.use("/api/batches/*", loadFirm);
 app.use("/api/templates/*", loadFirm);
 app.use("/api/requests/*", loadFirm);
 app.use("/api/files/*", loadFirm);
+app.use("/api/examples/*", loadFirm);
 app.route("/api", firm);
 app.route("/api", billing);
 app.route("/api", account);
@@ -90,6 +92,7 @@ app.route("/api", devices);
 app.route("/api", passkeys);
 app.route("/api", activity);
 app.route("/api", files);
+app.route("/api", examples);
 
 app.route("/u", unsubscribe);
 

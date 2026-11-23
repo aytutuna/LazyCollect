@@ -9,7 +9,7 @@ const TEXT_LEN = 500;
 const LONG_TEXT_LEN = 5000;
 
 export type ShowIf = { item: number; value: string };
-export type Item = { label: string; help?: string; required: boolean; kind?: Kind; options?: string[]; show_if?: ShowIf };
+export type Item = { label: string; help?: string; required: boolean; kind?: Kind; options?: string[]; show_if?: ShowIf; example?: string };
 
 // what a conditional item may hang on
 const PARENTS: Kind[] = ["yesno", "choice", "multi"];
@@ -97,11 +97,12 @@ export const visible = (a: string) =>
      AND p.position = ${a}.show_if_pos AND p.answer IS NOT NULL
      AND CASE WHEN p.kind = 'multi' THEN EXISTS (SELECT 1 FROM json_each(p.answer) WHERE value = ${a}.show_if_value) ELSE p.answer = ${a}.show_if_value END))`;
 
-type Row = { required: number; hidden?: number; options_json: string | null; answer: string | null; kind: string };
+type Row = { required: number; hidden?: number; options_json: string | null; reject_reasons?: string | null; answer: string | null; kind: string };
 
-export function presentItem<T extends Row>({ options_json, hidden, ...i }: T) {
+export function presentItem<T extends Row>({ options_json, reject_reasons, hidden, ...i }: T) {
   return {
     ...i,
+    reject_reasons: reject_reasons ? (JSON.parse(reject_reasons) as string[]) : [],
     required: i.required === 1,
     ...(hidden === undefined ? {} : { hidden: hidden === 1 }),
     options: options_json ? (JSON.parse(options_json) as string[]) : null,
@@ -110,5 +111,5 @@ export function presentItem<T extends Row>({ options_json, hidden, ...i }: T) {
 }
 
 // the columns the account sees on an item
-export const ITEM_COLS = `id, position, label, help, required, status, reject_note, reviewed_at, unavailable_note, kind, options_json, show_if_pos, show_if_value, answer, answer_at,
+export const ITEM_COLS = `id, position, label, help, required, status, reject_note, reject_reasons, reviewed_at, unavailable_note, kind, example, options_json, show_if_pos, show_if_value, answer, answer_at,
   NOT ${visible("items")} AS hidden`;
