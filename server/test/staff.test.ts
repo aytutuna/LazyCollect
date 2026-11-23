@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { purgeClosed } from "../src/account";
-import { DAY, HOUR } from "../src/util";
+import { DAY, HOUR, sha256 } from "../src/util";
 import { addMember, api, codeFrom, cookieFrom, firmRow, login, mockOutbound, openRequest, setup, start } from "./helpers";
 
 const OWNER = "owner@firm.test";
@@ -297,11 +297,46 @@ describe("members", () => {
     expect((await list(cookie)).people).toHaveLength(1);
     expect(await actions()).toContain("staff.remove");
 
-    // signing in again stays refused
-    const sent = mockOutbound();
-    await start("member@firm.test");
-    const res = await api("/api/auth/verify", { method: "POST", body: { email: "member@firm.test", code: codeFrom(sent[0]) } });
-    expect(res.status).toBe(403);
+    // signing in again starts an account of their own
+    mockOutbound();
+    const again = await me(await login("member@firm.test"));
+    expect(again.user.role).toBe("owner");
+    expect(again.firm.id).not.toBe((await me(cookie)).firm.id);
+  });
+
+  it("stay named in the old account's activity after they leave", async () => {
+    const { cookie } = await setup();
+    const member = await addMember(cookie);
+    await api("/api/clients", { method: "POST", cookie: member, body: { name: "Bo", contact_ok: false } });
+    const id = (await row("SELECT id FROM users WHERE email = 'member@firm.test'"))!.id;
+    await api(`/api/staff/${id}`, { method: "DELETE", cookie });
+    await login("member@firm.test");
+    const { rows } = await (await api("/api/activity", { cookie })).json<any>();
+    const made = rows.find((r: any) => r.action === "client.create");
+    expect(made.actor).toBe("member@firm.test");
+  });
+
+  it("lose a session left over from the old account when they join another", async () => {
+    const { cookie } = await setup();
+    const other = await setup("other@firm.test", "Other Firm");
+    await addMember(cookie);
+    const target = await row("SELECT id, firm_id FROM users WHERE email = 'member@firm.test'");
+    await api(`/api/staff/${target!.id}`, { method: "DELETE", cookie });
+    // a sign-in that was in flight during the removal
+    const stale = async () => {
+      await env.CONTROL.prepare("INSERT INTO sessions (token_hash, user_id, firm_id, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind(await sha256("stale"), target!.id, target!.firm_id, Date.now(), Date.now(), Date.now() + DAY)
+        .run();
+    };
+    await stale();
+    mockOutbound();
+    await invite(other.cookie, "member@firm.test");
+    const joined = await login("member@firm.test");
+    expect((await me(joined)).firm.name).toBe("Other Firm");
+    expect((await api("/api/me", { cookie: "__Host-lc_session=stale" })).status).toBe(401);
+    // and if one still turns up, the firm it names is not the user's
+    await stale();
+    expect((await api("/api/clients", { cookie: "__Host-lc_session=stale" })).status).toBe(401);
   });
 
   it("cannot remove themselves, and the last owner stays", async () => {

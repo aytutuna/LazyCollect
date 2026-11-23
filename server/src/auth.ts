@@ -105,13 +105,19 @@ async function acceptInvite(c: Context<AppEnv>, email: string, existing: Found |
   const taken = "EXISTS (SELECT 1 FROM invites WHERE id = ? AND accepted_at = ?)";
   const [accepted] = await db.batch([
     db.prepare("UPDATE invites SET accepted_at = ? WHERE id = ? AND accepted_at IS NULL AND revoked_at IS NULL").bind(now, invite.id),
-    existing
-      ? db
-          .prepare(`UPDATE users SET disabled_at = NULL, firm_id = ?, role = 'member', name = COALESCE(?, name) WHERE id = ? AND disabled_at IS NOT NULL AND ${taken}`)
-          .bind(invite.firm_id, invite.name, userId, invite.id, now)
-      : db
-          .prepare(`INSERT INTO users (id, firm_id, email, name, role, created_at) SELECT ?, ?, ?, ?, 'member', ? WHERE ${taken} ON CONFLICT (email) DO NOTHING`)
-          .bind(userId, invite.firm_id, email, invite.name, now, invite.id, now),
+    ...(existing
+      ? [
+          db
+            .prepare(`UPDATE users SET disabled_at = NULL, firm_id = ?, role = 'member', name = COALESCE(?, name) WHERE id = ? AND disabled_at IS NOT NULL AND ${taken}`)
+            .bind(invite.firm_id, invite.name, userId, invite.id, now),
+          // a sign-in that was in flight during the removal may have left a session for the old account
+          db.prepare(`DELETE FROM sessions WHERE user_id = ? AND ${taken}`).bind(userId, invite.id, now),
+        ]
+      : [
+          db
+            .prepare(`INSERT INTO users (id, firm_id, email, name, role, created_at) SELECT ?, ?, ?, ?, 'member', ? WHERE ${taken} ON CONFLICT (email) DO NOTHING`)
+            .bind(userId, invite.firm_id, email, invite.name, now, invite.id, now),
+        ]),
   ]);
   if (accepted.meta.changes !== 1) return;
   await regionOf(c.env, invite.region as Region)
@@ -128,17 +134,21 @@ async function signIn(c: Context<AppEnv>, email: string): Promise<boolean> {
     await acceptInvite(c, email, user);
     user = await find();
   }
-  if (!user) {
+  if (!user || user.disabled_at) {
     const now = Date.now();
     const firmId = randomId();
-    // a parallel first sign-in may have won the email; then the firm made here is dropped again
+    // A removed member starts a new account on the same row, since the email is unique. A parallel first sign-in may
+    // have won the email; then the firm made here is dropped again.
     await db.batch([
       db
         .prepare("INSERT INTO firms (id, plan_status, trial_ends_at, created_at) VALUES (?, 'trialing', ?, ?)")
         .bind(firmId, now + TRIAL_DAYS * DAY, now),
-      db
-        .prepare("INSERT INTO users (id, firm_id, email, role, created_at) VALUES (?, ?, ?, 'owner', ?) ON CONFLICT (email) DO NOTHING")
-        .bind(randomId(), firmId, email, now),
+      user
+        ? db.prepare("UPDATE users SET firm_id = ?, role = 'owner', disabled_at = NULL WHERE id = ? AND disabled_at IS NOT NULL").bind(firmId, user.id)
+        : db
+            .prepare("INSERT INTO users (id, firm_id, email, role, created_at) VALUES (?, ?, ?, 'owner', ?) ON CONFLICT (email) DO NOTHING")
+            .bind(randomId(), firmId, email, now),
+      db.prepare("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = ?) AND firm_id != ?").bind(email, firmId),
       db
         .prepare("DELETE FROM firms WHERE id = ? AND NOT EXISTS (SELECT 1 FROM users WHERE firm_id = ?)")
         .bind(firmId, firmId),

@@ -118,12 +118,21 @@ describe("verify", () => {
     expect(users!.n).toBe(1);
   });
 
-  it("refuses a disabled user", async () => {
+  it("gives a disabled user with no invite a new account of their own", async () => {
     const sent = mockOutbound();
-    await signIn(sent);
+    const first = await signIn(sent);
+    const before = await (await api("/api/me", { cookie: cookieFrom(first) })).json<any>();
     await env.CONTROL.prepare("UPDATE users SET disabled_at = ?").bind(Date.now()).run();
     const res = await signIn(sent);
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    const after = await (await api("/api/me", { cookie: cookieFrom(res) })).json<any>();
+    expect(after.user.id).toBe(before.user.id);
+    expect(after.user.role).toBe("owner");
+    expect(after.firm.id).not.toBe(before.firm.id);
+    expect(after.firm.plan_status).toBe("trialing");
+    expect((await env.CONTROL.prepare("SELECT COUNT(*) AS n FROM users").first<any>())!.n).toBe(1);
+    expect((await env.CONTROL.prepare("SELECT disabled_at FROM users").first<any>())!.disabled_at).toBeNull();
+    expect((await api("/api/me", { cookie: cookieFrom(first) })).status).toBe(401);
   });
 });
 
