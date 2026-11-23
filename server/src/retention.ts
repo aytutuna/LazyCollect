@@ -54,6 +54,10 @@ retention.put("/requests/:id/hold", async (c) => {
   const db = c.get("db");
   const firmId = c.get("firm").id;
   const now = Date.now();
+  // a deleted client's records are on their way out; a hold would have to be placed before that
+  if (body.on && !(await db.prepare("SELECT 1 FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL").bind(firmId, req.client_id).first())) {
+    return c.json({ error: "client_deleted" }, 409);
+  }
   const open = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NULL AND purging_at IS NULL)";
   const [, res] = await db.batch([
     audit(c, body.on ? "request.hold" : "request.release", "request", req.id, undefined, { sql: open, binds: [firmId, req.id] }),

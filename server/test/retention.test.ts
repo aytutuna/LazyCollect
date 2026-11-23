@@ -110,6 +110,14 @@ describe("legal hold", () => {
     expect(r.keep_until).toBe(r.ended_at + 7 * YEAR);
   });
 
+  it("refuses a hold on a request whose client is deleted", async () => {
+    const { cookie, req } = await openRequest();
+    await api(`/api/clients/${req.client_id}`, { method: "DELETE", cookie });
+    const res = await api(`/api/requests/${req.id}/hold`, { method: "PUT", cookie, body: { on: true } });
+    expect([res.status, await res.json()]).toEqual([409, { error: "client_deleted" }]);
+    expect((await row()).hold_at).toBeNull();
+  });
+
   it("answers another firm with 404", async () => {
     const { req } = await openRequest();
     const other = await login("other@firm.test");

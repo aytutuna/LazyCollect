@@ -244,6 +244,22 @@ describe("purge claims and failures", () => {
     expect((await api(`/api/clients/${req.client_id}/restore`, { method: "POST", cookie })).status).toBe(409);
   });
 
+  it("releases the claim when the failure comes before any object is touched", async () => {
+    const { req } = await retired();
+    const broken = { ...env, FILES_NA: { list: () => Promise.reject(new Error("r2 down")), delete: () => Promise.resolve() } } as unknown as Env;
+    await purgeExpired(broken, Date.now());
+    expect(await env.DB_NA.prepare("SELECT id, purging_at, purge_failed_at IS NOT NULL AS failed FROM requests").first()).toEqual({ id: req.id, purging_at: null, failed: 1 });
+  });
+
+  it("logs a client purge's request with its own reason", async () => {
+    const { cookie, req } = await withFiles();
+    await api(`/api/clients/${req.client_id}`, { method: "DELETE", cookie });
+    await env.DB_NA.prepare("UPDATE requests SET deleted_at = 1, deleted_reason = 'retention'").run();
+    await env.DB_NA.prepare("UPDATE clients SET deleted_at = 1").run();
+    await purgeExpired(env);
+    expect((await log()).map((l) => [l.kind, l.reason])).toEqual([["request", "retention"], ["client", "deleted"]]);
+  });
+
   it("keeps what was sent without any address or text", async () => {
     await retired();
     const row = (await env.DB_NA.prepare("SELECT id, firm_id, client_id FROM requests").first<any>())!;
@@ -271,11 +287,12 @@ describe("purge claims and failures", () => {
     const now = Date.now();
     await purgeExpired(env, now);
     expect((await env.DB_NA.prepare("SELECT id, purging_at, purge_failed_at FROM requests").all<any>()).results).toEqual([
-      { id: a.req.id, purging_at: null, purge_failed_at: now },
+      { id: a.req.id, purging_at: now, purge_failed_at: now },
     ]);
     await env.DB_NA.prepare("DROP TRIGGER boom").run();
     await purgeExpired(env, now + 60_000);
     expect(await count("requests")).toBe(1);
+    // the claim was kept after the objects went, and the stale-claim retry finishes it
     await purgeExpired(env, now + 2 * 3_600_000);
     expect(await count("requests")).toBe(0);
   });

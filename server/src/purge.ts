@@ -15,11 +15,14 @@ export const FINISHED = `ended_at IS NOT NULL AND hold_at IS NULL AND deleted_at
 
 const log = (e: unknown) => console.error(e instanceof Error ? e.message : "error");
 
-async function emptyPrefix(bucket: R2Bucket, prefix: string) {
+async function emptyPrefix(bucket: R2Bucket, prefix: string, onDelete?: () => void) {
   let cursor: string | undefined;
   do {
     const page = await bucket.list({ prefix, cursor, limit: 1000 });
-    if (page.objects.length) await bucket.delete(page.objects.map((o) => o.key));
+    if (page.objects.length) {
+      onDelete?.();
+      await bucket.delete(page.objects.map((o) => o.key));
+    }
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
 }
@@ -34,10 +37,12 @@ async function purgeRequest(db: D1Database, bucket: R2Bucket, req: Target, reaso
     .bind(now, req.firm_id, req.id, now - HOUR, cutoff, cutoff)
     .run();
   if (!claim.meta.changes) return null;
+  // once an object is gone the claim stays, so the stale-claim retry finishes the job
+  let touched = false;
   try {
     const prefix = `f/${req.firm_id}/${req.id}/`;
     const { n } = (await db.prepare("SELECT COUNT(*) AS n FROM files WHERE firm_id = ? AND request_id = ?").bind(req.firm_id, req.id).first<{ n: number }>())!;
-    await emptyPrefix(bucket, prefix);
+    await emptyPrefix(bucket, prefix, () => (touched = true));
     const own = [req.firm_id, req.id] as const;
     const mine = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND purging_at = ?)";
     const held = [...own, now] as const;
@@ -66,7 +71,7 @@ async function purgeRequest(db: D1Database, bucket: R2Bucket, req: Target, reaso
     return n;
   } catch (e) {
     await db
-      .prepare("UPDATE requests SET purging_at = NULL, purge_failed_at = ? WHERE firm_id = ? AND id = ? AND purging_at = ?")
+      .prepare(`UPDATE requests SET ${touched ? "" : "purging_at = NULL, "}purge_failed_at = ? WHERE firm_id = ? AND id = ? AND purging_at = ?`)
       .bind(now, req.firm_id, req.id, now)
       .run()
       .catch(log);
@@ -78,7 +83,7 @@ async function purgeClient(db: D1Database, bucket: R2Bucket, client: Target, bud
   let files = 0;
   const { results } = await db
     .prepare(
-      `SELECT id, firm_id FROM requests WHERE firm_id = ? AND client_id = ? AND hold_at IS NULL AND (purge_failed_at IS NULL OR purge_failed_at < ?)
+      `SELECT id, firm_id, deleted_reason FROM requests WHERE firm_id = ? AND client_id = ? AND hold_at IS NULL AND (purge_failed_at IS NULL OR purge_failed_at < ?)
        ORDER BY COALESCE(purge_failed_at, 0), created_at LIMIT ?`,
     )
     .bind(client.firm_id, client.id, now - HOUR, budget.left)
@@ -87,7 +92,7 @@ async function purgeClient(db: D1Database, bucket: R2Bucket, client: Target, bud
   for (const req of results) {
     budget.left--;
     try {
-      files += (await purgeRequest(db, bucket, req, "deleted", now, cutoff)) ?? 0;
+      files += (await purgeRequest(db, bucket, req, req.deleted_reason === "retention" ? "retention" : "deleted", now, cutoff)) ?? 0;
     } catch (e) {
       log(e);
       failed = true;
@@ -147,7 +152,7 @@ export async function purgeExpired(env: Env, now = Date.now()) {
   for (const id of regionIds) {
     try {
       const { db, bucket } = regionOf(env, id);
-      await retire(db, now);
+      await retire(db, now).catch(log);
 
       const budget = { left: BUDGET };
       const { results } = await db
