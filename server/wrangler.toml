@@ -43,7 +43,7 @@ bucket_name = "lazycollect-na"
 APP_URL = "https://collect.alazy.app"
 EMAIL_FROM = "Lazy Collect <noreply@alazy.app>"
 # the Stripe price for the C$39 monthly plan; set it before the first deploy with billing
-STRIPE_PRICE_ID = ""
+STRIPE_PRICE_ID = "price_1UelhV1WAgDLJPgLysQcmPAQ"
 
 [[ratelimits]]
 name = "LOGIN"
