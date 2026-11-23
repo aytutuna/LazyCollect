@@ -1,6 +1,8 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { sweepFiles } from "../src/sweep";
 import { YEAR } from "../src/status";
+import { DAY } from "../src/util";
 import { randomId } from "../src/util";
 import { api, login, openRequest, pdf, review, upload } from "./helpers";
 
@@ -112,5 +114,67 @@ describe("legal hold", () => {
     const { req } = await openRequest();
     const other = await login("other@firm.test");
     expect((await api(`/api/requests/${req.id}/hold`, { method: "PUT", cookie: other, body: { on: true } })).status).toBe(404);
+  });
+});
+
+describe("what a hold protects", () => {
+  async function held() {
+    const o = await openRequest();
+    const file = await (await upload(o.path, o.req.items[0].id, pdf(400))).json<any>();
+    await api(`/api/requests/${o.req.id}/hold`, { method: "PUT", cookie: o.cookie, body: { on: true } });
+    return { ...o, file };
+  }
+
+  it("refuses a client removing a file and keeps the file", async () => {
+    const { path, file } = await held();
+    const res = await api(`${path}/files/${file.id}`, { method: "DELETE" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "legal_hold" });
+    expect((await env.DB_NA.prepare("SELECT deleted_at FROM files").first<any>())!.deleted_at).toBeNull();
+    expect((await env.FILES_NA.list()).objects).toHaveLength(1);
+  });
+
+  it("refuses staff removing a checklist item", async () => {
+    const { cookie, req } = await held();
+    const res = await api(`/api/requests/${req.id}/items/${req.items[1].id}`, { method: "DELETE", cookie });
+    expect([res.status, await res.json()]).toEqual([409, { error: "legal_hold" }]);
+  });
+
+  it("keeps the sweep away from removed files of a held request", async () => {
+    const { req, file } = await held();
+    await env.DB_NA.prepare("UPDATE files SET deleted_at = 1 WHERE id = ?").bind(file.id).run();
+    await sweepFiles(env);
+    expect([await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM files").first<any>(), (await env.FILES_NA.list()).objects.length]).toEqual([{ n: 1 }, 1]);
+    await env.DB_NA.prepare("UPDATE requests SET hold_at = NULL WHERE id = ?").bind(req.id).run();
+    await sweepFiles(env);
+    expect((await env.FILES_NA.list()).objects).toHaveLength(0);
+  });
+
+  it("lets staff set a hold but only the owner release it", async () => {
+    const { cookie, req } = await openRequest();
+    const firmId = (await env.CONTROL.prepare("SELECT id FROM firms").first<any>())!.id;
+    await env.CONTROL.prepare("INSERT INTO users (id, firm_id, email, role, created_at) VALUES (?, ?, 'staff@firm.test', 'member', ?)").bind(randomId(), firmId, Date.now()).run();
+    const staff = await login("staff@firm.test");
+    const hold = (cookie: string, on: boolean) => api(`/api/requests/${req.id}/hold`, { method: "PUT", cookie, body: { on } });
+    expect((await hold(staff, true)).status).toBe(200);
+    expect((await hold(staff, false)).status).toBe(403);
+    expect((await row()).hold_at).toBeGreaterThan(0);
+    expect((await hold(cookie, false)).status).toBe(200);
+    expect((await row()).hold_at).toBeNull();
+  });
+});
+
+describe("retention impact", () => {
+  it("counts the requests a shorter period would retire, not held or still live ones", async () => {
+    const { cookie, req } = await openRequest();
+    const other = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: req.client_id, title: "B", deadline: Date.now() + 86_400_000 } })).json<any>();
+    const third = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: req.client_id, title: "C", deadline: Date.now() + 86_400_000 } })).json<any>();
+    for (const id of [req.id, other.id, third.id]) await api(`/api/requests/${id}/close`, { method: "POST", cookie });
+    await api(`/api/requests/${third.id}/hold`, { method: "PUT", cookie, body: { on: true } });
+    await env.DB_NA.prepare("UPDATE requests SET ended_at = ? WHERE id IN (?, ?)").bind(Date.now() - 3 * 365 * DAY, req.id, third.id).run();
+    const count = async (years: number) => (await (await api(`/api/retention/impact?years=${years}`, { cookie })).json<any>()).count;
+    expect([await count(1), await count(2), await count(4), await count(7)]).toEqual([1, 1, 0, 0]);
+    expect((await api("/api/retention/impact?years=0", { cookie })).status).toBe(400);
+    expect((await api("/api/retention/impact", { cookie })).status).toBe(400);
   });
 });

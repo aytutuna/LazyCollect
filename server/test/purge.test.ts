@@ -95,16 +95,52 @@ describe("purge of deleted requests", () => {
 });
 
 describe("purge by retention", () => {
-  it("removes a finished request once keep_until has passed, not before", async () => {
+  it("moves a finished request to Recently deleted first and purges it 30 days later", async () => {
     const { cookie, req } = await withFiles();
     await api(`/api/requests/${req.id}/close`, { method: "POST", cookie });
     const keep = (await env.DB_NA.prepare("SELECT keep_until FROM requests").first<any>())!.keep_until;
     await purgeExpired(env, keep - 1);
-    expect(await count("requests")).toBe(1);
+    expect(await count("requests", "deleted_at IS NULL")).toBe(1);
+
     await purgeExpired(env, keep);
+    expect(await env.DB_NA.prepare("SELECT deleted_at, deleted_reason FROM requests").first<any>()).toEqual({ deleted_at: keep, deleted_reason: "retention" });
+    expect([await count("requests"), await objects()]).toEqual([1, 3]);
+    const audited = (await env.DB_NA.prepare("SELECT actor_type, object_id FROM audit WHERE action = 'request.retention_delete'").all<any>()).results;
+    expect(audited).toEqual([{ actor_type: "system", object_id: req.id }]);
+    const listed = await (await api("/api/trash", { cookie })).json<any>();
+    expect(listed.requests[0]).toMatchObject({ id: req.id, deleted_reason: "retention" });
+
+    await purgeExpired(env, keep + RESTORE_WINDOW - 1);
+    expect(await count("requests")).toBe(1);
+    await purgeExpired(env, keep + RESTORE_WINDOW);
     expect([await count("requests"), await objects()]).toEqual([0, 0]);
     expect((await log())[0]).toMatchObject({ kind: "request", reason: "retention", files: 3 });
     expect(await count("clients")).toBe(1);
+  });
+
+  it("starts a fresh clock when a retention deletion is restored", async () => {
+    const { cookie, req } = await withFiles();
+    await api(`/api/requests/${req.id}/close`, { method: "POST", cookie });
+    const keep = (await env.DB_NA.prepare("SELECT keep_until FROM requests").first<any>())!.keep_until;
+    await purgeExpired(env, keep);
+    expect((await api(`/api/requests/${req.id}/restore`, { method: "POST", cookie })).status).toBe(200);
+    const row = (await env.DB_NA.prepare("SELECT deleted_at, deleted_reason, ended_at, keep_until FROM requests").first<any>())!;
+    expect(row).toMatchObject({ deleted_at: null, deleted_reason: null });
+    expect(row.keep_until).toBeGreaterThan(Date.now() + 6 * 365 * DAY);
+    await purgeExpired(env, Date.now() + 40 * DAY);
+    expect(await count("requests", "deleted_at IS NULL")).toBe(1);
+  });
+
+  it("leaves a completed request alone while its link is still live", async () => {
+    await withFiles();
+    await env.DB_NA.prepare("UPDATE requests SET keep_until = 1").run();
+    expect((await env.DB_NA.prepare("SELECT status FROM requests").first<any>())!.status).toBe("complete");
+    await purgeExpired(env);
+    expect(await count("requests", "deleted_at IS NULL")).toBe(1);
+    // once the deadline and the link grace are behind us it counts as finished
+    await env.DB_NA.prepare("UPDATE requests SET deadline = ?").bind(Date.now() - 60 * DAY).run();
+    await purgeExpired(env);
+    expect(await count("requests", "deleted_at IS NULL")).toBe(0);
   });
 
   it("skips a request on legal hold until it is released", async () => {
@@ -113,9 +149,12 @@ describe("purge by retention", () => {
     await api(`/api/requests/${req.id}/hold`, { method: "PUT", cookie, body: { on: true } });
     const later = Date.now() + 20 * 365 * DAY;
     await purgeExpired(env, later);
-    expect([await count("requests"), await objects()]).toEqual([1, 3]);
+    await purgeExpired(env, later + RESTORE_WINDOW);
+    expect([await count("requests"), await count("requests", "deleted_at IS NULL"), await objects()]).toEqual([1, 1, 3]);
     await api(`/api/requests/${req.id}/hold`, { method: "PUT", cookie, body: { on: false } });
     await purgeExpired(env, later);
+    expect(await count("requests", "deleted_at IS NULL")).toBe(0);
+    await purgeExpired(env, later + RESTORE_WINDOW);
     expect(await count("requests")).toBe(0);
   });
 
@@ -171,5 +210,73 @@ describe("purge of deleted clients", () => {
     await api(`/api/clients/${req.client_id}`, { method: "DELETE", cookie });
     await purgeExpired(env, Date.now() + 29 * DAY);
     expect(await count("clients")).toBe(1);
+  });
+});
+
+describe("purge claims and failures", () => {
+  const retired = async () => {
+    const o = await withFiles();
+    await api(`/api/requests/${o.req.id}`, { method: "DELETE", cookie: o.cookie });
+    await env.DB_NA.prepare("UPDATE requests SET deleted_at = 1").run();
+    return o;
+  };
+
+  it("does not touch a request another run has claimed, and reclaims a stale claim", async () => {
+    await retired();
+    const now = Date.now();
+    await env.DB_NA.prepare("UPDATE requests SET purging_at = ?").bind(now - 60_000).run();
+    await purgeExpired(env, now);
+    expect([await count("requests"), await objects()]).toEqual([1, 3]);
+    await purgeExpired(env, now + 2 * 3_600_000);
+    expect([await count("requests"), await objects()]).toEqual([0, 0]);
+  });
+
+  it("refuses restore, hold and client restore while a purge has the request", async () => {
+    const { cookie, req } = await retired();
+    await env.DB_NA.prepare("UPDATE requests SET deleted_at = ?, purging_at = ?").bind(Date.now(), Date.now()).run();
+    const restore = await api(`/api/requests/${req.id}/restore`, { method: "POST", cookie });
+    expect([restore.status, await restore.json()]).toEqual([409, { error: "purging" }]);
+    await env.DB_NA.prepare("UPDATE requests SET deleted_at = NULL").run();
+    const hold = await api(`/api/requests/${req.id}/hold`, { method: "PUT", cookie, body: { on: true } });
+    expect([hold.status, await hold.json()]).toEqual([409, { error: "purging" }]);
+    expect((await env.DB_NA.prepare("SELECT hold_at FROM requests").first<any>())!.hold_at).toBeNull();
+    await env.DB_NA.prepare("UPDATE clients SET deleted_at = ?").bind(Date.now()).run();
+    expect((await api(`/api/clients/${req.client_id}/restore`, { method: "POST", cookie })).status).toBe(409);
+  });
+
+  it("keeps what was sent without any address or text", async () => {
+    await retired();
+    const row = (await env.DB_NA.prepare("SELECT id, firm_id, client_id FROM requests").first<any>())!;
+    await env.DB_NA.prepare(
+      `INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, provider_id, status, error, sent_at)
+       VALUES (?, ?, ?, ?, 'email', 'reminder', 1, 2, 'abc123', 'prov', 'failed', 'bounced amy@mail.test', 1700000000000)`,
+    ).bind("m".repeat(32), row.firm_id, row.id, row.client_id).run();
+    await purgeExpired(env);
+    expect(await count("messages")).toBe(0);
+    expect(await env.DB_NA.prepare("SELECT kind, channel, status, seq, template_version, body_hash, sent_at FROM message_log").first()).toEqual({
+      kind: "reminder", channel: "email", status: "failed", seq: 1, template_version: 2, body_hash: "abc123", sent_at: 1700000000000,
+    });
+    for (const table of ["message_log", "messages", "audit", "deletion_log"]) {
+      const dump = JSON.stringify((await env.DB_NA.prepare(`SELECT * FROM ${table}`).all()).results);
+      expect([table, dump.includes("@")]).toEqual([table, false]);
+    }
+  });
+
+  it("carries on past a request that fails and retries it later", async () => {
+    const a = await retired();
+    const b = await openRequest("other@firm.test");
+    await api(`/api/requests/${b.req.id}`, { method: "DELETE", cookie: b.cookie });
+    await env.DB_NA.prepare("UPDATE requests SET deleted_at = 1").run();
+    await env.DB_NA.prepare(`CREATE TRIGGER boom BEFORE DELETE ON items WHEN old.request_id = '${a.req.id}' BEGIN SELECT RAISE(ABORT, 'boom'); END`).run();
+    const now = Date.now();
+    await purgeExpired(env, now);
+    expect((await env.DB_NA.prepare("SELECT id, purging_at, purge_failed_at FROM requests").all<any>()).results).toEqual([
+      { id: a.req.id, purging_at: null, purge_failed_at: now },
+    ]);
+    await env.DB_NA.prepare("DROP TRIGGER boom").run();
+    await purgeExpired(env, now + 60_000);
+    expect(await count("requests")).toBe(1);
+    await purgeExpired(env, now + 2 * 3_600_000);
+    expect(await count("requests")).toBe(0);
   });
 });

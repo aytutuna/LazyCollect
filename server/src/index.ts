@@ -38,6 +38,7 @@ app.route("/api", auth);
 app.route("/api", client);
 app.route("/api", uploads);
 app.use("/api/firm", loadFirm);
+app.use("/api/retention/*", loadFirm);
 app.use("/api/retention", loadFirm);
 app.use("/api/trash", loadFirm);
 app.use("/api/activity", loadFirm);
@@ -68,12 +69,22 @@ export default {
   fetch: app.fetch,
   async scheduled(_event: ScheduledController, env: Env) {
     const now = Date.now();
-    await env.CONTROL.batch([
-      env.CONTROL.prepare("DELETE FROM login_codes WHERE created_at < ?").bind(now - DAY),
-      env.CONTROL.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
-    ]);
-    await sweepFiles(env, now);
-    await purgeExpired(env, now);
-    await runReminders(env, now);
+    // one failing step must not stop the others; only the message is logged
+    const step = async (run: () => Promise<unknown>) => {
+      try {
+        await run();
+      } catch (e) {
+        console.error(e instanceof Error ? e.message : "error");
+      }
+    };
+    await step(() =>
+      env.CONTROL.batch([
+        env.CONTROL.prepare("DELETE FROM login_codes WHERE created_at < ?").bind(now - DAY),
+        env.CONTROL.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
+      ]),
+    );
+    await step(() => sweepFiles(env, now));
+    await step(() => purgeExpired(env, now));
+    await step(() => runReminders(env, now));
   },
 };
