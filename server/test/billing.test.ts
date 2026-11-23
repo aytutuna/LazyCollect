@@ -2,7 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { verifySignature } from "../src/billing";
 import { DAY } from "../src/util";
-import { addMember, api, firmRow, login, mockOutbound } from "./helpers";
+import { addMember, api, firmRow, login, mockOutbound, openRequest, pdf, upload } from "./helpers";
 import { stripeFake } from "./stripe-fake";
 
 async function owner(email = "owner@firm.test", name = "Tuna Tax") {
@@ -323,5 +323,18 @@ describe("webhook", () => {
     stripeFake.sub("sub_1", customer, { status: "incomplete" });
     await webhook({ id: "evt_1", type: "customer.subscription.created", data: { object: { id: "sub_1", customer } } });
     expect(await firmRow(cookie)).toMatchObject({ plan_status: "trialing", stripe_subscription_id: null });
+  });
+});
+
+describe("a lapsed plan", () => {
+  it("still lets the firm read, download and export what it holds", async () => {
+    const { cookie, req, path } = await openRequest();
+    await upload(path, req.items[0].id, pdf(500));
+    const files = await (await api(`/api/requests/${req.id}`, { cookie })).json<any>();
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'canceled', trial_ends_at = 1").run();
+    expect((await api("/api/requests", { cookie })).status).toBe(200);
+    expect((await api(`/api/requests/${req.id}`, { cookie })).status).toBe(200);
+    expect((await api(`/api/files/${files.items[0].files[0].id}`, { cookie })).status).toBe(200);
+    expect((await api(`/api/requests/${req.id}/export`, { cookie })).status).toBe(200);
   });
 });
