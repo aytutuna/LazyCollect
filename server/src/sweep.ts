@@ -7,17 +7,13 @@ const BATCH = 200;
 export async function sweepFiles(env: Env, now = Date.now()) {
   for (const id of regionIds) {
     const { db, bucket } = regionOf(env, id);
+    // the rows go first, guarded against a hold set meanwhile, and only the objects of rows that went are deleted
+    const due = `(state = 'pending' AND uploaded_at < ?)
+      OR (deleted_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM requests r WHERE r.firm_id = files.firm_id AND r.id = files.request_id AND r.hold_at IS NOT NULL))`;
     const { results } = await db
-      .prepare(
-        `SELECT id, firm_id, r2_key FROM files
-         WHERE (state = 'pending' AND uploaded_at < ?)
-         OR (deleted_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM requests r WHERE r.firm_id = files.firm_id AND r.id = files.request_id AND r.hold_at IS NOT NULL))
-         LIMIT ${BATCH}`,
-      )
-      .bind(now - HOUR)
-      .all<{ id: string; firm_id: string; r2_key: string }>();
-    if (!results.length) continue;
-    await bucket.delete(results.map((f) => f.r2_key));
-    await db.batch(results.map((f) => db.prepare("DELETE FROM files WHERE firm_id = ? AND id = ?").bind(f.firm_id, f.id)));
+      .prepare(`DELETE FROM files WHERE (${due}) AND rowid IN (SELECT rowid FROM files WHERE ${due} LIMIT ${BATCH}) RETURNING r2_key`)
+      .bind(now - HOUR, now - HOUR)
+      .all<{ r2_key: string }>();
+    if (results.length) await bucket.delete(results.map((f) => f.r2_key));
   }
 }

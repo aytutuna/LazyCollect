@@ -282,26 +282,24 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
   const firm = c.get("firm");
   const firmId = firm.id;
   const itemId = c.req.param("itemId");
-  // rows of files the client removed still wait for the sweep; their objects go now so the item can leave
-  const { results: gone } = await db
-    .prepare("SELECT id, r2_key FROM files WHERE firm_id = ? AND item_id = ? AND deleted_at IS NOT NULL")
-    .bind(firmId, itemId)
-    .all<{ id: string; r2_key: string }>();
-  if (gone.length) await regionOf(c.env, firm.region as Region).bucket.delete(gone.map((f) => f.r2_key));
   const bare = "status = 'empty' AND NOT EXISTS (SELECT 1 FROM files WHERE firm_id = items.firm_id AND item_id = items.id AND deleted_at IS NULL)";
-  const binds = [firmId, req.id, itemId, firmId, req.id];
+  const free = "NOT EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND hold_at IS NOT NULL)";
+  const binds = [firmId, req.id, itemId, firmId, req.id, firmId, req.id];
+  // rows of files the client removed still wait for the sweep; they go here, and only then their objects, so the item can leave
   // the audit row goes first: its condition reads the item the delete removes
-  const [, , res] = await db.batch([
+  const [, gone, res] = await db.batch([
     audit(c, "item.delete", "item", itemId, { request: req.id }, {
-      sql: `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND ${bare}) AND ${LIVE}`,
+      sql: `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND ${bare}) AND ${LIVE} AND ${free}`,
       binds,
     }),
     db
-      .prepare("DELETE FROM files WHERE firm_id = ? AND item_id = ? AND deleted_at IS NOT NULL AND id IN (SELECT value FROM json_each(?))")
-      .bind(firmId, itemId, JSON.stringify(gone.map((f) => f.id))),
-    db.prepare(`DELETE FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND ${bare} AND ${LIVE}`).bind(...binds),
+      .prepare(`DELETE FROM files WHERE firm_id = ? AND item_id = ? AND deleted_at IS NOT NULL AND ${free} RETURNING r2_key`)
+      .bind(firmId, itemId, firmId, req.id),
+    db.prepare(`DELETE FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND ${bare} AND ${LIVE} AND ${free}`).bind(...binds),
     syncStatus(db, firmId, req.id),
   ]);
+  const keys = (gone.results as { r2_key: string }[]).map((f) => f.r2_key);
+  if (keys.length) await regionOf(c.env, firm.region as Region).bucket.delete(keys);
   if (res.meta.changes) return c.json({ ok: true });
   const left = await db.prepare("SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ?").bind(firmId, req.id, itemId).first();
   return left && (await findRequest(c)) ? c.json({ error: "has_upload" }, 409) : refused(c);
