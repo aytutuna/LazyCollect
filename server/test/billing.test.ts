@@ -11,6 +11,7 @@ async function owner(email = "owner@firm.test", name = "Tuna Tax") {
   return cookie;
 }
 
+const sessions = () => stripeFake.calls.filter((c) => c.method === "POST" && c.path === "/v1/checkout/sessions");
 const checkout = (cookie: string) => api("/api/billing/checkout", { method: "POST", cookie });
 
 async function sign(body: string, secret = "whsec_test", at = Date.now()) {
@@ -45,7 +46,8 @@ describe("checkout", () => {
     const { url } = await res.json<any>();
     expect(url).toMatch(/^https:\/\/checkout\.stripe\.test\//);
 
-    const [cus, session] = stripeFake.calls;
+    const cus = stripeFake.calls.find((c) => c.path === "/v1/customers")!;
+    const [session] = sessions();
     expect(cus.path).toBe("/v1/customers");
     expect(cus.form).toMatchObject({ name: "Tuna Tax", email: "owner@firm.test" });
     const firm = await firmRow(cookie);
@@ -64,7 +66,7 @@ describe("checkout", () => {
       allow_promotion_codes: "false",
     });
     expect(session.form["automatic_tax[enabled]"]).toBeUndefined();
-    for (const call of stripeFake.calls) {
+    for (const call of stripeFake.calls.filter((c) => c.method === "POST")) {
       expect(call.headers.get("stripe-version")).toMatch(/^\d{4}-\d\d-\d\d\./);
       expect(call.headers.get("idempotency-key")).toBeTruthy();
     }
@@ -75,8 +77,8 @@ describe("checkout", () => {
     mockOutbound();
     await checkout(cookie);
     const firm = await firmRow(cookie);
-    expect(stripeFake.calls[1].form["subscription_data[trial_end]"]).toBe(String(Math.floor(firm.trial_ends_at / 1000)));
-    expect(stripeFake.calls[1].form["subscription_data[metadata][firm_id]"]).toBe(firm.id);
+    expect(sessions()[0].form["subscription_data[trial_end]"]).toBe(String(Math.floor(firm.trial_ends_at / 1000)));
+    expect(sessions()[0].form["subscription_data[metadata][firm_id]"]).toBe(firm.id);
   });
 
   it("bills at once when the trial is nearly over or already ended", async () => {
@@ -84,10 +86,10 @@ describe("checkout", () => {
     mockOutbound();
     await env.CONTROL.prepare("UPDATE firms SET trial_ends_at = ?").bind(Date.now() + DAY).run();
     await checkout(cookie);
-    expect(stripeFake.calls[1].form["subscription_data[trial_end]"]).toBeUndefined();
+    expect(sessions()[0].form["subscription_data[trial_end]"]).toBeUndefined();
     await env.CONTROL.prepare("UPDATE firms SET plan_status = 'canceled'").run();
     await checkout(cookie);
-    expect(stripeFake.calls.at(-1)!.form["subscription_data[trial_end]"]).toBeUndefined();
+    expect(sessions().at(-1)!.form["subscription_data[trial_end]"]).toBeUndefined();
   });
 
   it("reuses the customer", async () => {
@@ -96,7 +98,7 @@ describe("checkout", () => {
     await checkout(cookie);
     await checkout(cookie);
     expect(stripeFake.calls.filter((c) => c.path === "/v1/customers")).toHaveLength(1);
-    expect(stripeFake.calls.filter((c) => c.path === "/v1/checkout/sessions")).toHaveLength(2);
+    expect(sessions()).toHaveLength(2);
   });
 
   it("is for the owner only", async () => {
@@ -294,7 +296,7 @@ describe("webhook", () => {
     stripeFake.sub("sub_1", customer);
     const event = { id: "evt_same", type: "customer.subscription.updated", data: { object: { id: "sub_1", customer } } };
     expect((await webhook(event)).status).toBe(200);
-    const fetched = () => stripeFake.calls.filter((c) => c.method === "GET").length;
+    const fetched = () => stripeFake.calls.filter((c) => c.method === "GET" && c.path.startsWith("/v1/subscriptions/")).length;
     expect(fetched()).toBe(1);
     await env.CONTROL.prepare("UPDATE firms SET plan_status = 'canceled'").run();
     expect((await webhook(event)).status).toBe(200);
@@ -356,6 +358,8 @@ describe("webhook", () => {
 
   it("takes a new subscription after an ended one", async () => {
     const { cookie, customer } = await subscribed();
+    stripeFake.sub("sub_old", customer);
+    await webhook({ id: "evt_0", type: "customer.subscription.created", data: { object: { id: "sub_old", customer } } });
     stripeFake.sub("sub_old", customer, { status: "canceled" });
     await webhook({ id: "evt_1", type: "customer.subscription.deleted", data: { object: { id: "sub_old", customer } } });
     expect((await firmRow(cookie)).plan_status).toBe("canceled");
@@ -382,5 +386,89 @@ describe("a lapsed plan", () => {
     expect((await api(`/api/requests/${req.id}`, { cookie })).status).toBe(200);
     expect((await api(`/api/files/${files.items[0].files[0].id}`, { cookie })).status).toBe(200);
     expect((await api(`/api/requests/${req.id}/export`, { cookie })).status).toBe(200);
+  });
+});
+
+describe("double payment", () => {
+  it("expires an open checkout page before making a new one", async () => {
+    const cookie = await owner();
+    mockOutbound();
+    await checkout(cookie);
+    await checkout(cookie);
+    expect([...stripeFake.sessions.values()].map((s) => s.status)).toEqual(["expired", "open"]);
+  });
+
+  async function twoSubs(secondStatus: string, trial: number | null = null) {
+    const { cookie, customer } = await subscribed();
+    stripeFake.sub("sub_1", customer);
+    await webhook({ id: "evt_1", type: "customer.subscription.created", data: { object: { id: "sub_1", customer } } });
+    stripeFake.sub("sub_2", customer, { status: secondStatus, trial_end: trial, latest_invoice: "in_2" });
+    stripeFake.payments.set("in_2", [
+      { status: "open", payment: { payment_intent: "pi_other" } },
+      { status: "paid", payment: { payment_intent: "pi_2" } },
+    ]);
+    await webhook({ id: "evt_2", type: "customer.subscription.created", data: { object: { id: "sub_2", customer } } });
+    return { cookie, customer };
+  }
+
+  const refunds = () => stripeFake.calls.filter((c) => c.path === "/v1/refunds");
+
+  it("cancels a second subscription and refunds what it charged", async () => {
+    const { cookie } = await twoSubs("active");
+    expect(stripeFake.subs.get("sub_2")!.status).toBe("canceled");
+    expect(refunds()).toHaveLength(1);
+    expect(refunds()[0].form).toEqual({ payment_intent: "pi_2" });
+    expect(refunds()[0].headers.get("idempotency-key")).toBe("refund-pi_2");
+    expect((await firmRow(cookie)).stripe_subscription_id).toBe("sub_1");
+  });
+
+  it("refunds nothing for a trial", async () => {
+    await twoSubs("trialing", Math.floor(Date.now() / 1000) + 86_400);
+    expect(stripeFake.subs.get("sub_2")!.status).toBe("canceled");
+    expect(refunds()).toHaveLength(0);
+  });
+
+  it("refunds a subscription paid after the account was closed", async () => {
+    const { customer } = await subscribed();
+    await env.CONTROL.prepare("UPDATE firms SET closed_at = 5").run();
+    stripeFake.sub("sub_9", customer, { latest_invoice: "in_9" });
+    stripeFake.payments.set("in_9", [{ status: "paid", payment: { payment_intent: "pi_9" } }]);
+    await webhook({ id: "evt_9", type: "checkout.session.completed", data: { object: { mode: "subscription", customer, subscription: "sub_9" } } });
+    expect(stripeFake.subs.get("sub_9")!.status).toBe("canceled");
+    expect(refunds()[0].form.payment_intent).toBe("pi_9");
+  });
+
+  it("ends a leftover subscription that Stripe still has live when subscribing again", async () => {
+    const { cookie, customer } = await subscribed();
+    stripeFake.sub("sub_old", customer, { status: "past_due" });
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'canceled', stripe_subscription_id = 'sub_old'").run();
+    expect((await checkout(cookie)).status).toBe(200);
+    expect(stripeFake.subs.get("sub_old")!.status).toBe("canceled");
+  });
+});
+
+describe("plan mapping", () => {
+  it("ignores an ending for a subscription the firm does not hold", async () => {
+    const { cookie, customer } = await subscribed();
+    stripeFake.sub("sub_x", customer, { status: "canceled" });
+    await webhook({ id: "evt_1", type: "customer.subscription.deleted", data: { object: { id: "sub_x", customer } } });
+    expect(await firmRow(cookie)).toMatchObject({ plan_status: "trialing", stripe_subscription_id: null });
+  });
+
+  it("treats unpaid and paused as a payment problem", async () => {
+    const { cookie, customer } = await subscribed();
+    for (const [i, status] of ["unpaid", "paused"].entries()) {
+      stripeFake.sub("sub_1", customer, { status });
+      await webhook({ id: `evt_${i}`, type: "customer.subscription.updated", data: { object: { id: "sub_1", customer } } });
+      expect(await firmRow(cookie)).toMatchObject({ plan_status: "past_due" });
+      expect((await firmRow(cookie)).past_due_since).toBeGreaterThan(0);
+    }
+  });
+
+  it("counts a set cancellation date as a cancellation", async () => {
+    const { cookie, customer } = await subscribed();
+    stripeFake.sub("sub_1", customer, { cancel_at: Math.floor(Date.now() / 1000) + DAY });
+    await webhook({ id: "evt_1", type: "customer.subscription.updated", data: { object: { id: "sub_1", customer } } });
+    expect((await firmRow(cookie)).cancel_at_period_end).toBe(1);
   });
 });

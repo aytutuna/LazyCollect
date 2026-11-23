@@ -6,6 +6,8 @@ export type FakeSub = {
   status: string;
   cancel_at_period_end: boolean;
   trial_end: number | null;
+  cancel_at?: number | null;
+  latest_invoice?: string;
   items: { data: { current_period_end: number }[] };
 };
 
@@ -13,12 +15,18 @@ export const stripeFake = {
   calls: [] as Call[],
   subs: new Map<string, FakeSub>(),
   replies: new Map<string, unknown>(),
+  sessions: new Map<string, { id: string; customer: string; status: string }>(),
+  payments: new Map<string, { status: string; payment: { payment_intent: string } }[]>(),
+  gone: new Set<string>(),
   failing: false,
   next: 0,
   reset() {
     this.calls = [];
     this.subs.clear();
     this.replies.clear();
+    this.sessions.clear();
+    this.payments.clear();
+    this.gone.clear();
     this.failing = false;
     this.next = 0;
   },
@@ -42,10 +50,33 @@ export const stripeFake = {
       return Response.json(body);
     };
     if (method === "POST" && url.pathname === "/v1/customers") return reply({ id: `cus_${++this.next}` });
-    if (method === "POST" && url.pathname === "/v1/checkout/sessions") return reply({ id: `cs_${++this.next}`, url: `https://checkout.stripe.test/cs_${this.next}` });
+    if (method === "POST" && url.pathname === "/v1/checkout/sessions") {
+      const id = `cs_${++this.next}`;
+      this.sessions.set(id, { id, customer: form.customer, status: "open" });
+      return reply({ id, url: `https://checkout.stripe.test/${id}` });
+    }
+    if (method === "GET" && url.pathname === "/v1/checkout/sessions") {
+      const { customer, status } = Object.fromEntries(url.searchParams);
+      return Response.json({ data: [...this.sessions.values()].filter((s) => s.customer === customer && s.status === status) });
+    }
+    const path = url.pathname.split("/");
+    if (method === "POST" && url.pathname.startsWith("/v1/checkout/sessions/") && path[5] === "expire") {
+      const found = this.sessions.get(path[4]);
+      if (!found) return new Response("missing", { status: 404 });
+      found.status = "expired";
+      return Response.json(found);
+    }
+    if (method === "GET" && url.pathname === "/v1/invoice_payments") return Response.json({ data: this.payments.get(url.searchParams.get("invoice") ?? "") ?? [] });
+    if (method === "POST" && url.pathname === "/v1/refunds") return reply({ id: `re_${++this.next}` });
+    if (method === "DELETE" && url.pathname.startsWith("/v1/customers/")) {
+      if (this.gone.has(path[3])) return new Response("missing", { status: 404 });
+      this.gone.add(path[3]);
+      return Response.json({ id: path[3], deleted: true });
+    }
     if (method === "POST" && url.pathname === "/v1/billing_portal/sessions") return reply({ url: `https://portal.stripe.test/p_${++this.next}` });
     if (method === "GET" && url.pathname === "/v1/subscriptions") {
       const customer = url.searchParams.get("customer");
+      if (this.gone.has(customer ?? "")) return new Response("missing", { status: 404 });
       const limit = Number(url.searchParams.get("limit") ?? 10);
       return Response.json({ data: [...this.subs.values()].filter((s) => s.customer === customer).slice(0, limit) });
     }

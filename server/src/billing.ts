@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { isOwner } from "./firm";
 import type { AppEnv, Firm } from "./session";
-import { stripe } from "./stripe";
+import { StripeError, stripe } from "./stripe";
 import { DAY, MINUTE, sha256 } from "./util";
 
 export const billing = new Hono<AppEnv>();
@@ -15,6 +15,8 @@ type Subscription = {
   customer: string | { id: string };
   status: string;
   cancel_at_period_end: boolean;
+  cancel_at?: number | null;
+  latest_invoice?: string | { id: string } | null;
   trial_end: number | null;
   current_period_end?: number;
   items?: { data: { current_period_end?: number }[] };
@@ -42,6 +44,34 @@ async function customerOf(c: Context<AppEnv>, firm: Firm): Promise<string> {
   return row!.stripe_customer_id;
 }
 
+const GONE = new Set(["canceled", "incomplete_expired"]);
+
+// Cancels what Stripe still has live instead of trusting our copy of the status.
+export async function endSubscription(env: Env, id: string) {
+  const path = `/v1/subscriptions/${encodeURIComponent(id)}`;
+  const sub = await stripe<{ status: string }>(env, "GET", path).catch((e) => {
+    if (e instanceof StripeError && e.status === 404) return null;
+    throw e;
+  });
+  if (sub && !GONE.has(sub.status)) await stripe(env, "DELETE", path);
+}
+
+// A Checkout page left open could be paid after another one, so only one may stay open.
+async function expireOpenSessions(env: Env, customer: string) {
+  const open = await stripe<{ data: { id: string }[] }>(env, "GET", "/v1/checkout/sessions", { customer, status: "open", limit: 10 });
+  for (const s of open.data) await stripe(env, "POST", `/v1/checkout/sessions/${encodeURIComponent(s.id)}/expire`);
+}
+
+// What a subscription charged is given back when we cancel it as a duplicate; a trial charged nothing.
+async function cancelAndRefund(env: Env, sub: Subscription) {
+  await stripe(env, "DELETE", `/v1/subscriptions/${encodeURIComponent(sub.id)}`);
+  const invoice = idOf(sub.latest_invoice);
+  if (sub.status === "trialing" || !invoice) return;
+  const paid = await stripe<{ data: { status: string; payment?: { payment_intent?: string | null } }[] }>(env, "GET", "/v1/invoice_payments", { invoice });
+  const intent = paid.data.find((p) => p.status === "paid")?.payment?.payment_intent;
+  if (intent) await stripe(env, "POST", "/v1/refunds", { payment_intent: intent }, `refund-${intent}`);
+}
+
 billing.post("/billing/checkout", async (c) => {
   if (!(await isOwner(c))) return c.json({ error: "forbidden" }, 403);
   if (!c.env.STRIPE_PRICE_ID) return c.json({ error: "billing" }, 503);
@@ -52,7 +82,10 @@ billing.post("/billing/checkout", async (c) => {
     return c.json({ error: "subscribed" }, 409);
   }
   try {
+    // a subscription left over from before is ended at Stripe too, whatever our status says
+    if (firm.stripe_subscription_id) await endSubscription(c.env, firm.stripe_subscription_id);
     const customer = await customerOf(c, firm);
+    await expireOpenSessions(c.env, customer);
     const session = await stripe<{ url: string | null }>(c.env, "POST", "/v1/checkout/sessions", {
       mode: "subscription",
       customer,
@@ -136,9 +169,12 @@ function planOf(status: string): Plan | null {
     case "active":
     case "past_due":
       return status;
+    // payment problems, not endings: the same grace as a failed renewal, then access stops
+    case "unpaid":
+    case "paused":
+      return "past_due";
     case "incomplete":
       return null;
-    // unpaid, paused, canceled and incomplete_expired all stop access
     default:
       return "canceled";
   }
@@ -179,12 +215,12 @@ async function sync(env: Env, event: Event) {
   if (idOf(sub.customer) !== customer) return;
   const plan = planOf(sub.status);
   if (!plan) return;
-  // a late event about an older, ended subscription must not undo a newer one
-  if (firm.stripe_subscription_id && firm.stripe_subscription_id !== sub.id && plan === "canceled") return;
+  // an ending counts only for the subscription we hold; a late or unknown one must not undo the current plan
+  if (plan === "canceled" && firm.stripe_subscription_id !== sub.id) return;
   // a subscription must not outlive the account it was bought for, nor sit beside another live one
   const other = firm.stripe_subscription_id && firm.stripe_subscription_id !== sub.id && firm.plan_status !== "canceled";
   if (plan !== "canceled" && (firm.closed_at || other)) {
-    await stripe(env, "DELETE", `/v1/subscriptions/${encodeURIComponent(sub.id)}`);
+    await cancelAndRefund(env, sub);
     return;
   }
   const end = sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
@@ -193,7 +229,7 @@ async function sync(env: Env, event: Event) {
        past_due_since = CASE WHEN ? = 'past_due' THEN COALESCE(past_due_since, ?) ELSE NULL END,
        trial_ends_at = CASE WHEN ? = 'trialing' AND ? IS NOT NULL THEN ? ELSE trial_ends_at END WHERE id = ?`,
   )
-    .bind(customer, sub.id, plan, end ? end * 1000 : null, sub.cancel_at_period_end ? 1 : 0, plan, Date.now(), plan, sub.trial_end, sub.trial_end ? sub.trial_end * 1000 : null, firm.id)
+    .bind(customer, sub.id, plan, end ? end * 1000 : null, sub.cancel_at_period_end || sub.cancel_at != null ? 1 : 0, plan, Date.now(), plan, sub.trial_end, sub.trial_end ? sub.trial_end * 1000 : null, firm.id)
     .run();
 }
 
