@@ -7,7 +7,7 @@ import { regionOf, type Region } from "./regions";
 import { findRequest } from "./requests";
 import type { AppEnv } from "./session";
 import { notFound } from "./validate";
-import { cleanName, uniqueName, zipStream, type ZipEntry } from "./zip";
+import { END_RECORD, cleanName, entryOverhead, uniqueName, zipStream, type ZipEntry } from "./zip";
 
 export const exportZip = new Hono<AppEnv>();
 
@@ -32,13 +32,13 @@ exportZip.get("/requests/:id/export", async (c) => {
     .bind(firm.id, req.id)
     .all<{ id: string; item_id: string; r2_key: string; name: string; size: number; uploaded_at: number; label: string }>();
   if (!results.length) return c.json({ error: "no_files" }, 409);
-  if (results.length > MAX_ENTRIES || results.reduce((sum, f) => sum + f.size, 0) > MAX_BYTES) return c.json({ error: "export_too_big" }, 413);
+  if (results.length > MAX_ENTRIES) return c.json({ error: "export_too_big" }, 413);
 
   const region = firm.region as Region;
   const { bucket } = regionOf(c.env, region);
-  const dek = await firmDek(c.env, region, firm.id, false);
   const folders = new Map<string, { dir: string; n: number }>();
   const taken = new Set<string>();
+  const dek = await firmDek(c.env, region, firm.id, false);
   const entries: ZipEntry[] = results.map((f) => {
     let folder = folders.get(f.item_id);
     if (!folder) folders.set(f.item_id, (folder = { dir: uniqueName(cleanName(f.label, 80, "item"), taken), n: 0 }));
@@ -53,6 +53,12 @@ exportZip.get("/requests/:id/export", async (c) => {
       },
     };
   });
+
+  const encoder = new TextEncoder();
+  const total = entries.reduce((sum, e, i) => sum + results[i].size + entryOverhead(encoder.encode(e.name).length), END_RECORD);
+  if (total > MAX_BYTES) return c.json({ error: "export_too_big" }, 413);
+  // the page asks first so it can show a refusal instead of navigating to a JSON error
+  if (c.req.query("check") === "1") return c.body(null, 204);
 
   await audit(c, "export", "request", req.id, { files: results.length }).run();
   return new Response(zipStream(entries), {

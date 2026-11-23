@@ -24,12 +24,18 @@ function unzip(buf: Uint8Array): Entry[] {
     const name = new TextDecoder().decode(buf.subarray(at + 46, at + 46 + nameLen));
     expect(v.getUint32(local, true)).toBe(0x04034b50);
     expect(v.getUint16(local + 6, true) & 0x0808).toBe(0x0808);
+    expect(v.getUint16(local + 28, true)).toBe(9);
     const start = local + 30 + v.getUint16(local + 26, true) + v.getUint16(local + 28, true);
     expect(v.getUint32(start + size, true)).toBe(0x08074b50);
     expect(v.getUint32(start + size + 4, true)).toBe(crc);
     expect(v.getUint32(start + size + 8, true)).toBe(size);
     out.push({ name, crc, data: buf.slice(start, start + size) });
-    at += 46 + nameLen;
+    // the extended timestamp follows the name in the central record
+    const extraAt = at + 46 + nameLen;
+    expect(v.getUint16(at + 30, true)).toBe(9);
+    expect(v.getUint16(extraAt, true)).toBe(0x5455);
+    expect(v.getUint32(extraAt + 5, true)).toBeGreaterThan(1_700_000_000);
+    at += 46 + nameLen + 9;
   }
   return out;
 }
@@ -49,6 +55,8 @@ describe("zip helpers", () => {
     expect(cleanName("...", 80, "item")).toBe("item");
     expect(cleanName("é".repeat(100), 10, "x")).toBe("é".repeat(10));
     expect(cleanName("name. ", 80, "x")).toBe("name");
+    for (const name of ["CON", "nul.txt", "Com1", "LPT9.pdf", "aux"]) expect([name, cleanName(name, 80, "x")]).toEqual([name, `_${name}`]);
+    for (const name of ["Console", "COM10", "con tract", "nullable.pdf"]) expect([name, cleanName(name, 80, "x")]).toEqual([name, name]);
     const seen = new Set<string>();
     expect([uniqueName("Passport", seen), uniqueName("passport", seen), uniqueName("Passport", seen)]).toEqual(["Passport", "passport (2)", "Passport (3)"]);
   });
@@ -117,6 +125,28 @@ describe("request export", () => {
     expect((await api(`/api/requests/${req.id}/export`)).status).toBe(401);
     expect((await api(`/api/requests/${req.id}/export`, { method: "HEAD", cookie })).status).toBe(405);
     expect(await env.DB_NA.prepare("SELECT 1 FROM audit WHERE action = 'export'").first()).toBeNull();
+  });
+
+  it("checks without downloading or auditing, and says why when it cannot", async () => {
+    const { cookie, req } = await withFiles();
+    const ok = await api(`/api/requests/${req.id}/export?check=1`, { cookie });
+    expect(ok.status).toBe(204);
+    expect(await env.DB_NA.prepare("SELECT 1 FROM audit WHERE action = 'export'").first()).toBeNull();
+    await env.DB_NA.prepare("UPDATE files SET size = 3000000000").run();
+    const big = await api(`/api/requests/${req.id}/export?check=1`, { cookie });
+    expect(big.status).toBe(413);
+    expect(await big.json()).toEqual({ error: "export_too_big" });
+    const other = await login("other@firm.test");
+    expect((await api(`/api/requests/${req.id}/export?check=1`, { cookie: other })).status).toBe(404);
+  });
+
+  it("counts the headers against the 4 GiB limit", async () => {
+    const { cookie, req } = await withFiles();
+    // three files that fit on their own but not with their headers
+    await env.DB_NA.prepare("UPDATE files SET size = 1431633500").run();
+    expect((await api(`/api/requests/${req.id}/export?check=1`, { cookie })).status).toBe(204);
+    await env.DB_NA.prepare("UPDATE files SET size = 1431633900").run();
+    expect((await api(`/api/requests/${req.id}/export?check=1`, { cookie })).status).toBe(413);
   });
 
   it("names the download after a hostile title safely", async () => {
