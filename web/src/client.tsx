@@ -1,6 +1,6 @@
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { ApiError, del, get, post, useAction, useLoad } from "./api";
+import { ApiError, del, get, post, put, useAction, useLoad } from "./api";
 import { fmtDate, fmtDateTime, fmtSize, isLate, relative, setZone } from "./format";
 import { t } from "./i18n";
 import { UploadQueue, sendJob, type Job } from "./queue";
@@ -315,12 +315,156 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
   );
 }
 
-function ItemList({ items, firm, jobs, online, onChange }: { items: ClientItem[]; firm: string; jobs: Job[]; online: boolean; onChange: () => void }) {
+type Save = (item: ClientItem, answer: string | string[] | null) => Promise<boolean>;
+
+const NUMBER = /^-?\d{1,15}([.,]\d{1,6})?$/;
+
+function answerText(item: ClientItem): string {
+  const a = item.answer;
+  if (a === null) return "";
+  if (Array.isArray(a)) return a.join(", ");
+  return item.kind === "yesno" ? t(a === "yes" ? "client.yes" : "client.no") : a;
+}
+
+// A question answers in place and saves as it is changed: radios and boxes at once, typed answers when the field is left.
+function Question({ item, firm, save }: { item: ClientItem; firm: string; save: Save }) {
+  const [text, setText] = useState(typeof item.answer === "string" ? item.answer : "");
+  // choices show at once and are saved behind them
+  const [picked, setPicked] = useState(item.answer);
+  const [bad, setBad] = useState(false);
+  const { error, run } = useAction();
+  const open = item.status !== "approved";
+  const field = `in-${item.id}`;
+  const describedBy = [item.help && `help-${item.id}`, `status-${item.id}`, bad && `bad-${item.id}`].filter(Boolean).join(" ");
+
+  // an answer that arrives from a reload replaces what is shown, unless the person is typing in the field
+  useEffect(() => {
+    setPicked(item.answer);
+    if (document.activeElement?.id !== field) setText(typeof item.answer === "string" ? item.answer : "");
+  }, [item.answer]);
+
+  const send = (answer: string | string[] | null) => {
+    setPicked(answer);
+    return run(() => save(item, answer));
+  };
+
+  function leave() {
+    const value = text.trim();
+    if (value === (typeof item.answer === "string" ? item.answer : "")) return;
+    if (item.kind === "number" && value && !NUMBER.test(value)) {
+      setBad(true);
+      return;
+    }
+    setBad(false);
+    send(value === "" ? null : item.kind === "number" ? value.replace(",", ".") : value);
+  }
+
+  const chosen = Array.isArray(picked) ? picked : [];
+  const input = () => {
+    switch (item.kind) {
+      case "yesno":
+      case "choice": {
+        const options = item.kind === "yesno" ? ["yes", "no"] : (item.options ?? []);
+        return (
+          <div role="radiogroup" aria-labelledby={`label-${item.id}`} aria-describedby={describedBy}>
+            {options.map((o) => (
+              <label class="check" key={o}>
+                <input type="radio" name={`q-${item.id}`} value={o} checked={picked === o} onChange={() => send(o)} />
+                <span>{item.kind === "yesno" ? t(o === "yes" ? "client.yes" : "client.no") : o}</span>
+              </label>
+            ))}
+          </div>
+        );
+      }
+      case "multi":
+        return (
+          <div role="group" aria-labelledby={`label-${item.id}`} aria-describedby={describedBy}>
+            {(item.options ?? []).map((o) => (
+              <label class="check" key={o}>
+                <input
+                  type="checkbox"
+                  checked={chosen.includes(o)}
+                  onChange={(e) => {
+                    const next = (item.options ?? []).filter((x) => (x === o ? e.currentTarget.checked : chosen.includes(x)));
+                    send(next.length ? next : null);
+                  }}
+                />
+                <span>{o}</span>
+              </label>
+            ))}
+          </div>
+        );
+      case "longtext":
+        return <textarea id={field} rows={5} maxLength={5000} value={text} aria-describedby={describedBy} onInput={(e) => setText(e.currentTarget.value)} onBlur={leave} />;
+      case "date":
+        return <input id={field} type="date" min="1900-01-01" max="2100-12-31" value={text} aria-describedby={describedBy} onInput={(e) => setText(e.currentTarget.value)} onBlur={leave} />;
+      case "number":
+        return (
+          <input id={field} type="text" inputMode="decimal" autoComplete="off" value={text} aria-invalid={bad} aria-describedby={describedBy} onInput={(e) => setText(e.currentTarget.value)} onBlur={leave} />
+        );
+      default:
+        return <input id={field} type="text" maxLength={500} value={text} aria-describedby={describedBy} onInput={(e) => setText(e.currentTarget.value)} onBlur={leave} />;
+    }
+  };
+
+  const grouped = item.kind === "yesno" || item.kind === "choice" || item.kind === "multi";
+  const status = {
+    approved: t("client.status_approved", { firm }),
+    rejected: t("client.status_rejected_question"),
+    empty: t("client.status_unanswered"),
+  }[item.status as string] ?? t("client.status_answered");
+  return (
+    <li class="item question" aria-labelledby={`label-${item.id}`}>
+      <div class="main">
+        <div class="line">
+          {grouped ? (
+            <strong id={`label-${item.id}`}>{item.label}</strong>
+          ) : (
+            <label id={`label-${item.id}`} for={field}>
+              <strong>{item.label}</strong>
+            </label>
+          )}
+          <Badge tone={TONES[item.status]}>
+            <span aria-hidden="true">{MARKS[item.status]} </span>
+            {t(`client.${item.status}`)}
+          </Badge>
+        </div>
+        {item.help && (
+          <div class="muted" id={`help-${item.id}`}>
+            {item.help}
+          </div>
+        )}
+        <p class="item-status" id={`status-${item.id}`} tabIndex={-1}>
+          {status}
+        </p>
+        {item.status === "rejected" && item.reject_note && (
+          <div class="callout">
+            <strong>{t("client.rejected_question")}</strong>
+            <p>{item.reject_note}</p>
+          </div>
+        )}
+        {open ? input() : <p class="answer">{answerText(item)}</p>}
+        {bad && (
+          <p class="error" id={`bad-${item.id}`}>
+            {t("client.number_invalid")}
+          </p>
+        )}
+        <Alert error={error} />
+      </div>
+    </li>
+  );
+}
+
+function ItemList({ items, firm, jobs, online, onChange, save }: { items: ClientItem[]; firm: string; jobs: Job[]; online: boolean; onChange: () => void; save: Save }) {
   return (
     <ul class="items">
-      {items.map((item) => (
-        <Item key={item.id} item={item} firm={firm} jobs={jobs} online={online} onChange={onChange} />
-      ))}
+      {items.map((item) =>
+        item.kind === "file" ? (
+          <Item key={item.id} item={item} firm={firm} jobs={jobs} online={online} onChange={onChange} />
+        ) : (
+          <Question key={item.id} item={item} firm={firm} save={save} />
+        ),
+      )}
     </ul>
   );
 }
@@ -472,6 +616,18 @@ function Page() {
   if (!data) return <Loading />;
   setZone(data.tz);
 
+  // the answer decides which other items apply, so what changed is told through the live region
+  const save: Save = async (item, answer) => {
+    const { items } = await put<{ items: ClientItem[] }>(`${base}/items/${item.id}/answer`, { answer });
+    const before = new Set(data.items.map((i) => i.id));
+    const after = new Set(items.map((i) => i.id));
+    const shown = items.filter((i) => !before.has(i.id)).length;
+    const hidden = data.items.filter((i) => !after.has(i.id)).length;
+    announce([t("client.answer_saved"), shown && t("client.items_shown", { n: shown }), hidden && t("client.items_hidden", { n: hidden })].filter(Boolean).join(" "));
+    reload();
+    return true;
+  };
+
   const firm = data.firm_name;
   const optional = data.items.filter((i) => !i.required);
   const contact = data.contact && (data.contact.email || data.contact.phone || data.contact.address) ? data.contact : null;
@@ -521,11 +677,11 @@ function Page() {
 
       <section aria-labelledby="checklist-title">
         <h2 id="checklist-title">{t("client.checklist")}</h2>
-        <ItemList items={data.items.filter((i) => i.required)} firm={firm} jobs={jobs} online={online} onChange={reload} />
+        <ItemList items={data.items.filter((i) => i.required)} firm={firm} jobs={jobs} online={online} onChange={reload} save={save} />
         {optional.length > 0 && (
           <>
             <h3 class="optional">{t("client.optional")}</h3>
-            <ItemList items={optional} firm={firm} jobs={jobs} online={online} onChange={reload} />
+            <ItemList items={optional} firm={firm} jobs={jobs} online={online} onChange={reload} save={save} />
           </>
         )}
       </section>

@@ -11,7 +11,9 @@ const now = Date.now();
 const DAY = 86_400_000;
 
 const file = (id, name, size) => ({ id, name, size, uploaded_at: now - DAY });
-const item = (id, label, o = {}) => ({ id, label, help: null, required: true, status: "empty", reject_note: null, unavailable_note: null, files: [], ...o });
+const item = (id, label, o = {}) => ({ id, label, help: null, required: true, status: "empty", reject_note: null, unavailable_note: null, files: [], kind: "file", options: null, answer: null, ...o });
+// a question; `when` is [parent id, value] and keeps the item out of the page until the parent has that answer
+const ask = (id, label, kind, o = {}) => item(id, label, { kind, ...o });
 
 const base = {
   firm_name: "Tuna Tax Services",
@@ -50,6 +52,23 @@ const thread = {
   ],
 };
 
+const questions = {
+  ...base,
+  title: "2025 tax organizer",
+  items: [
+    ask("q1", "Did you move more than 40 km for work or school?", "yesno", { help: "The new home must be at least 40 km closer." }),
+    item("q1a", "Moving expense receipts", { help: "Movers, truck rental and travel", when: ["q1", "yes"] }),
+    ask("q2", "Where do you work?", "text", { status: "submitted", answer: "Acme Ltd." }),
+    ask("q3", "Names and birth dates of your dependants", "longtext", { required: false }),
+    ask("q4", "How many children do you have?", "number", { status: "submitted", answer: "2" }),
+    ask("q5", "What date did you move?", "date", { required: false }),
+    ask("q6", "Which province do you live in?", "choice", { options: ["Ontario", "Quebec", "British Columbia"], status: "rejected", answer: "Ontario", reject_note: "Please pick where you lived on December 31." }),
+    ask("q7", "Which kinds of income did you have?", "multi", { options: ["Salary", "Rental", "Business"], status: "submitted", answer: ["Salary"] }),
+    ask("q8", "Were you a resident of Quebec on December 31?", "yesno", { status: "approved", answer: "no" }),
+    item("i1", "Notice of assessment", { status: "submitted", files: [file("f1", "noa.pdf", 96_000)] }),
+  ],
+};
+
 // a 1x1 PNG is enough for the page to prepare and send
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const photo = { name: "passport.png", mimeType: "image/png", buffer: PNG };
@@ -59,6 +78,20 @@ export const states = [
   { name: "done", view: done },
   { name: "unavailable", view: unavailable },
   { name: "thread", view: thread },
+  { name: "questions", view: questions },
+  {
+    // answering yes brings the receipts item onto the page, and the live region says so
+    name: "questions-answered",
+    view: questions,
+    async run(page) {
+      await page.getByRole("radio", { name: "Yes", exact: true }).first().check();
+      await page.locator("#label-q1a").waitFor();
+      await page.getByText("1 more item now applies to you.", { exact: false }).waitFor({ state: "attached" });
+      await page.getByRole("textbox", { name: "Where do you work?" }).fill("Acme Inc.");
+      await page.getByRole("textbox", { name: "Where do you work?" }).blur();
+      await page.waitForFunction(() => document.querySelector("#in-q2").value === "Acme Inc.");
+    },
+  },
   {
     // the upload never finishes, so the progress bar stays on screen
     name: "uploading",
@@ -104,12 +137,18 @@ export function serve() {
 export async function mock(page, state) {
   const view = structuredClone(state.view);
   const net = { down: false };
+  const shown = () => ({ ...view, items: view.items.filter((i) => !i.when || view.items.find((p) => p.id === i.when[0])?.answer === i.when[1]) });
   await page.route("**/api/c/**", async (route) => {
     const req = route.request();
     if (net.down) return route.abort("internetdisconnected");
     const path = new URL(req.url()).pathname;
     const json = (status, body) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
-    if (req.method() === "GET") return json(200, view);
+    if (req.method() === "GET") return json(200, shown());
+    if (req.method() === "PUT" && path.endsWith("/answer")) {
+      const target = view.items.find((i) => path.includes(`/items/${i.id}/`));
+      Object.assign(target, { answer: req.postDataJSON().answer, status: req.postDataJSON().answer === null ? "empty" : "submitted" });
+      return json(200, { items: shown().items });
+    }
     if (req.method() === "PUT") {
       if (state.hold) return;
       return json(201, { id: "new", name: "passport.jpg", size: 100, uploaded_at: Date.now() });

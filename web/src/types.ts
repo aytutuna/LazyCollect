@@ -38,7 +38,9 @@ export type Client = {
   sms_ok_at: number | null;
 };
 
-export type TemplateItem = { label: string; help?: string; required: boolean };
+export type Kind = "file" | "yesno" | "text" | "longtext" | "number" | "date" | "choice" | "multi";
+
+export type TemplateItem = { label: string; help?: string; required: boolean; kind?: Kind; options?: string[]; show_if?: { item: number; value: string } };
 
 export type Template = { id: string; name: string; builtin: boolean; items: TemplateItem[] };
 
@@ -71,6 +73,13 @@ export type Item = {
   status: "empty" | "submitted" | "approved" | "rejected" | "unavailable" | "waived";
   reject_note: string | null;
   unavailable_note: string | null;
+  kind: Kind;
+  options: string[] | null;
+  show_if_pos: number | null;
+  show_if_value: string | null;
+  answer: string | string[] | null;
+  answer_at: number | null;
+  hidden: boolean;
 };
 
 export type FileRow = { id: string; name: string; size: number; mime: string; uploaded_at: number };
@@ -121,7 +130,7 @@ export type Message = { id: string; kind: "invite" | "reminder" | "deadline" | "
 
 export type LinkResult = { url: string; emailed?: true; email_failed?: true };
 
-export type ClientItem = Omit<Item, "position"> & { files: Omit<FileRow, "mime">[] };
+export type ClientItem = Omit<Item, "position" | "show_if_pos" | "show_if_value" | "answer_at" | "hidden"> & { files: Omit<FileRow, "mime">[] };
 
 export type Note = { id: string; author: "client" | "user"; body: string; created_at: number };
 
