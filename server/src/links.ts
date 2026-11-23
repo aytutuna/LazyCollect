@@ -46,15 +46,21 @@ export async function mintLink(env: Env, db: D1Database, region: string, firmId:
   return token;
 }
 
-// the live link as a url, from its sealed token
-export async function linkUrl(env: Env, db: D1Database, region: string, firmId: string, requestId: string, deadline: number, now: number): Promise<string> {
+// the live link's token, opened from its sealed copy; null when there is none
+export async function liveToken(env: Env, db: D1Database, firmId: string, requestId: string, now: number): Promise<{ token: string; expires_at: number } | null> {
   const row = await db
     .prepare(
-      `SELECT token_enc FROM links WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL AND expires_at > ? AND token_enc IS NOT NULL
+      `SELECT token_enc, expires_at FROM links WHERE firm_id = ? AND request_id = ? AND revoked_at IS NULL AND expires_at > ? AND token_enc IS NOT NULL
        ORDER BY created_at DESC LIMIT 1`,
     )
     .bind(firmId, requestId, now)
-    .first<{ token_enc: string }>();
-  const token = row ? await openToken(env, row.token_enc) : await mintLink(env, db, region, firmId, requestId, deadline, now);
+    .first<{ token_enc: string; expires_at: number }>();
+  return row ? { token: await openToken(env, row.token_enc), expires_at: row.expires_at } : null;
+}
+
+// the live link as a url
+export async function linkUrl(env: Env, db: D1Database, region: string, firmId: string, requestId: string, deadline: number, now: number): Promise<string> {
+  const live = await liveToken(env, db, firmId, requestId, now);
+  const token = live ? live.token : await mintLink(env, db, region, firmId, requestId, deadline, now);
   return `${env.APP_URL}/c/${token}`;
 }

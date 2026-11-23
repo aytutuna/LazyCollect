@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { usable } from "./firm";
 import { LINK_GRACE, sealToken } from "./links";
-import { addressStopped, deliver, hasRoom, unsubUrl } from "./mail";
+import { MANUAL_SEQ, addressStopped, deliver, hasRoom, unsubUrl } from "./mail";
 import { regionOf, type Region } from "./regions";
 import { listRequests } from "./search";
 import { missingItems, senderName, sendersOf } from "./reminders";
@@ -488,8 +488,8 @@ requests.get("/requests/:id/messages", async (c) => {
   const req = await findRequest(c);
   if (!req) return notFound(c);
   const { results } = await c.get("db")
-    .prepare("SELECT id, kind, seq, status, sent_at FROM messages WHERE firm_id = ? AND request_id = ? ORDER BY sent_at DESC, rowid DESC LIMIT 100")
-    .bind(c.get("firm").id, req.id)
+    .prepare("SELECT id, kind, seq, status, sent_at, seq >= ? AS manual FROM messages WHERE firm_id = ? AND request_id = ? ORDER BY sent_at DESC, rowid DESC LIMIT 100")
+    .bind(MANUAL_SEQ, c.get("firm").id, req.id)
     .all();
   return c.json(results);
 });

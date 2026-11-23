@@ -4,6 +4,10 @@ import { DAY, MINUTE, hmac, randomId, sha256 } from "./util";
 
 export const TEMPLATE_VERSION = 1;
 
+// The cron numbers its reminders from 1 up, so one sent by hand lives in its own range of the same kinds. It then also counts
+// toward the 36 hour spacing the cron keeps between emails to one client.
+export const MANUAL_SEQ = 1_000_000;
+
 const MAX_ATTEMPTS = 3;
 const STALE = 30 * MINUTE;
 
