@@ -65,6 +65,7 @@ export async function purgeRequest(db: D1Database, bucket: R2Bucket, req: Target
         )
         .bind(...own, ...held),
       db.prepare(`DELETE FROM messages WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
+      db.prepare(`DELETE FROM notes WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db.prepare(`DELETE FROM files WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db.prepare(`DELETE FROM items WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db.prepare(`DELETE FROM links WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),

@@ -1,6 +1,8 @@
-// An open request is complete once every required item is submitted or approved and some item has a live file, and goes back when that stops being true.
-const DONE = `EXISTS (SELECT 1 FROM files WHERE firm_id = requests.firm_id AND request_id = requests.id AND state = 'live' AND deleted_at IS NULL)
-  AND NOT EXISTS (SELECT 1 FROM items WHERE firm_id = requests.firm_id AND request_id = requests.id AND required = 1 AND status NOT IN ('submitted', 'approved'))`;
+// An open request is complete once every required item is submitted, approved or waived and some item has a live file or was waived,
+// and goes back when that stops being true. An item the client has no document for waits for the account's answer before it counts.
+const DONE = `(EXISTS (SELECT 1 FROM files WHERE firm_id = requests.firm_id AND request_id = requests.id AND state = 'live' AND deleted_at IS NULL)
+    OR EXISTS (SELECT 1 FROM items WHERE firm_id = requests.firm_id AND request_id = requests.id AND status = 'waived'))
+  AND NOT EXISTS (SELECT 1 FROM items WHERE firm_id = requests.firm_id AND request_id = requests.id AND required = 1 AND status NOT IN ('submitted', 'approved', 'waived'))`;
 
 export const YEAR = 31_557_600_000;
 export const DEFAULT_YEARS = 7;

@@ -6,7 +6,7 @@ import type { FileRow, ItemWithFiles, RequestDetail } from "../types";
 import { Badge, ErrorNote, Loading } from "../ui";
 import { Review } from "./review";
 
-const TONES = { empty: "grey", submitted: "teal", approved: "green", rejected: "red" };
+const TONES = { empty: "grey", submitted: "teal", approved: "green", rejected: "red", unavailable: "amber", waived: "green" };
 
 // what the server will show inline; HEIC and the rest download instead
 const VIEWABLE = ["image/jpeg", "image/png", "image/webp", "application/pdf"];

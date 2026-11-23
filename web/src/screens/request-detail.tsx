@@ -6,10 +6,12 @@ import { t } from "../i18n";
 import type { ActivityRow, Client, Firm, Item, ItemWithFiles, LinkResult, Message, RequestDetail } from "../types";
 import { ActivityList } from "./activity";
 import { Review } from "./review";
+import { Thread } from "./thread";
+import { Unavailable } from "./unavailable";
 import { Viewer } from "./viewer";
 import { Badge, Check, Confirm, ErrorNote, Field, Loading, statusLabel, statusTone } from "../ui";
 
-const ITEM_TONES = { empty: "grey", submitted: "teal", approved: "green", rejected: "red" };
+const ITEM_TONES = { empty: "grey", submitted: "teal", approved: "green", rejected: "red", unavailable: "amber", waived: "green" };
 
 type Ask = "link" | "close" | "delete" | null;
 
@@ -46,7 +48,7 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
     sent.reload();
     activity.reload();
   };
-  const received = req.items.filter((i) => i.status === "submitted" || i.status === "approved").length;
+  const received = req.items.filter((i) => i.status === "submitted" || i.status === "approved" || i.status === "waived").length;
   const late = isLate(req.deadline) && editable;
   const lastEmail = sent.data?.find((m) => m.status === "sent");
   const lastManual = sent.data?.find((m) => m.manual && m.status !== "failed" && Date.now() - m.sent_at < 86_400_000);
@@ -292,6 +294,8 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
                     </div>
                     {item.help && <div class="muted">{item.help}</div>}
                     {item.status === "rejected" && item.reject_note && <p class="reject">{item.reject_note}</p>}
+                    {item.status === "unavailable" && (req.status === "open" || req.status === "complete") && <Unavailable requestId={id} item={item} onDone={reload} />}
+                    {item.status === "waived" && item.unavailable_note && <p class="muted">{t("detail.unavailable_reason", { note: item.unavailable_note })}</p>}
                     {item.files.length > 0 && (
                       <ul class="files">
                         {item.files.map((f) => (
@@ -337,6 +341,8 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
         )}
         {manage && (adding ? <ItemForm requestId={id} onSaved={saved} onCancel={() => setAdding(false)} /> : <button onClick={() => setAdding(true)}>{t("items.add")}</button>)}
       </section>
+
+      <Thread requestId={id} clientName={clientName} editable={req.status === "open" || req.status === "complete"} onChange={activity.reload} />
 
       <section>
         <h2>{t("detail.records")}</h2>

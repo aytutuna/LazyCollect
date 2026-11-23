@@ -16,7 +16,7 @@ const TRIAL_DAILY = 50;
 const PAID_DAILY = 500;
 const INVITES_PER_REQUEST = 3;
 
-export type Kind = "invite" | "reminder" | "deadline" | "rejected";
+export type Kind = "invite" | "reminder" | "deadline" | "rejected" | "answer";
 export type Missing = { label: string; required: boolean; reject_note: string | null };
 
 export type Letter = {
@@ -52,6 +52,7 @@ const SUBJECTS: Record<Kind, (l: Letter, date: string) => string> = {
   reminder: (l, date) => `Reminder: ${l.title}, due ${date}`,
   deadline: (l) => `Deadline passed: ${l.title}`,
   rejected: (l) => `Please resend: ${l.title}`,
+  answer: (l) => `${l.sender} replied: ${l.title}`,
 };
 
 function intro(l: Letter, date: string): string {
@@ -64,11 +65,14 @@ function intro(l: Letter, date: string): string {
       return `The deadline of ${date} for "${l.title}" has passed and some documents have not arrived. ${l.sender} can still accept them through the link below.`;
     case "rejected":
       return `${l.sender} looked at what you sent for "${l.title}" and needs a different file for the items below.`;
+    case "answer":
+      return `${l.sender} has replied to your message about "${l.title}". Open your link to read it.`;
   }
 }
 
 function lists(l: Letter) {
   const line = (i: Missing) => (i.reject_note ? `${i.label} (sent back: ${i.reject_note})` : i.label);
+  if (l.kind === "answer") return [];
   if (l.kind === "rejected") return [{ heading: "Please send again:", items: l.items.map(line) }];
   const needed = l.items.filter((i) => i.required).map(line);
   const maybe = l.items.filter((i) => !i.required).map(line);
@@ -90,7 +94,7 @@ export function render(l: Letter) {
       `Hello ${l.clientName},`,
       intro(l, date),
       ...blocks.map((b) => `${b.heading}\n${b.items.map((i) => `- ${i}`).join("\n")}`),
-      `Open your link to send them:\n${l.url}`,
+      `${l.kind === "answer" ? "Open your link to read the reply" : "Open your link to send them"}:\n${l.url}`,
       `${l.sender}\n${l.address}\n${reach}`,
       `${why}\nStop these emails: ${l.unsubUrl}`,
     ].join("\n\n") + "\n";
@@ -104,7 +108,7 @@ export function render(l: Letter) {
 ${p(`Hello ${escapeHtml(l.clientName)},`)}
 ${p(escapeHtml(intro(l, date)))}
 ${blocks.map(list).join("\n")}
-${p(`<a href="${escapeHtml(l.url)}" style="display:inline-block;background:#1c5d99;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px">Send your documents</a>`, "margin:0 0 24px")}
+${p(`<a href="${escapeHtml(l.url)}" style="display:inline-block;background:#1c5d99;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px">${l.kind === "answer" ? "Read the reply" : "Send your documents"}</a>`, "margin:0 0 24px")}
 ${p(`${escapeHtml(l.sender)}<br>${escapeHtml(l.address).replace(/\n/g, "<br>")}<br>${escapeHtml(reach)}`, small)}
 ${p(`${escapeHtml(why)} <a href="${escapeHtml(l.unsubUrl)}" style="color:#666666">Stop these emails</a>`, small)}
 </div></body></html>`;

@@ -37,7 +37,7 @@ export function queryOf(c: Context<AppEnv>): string | undefined {
 
 // each view as a condition on the grouped rows below
 const WHEN = (now: number): Record<Exclude<View, "all">, { sql: string; binds: number[] }> => ({
-  to_review: { sql: "status IN ('open', 'complete') AND submitted > 0", binds: [] },
+  to_review: { sql: "status IN ('open', 'complete') AND (submitted > 0 OR unavailable > 0 OR unanswered > 0)", binds: [] },
   waiting: { sql: "status = 'open' AND missing > 0", binds: [] },
   overdue: { sql: "status = 'open' AND deadline < ?", binds: [now] },
   due_soon: { sql: "status = 'open' AND deadline >= ? AND deadline < ?", binds: [now, now + 7 * DAY] },
@@ -79,6 +79,10 @@ export async function listRequests(c: Context<AppEnv>) {
        COALESCE(SUM(i.status = 'submitted'), 0) AS submitted,
        COALESCE(SUM(i.status = 'approved'), 0) AS approved,
        COALESCE(SUM(i.status = 'rejected'), 0) AS rejected,
+       COALESCE(SUM(i.status = 'unavailable'), 0) AS unavailable,
+       COALESCE(SUM(i.status = 'waived'), 0) AS waived,
+       (SELECT COUNT(*) FROM notes n WHERE n.firm_id = r.firm_id AND n.request_id = r.id AND n.author = 'client'
+         AND n.created_at > COALESCE((SELECT MAX(created_at) FROM notes WHERE firm_id = r.firm_id AND request_id = r.id AND author = 'user'), 0)) AS unanswered,
        COALESCE(SUM(i.required = 1 AND i.status IN ('empty', 'rejected')), 0) AS missing${
          withActivity
            ? `, NULLIF(MAX(COALESCE(MAX(i.reviewed_at), 0), COALESCE((SELECT MAX(f.uploaded_at) FROM files f WHERE f.firm_id = r.firm_id AND f.request_id = r.id AND f.state = 'live' AND f.deleted_at IS NULL), 0)), 0) AS last_at`
