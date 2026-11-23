@@ -465,6 +465,7 @@
   "viewer.next": "Next",
   "viewer.close": "Close",
   "viewer.download": "Download",
+  "viewer.open_pdf": "Open PDF",
   "viewer.new_tab": "Open in a new tab",
   "viewer.checking": "Loading the file...",
   "viewer.unsupported": "This file type cannot be shown in the browser. Download it to open it.",

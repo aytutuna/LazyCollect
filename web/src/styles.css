@@ -801,6 +801,12 @@ dialog.viewer[open] {
   visibility: hidden;
 }
 
+.stage-note .big {
+  display: inline-block;
+  padding: 0.9rem 2rem;
+  font-size: 1.1rem;
+}
+
 .stage-note {
   max-width: 28rem;
   padding: 1rem;

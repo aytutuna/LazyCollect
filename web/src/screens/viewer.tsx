@@ -11,10 +11,13 @@ const TONES = { empty: "grey", submitted: "teal", approved: "green", rejected: "
 // what the server will show inline; HEIC and the rest download instead
 const VIEWABLE = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
 
+// phone browsers do not render a PDF in a frame
+const small = () => matchMedia("(pointer: coarse), (max-width: 40rem)").matches;
+
 function Preview({ file }: { file: FileRow }) {
   const url = `/api/files/${file.id}/view`;
   const viewable = VIEWABLE.includes(file.mime);
-  const [state, setState] = useState<"checking" | "loading" | "ready" | "failed">("checking");
+  const [state, setState] = useState<"checking" | "loading" | "ready" | "failed" | "blocked">("checking");
   const [error, setError] = useState<unknown>(null);
 
   // asked first, so a refusal is worded here instead of showing as raw text inside the frame
@@ -30,6 +33,14 @@ function Preview({ file }: { file: FileRow }) {
     };
   }, [file.id]);
 
+  const pdf = file.mime === "application/pdf";
+  // a frame that never reports back is as good as none
+  useEffect(() => {
+    if (!pdf || state !== "loading" || small()) return;
+    const timer = setTimeout(() => setState("blocked"), 8000);
+    return () => clearTimeout(timer);
+  }, [state]);
+
   if (!viewable) return <p class="stage-note">{t("viewer.unsupported")}</p>;
   if (state === "failed") {
     return (
@@ -39,12 +50,21 @@ function Preview({ file }: { file: FileRow }) {
       </div>
     );
   }
+  if (pdf && (state === "blocked" || (state !== "checking" && small()))) {
+    return (
+      <div class="stage-note">
+        <a class="button primary big" href={url} target="_blank" rel="noopener">
+          {t("viewer.open_pdf")}
+        </a>
+      </div>
+    );
+  }
   const shown = state === "ready";
   return (
     <>
       {!shown && <Loading />}
       {state !== "checking" &&
-        (file.mime === "application/pdf" ? (
+        (pdf ? (
           <iframe class={shown ? "" : "pending"} title={t("viewer.alt", { name: file.name })} src={url} onLoad={() => setState("ready")} />
         ) : (
           <img class={shown ? "" : "pending"} alt={t("viewer.alt", { name: file.name })} src={url} onLoad={() => setState("ready")} onError={() => (setError(null), setState("failed"))} />
