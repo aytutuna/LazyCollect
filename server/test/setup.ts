@@ -1,12 +1,14 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, vi } from "vitest";
+import { stripeFake } from "./stripe-fake";
 
 await applyD1Migrations(env.CONTROL, env.TEST_MIGRATIONS);
 await applyD1Migrations(env.DB_NA, env.TEST_MIGRATIONS_NA);
 
 beforeEach(async () => {
   vi.restoreAllMocks();
+  stripeFake.reset();
   await env.CONTROL.batch(
     ["sessions", "login_codes", "users", "firms", "stripe_events"].map((t) => env.CONTROL.prepare(`DELETE FROM ${t}`)),
   );

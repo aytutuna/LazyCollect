@@ -1,7 +1,8 @@
 import { env } from "cloudflare:workers";
 import { exports } from "cloudflare:workers";
 import { vi } from "vitest";
-import { DAY } from "../src/util";
+import { DAY, randomId, sha256 } from "../src/util";
+import { stripeFake } from "./stripe-fake";
 
 export type Sent = { from: string; to: string[]; reply_to?: string; subject: string; text: string; html: string; headers?: Record<string, string> };
 
@@ -12,6 +13,7 @@ export function mockOutbound(turnstileOk = true, resendOk: boolean | number = tr
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url.startsWith("https://turnstile.test/")) return Response.json({ success: turnstileOk });
+    if (url.startsWith("https://stripe.test/")) return stripeFake.handle(new URL(url), init);
     if (url.startsWith("https://resend.test/")) {
       if (resendOk !== true) return new Response("nope", { status: resendOk === false ? 500 : resendOk });
       sent.push(JSON.parse(String(init?.body)));
@@ -123,4 +125,28 @@ export async function review(cookie: string, reqId: string, itemId: string, body
     body.files ??
     (await env.DB_NA.prepare("SELECT id FROM files WHERE item_id = ? AND state = 'live' AND deleted_at IS NULL").bind(itemId).all<{ id: string }>()).results.map((r) => r.id);
   return api(`/api/requests/${reqId}/items/${itemId}/review`, { method: "POST", cookie, body: { ...body, files } });
+}
+
+export async function addMember(owner: string, email = "member@firm.test"): Promise<string> {
+  const me = await (await api("/api/me", { cookie: owner })).json<any>();
+  const token = `member-${email}`;
+  const now = Date.now();
+  const userId = randomId();
+  await env.CONTROL.batch([
+    env.CONTROL.prepare("INSERT INTO users (id, firm_id, email, role, created_at) VALUES (?, ?, ?, 'member', ?)").bind(userId, me.firm.id, email, now),
+    env.CONTROL.prepare("INSERT INTO sessions (token_hash, user_id, firm_id, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)").bind(
+      await sha256(token),
+      userId,
+      me.firm.id,
+      now,
+      now,
+      now + 100_000_000,
+    ),
+  ]);
+  return `__Host-lc_session=${token}`;
+}
+
+export async function firmRow(cookie: string) {
+  const me = await (await api("/api/me", { cookie })).json<any>();
+  return env.CONTROL.prepare("SELECT * FROM firms WHERE id = ?").bind(me.firm.id).first<any>();
 }

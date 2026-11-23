@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { activity } from "./activity";
 import { auth } from "./auth";
+import { billing, stripeWebhook } from "./billing";
 import { client } from "./client";
 import { clients } from "./clients";
 import { exportZip } from "./export";
@@ -32,12 +33,15 @@ app.use("/api/*", async (c, next) => {
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Cache-Control", "no-store");
 });
+// Stripe's calls carry no cookie or X-Collect header, so this goes in before the csrf check and is verified by its signature
+app.route("/api", stripeWebhook);
 app.use("/api/*", csrf, loadSession);
 app.get("/api/health", (c) => c.json({ ok: true }));
 app.route("/api", auth);
 app.route("/api", client);
 app.route("/api", uploads);
 app.use("/api/firm", loadFirm);
+app.use("/api/billing/*", loadFirm);
 app.use("/api/retention/*", loadFirm);
 app.use("/api/retention", loadFirm);
 app.use("/api/trash", loadFirm);
@@ -47,6 +51,7 @@ app.use("/api/templates/*", loadFirm);
 app.use("/api/requests/*", loadFirm);
 app.use("/api/files/*", loadFirm);
 app.route("/api", firm);
+app.route("/api", billing);
 app.route("/api", clients);
 app.route("/api", templates);
 app.route("/api", requests);
@@ -81,6 +86,7 @@ export default {
       env.CONTROL.batch([
         env.CONTROL.prepare("DELETE FROM login_codes WHERE created_at < ?").bind(now - DAY),
         env.CONTROL.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
+        env.CONTROL.prepare("DELETE FROM stripe_events WHERE received_at < ?").bind(now - 30 * DAY),
       ]),
     );
     await step(() => sweepFiles(env, now));
