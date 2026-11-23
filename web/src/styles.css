@@ -1264,6 +1264,11 @@ dialog.scanner {
   outline-offset: 3px;
 }
 
+.review-title {
+  margin: 0;
+  font-size: 1rem;
+}
+
 .page-preview {
   width: 100%;
   height: auto;

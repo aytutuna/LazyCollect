@@ -7,7 +7,7 @@ import { acceptable } from "./corners";
 import { Detector } from "./detector";
 import { FILTERS, applyFilter, type Filter } from "./filters";
 import { rotate, scaled, type Pixels, type Quad } from "./geometry";
-import { draw, finalPage, flatPreview, pause, readPixels, shotOf, startQuad, toCanvas, type Shot } from "./pipeline";
+import { draw, finalPage, flatPreview, pause, readPixels, release, shotOf, startQuad, toCanvas, type Shot } from "./pipeline";
 import { frameIssues, pageIssues, type Issue } from "./quality";
 
 type Page = {
@@ -30,7 +30,12 @@ type Draft = { shot: Shot; url: string; quad: Quad; confidence: number | null; r
 let seq = 0;
 
 function thumbOf(img: Pixels): string {
-  return draw(toCanvas(img), img.width, img.height, 96).canvas.toDataURL("image/jpeg", 0.7);
+  const full = toCanvas(img);
+  const small = draw(full, img.width, img.height, 96).canvas;
+  const url = small.toDataURL("image/jpeg", 0.7);
+  release(full);
+  release(small);
+  return url;
 }
 
 function Preview({ img, label }: { img: Pixels; label: string }) {
@@ -55,6 +60,9 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
   const [draft, setDraft] = useState<Draft | null>(null);
   const [working, setWorking] = useState("");
   const [leaving, setLeaving] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  // set once the scanner is closed, so work that is still running does not hand its pages on
+  const gone = useRef(false);
   const [message, setMessage] = useState("");
   const page = pages[at];
   // where Add page and Retake lead back to
@@ -63,6 +71,7 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
   useEffect(() => {
     dialog.current!.showModal();
     return () => {
+      gone.current = true;
       detector.close();
       dialog.current?.close();
     };
@@ -76,7 +85,17 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
     setTimeout(() => setMessage(text), 60);
   };
 
+  // focus follows the step: the first corner handle, the page heading, the camera button, the discard prompt's safe button
+  useEffect(() => {
+    const target = { edit: ".handle", review: "#review-title", nocamera: ".no-camera button" }[step as string];
+    if (target) dialog.current?.querySelector<HTMLElement>(target)?.focus();
+  }, [step]);
+  useEffect(() => {
+    if (leaving) document.getElementById("leave-keep")?.focus();
+  }, [leaving]);
+
   function close() {
+    if (finishing) return;
     if (pages.length && !leaving) setLeaving(true);
     else onClose();
   }
@@ -166,19 +185,25 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
     say(t("scan.page_moved", { n: to + 1 }));
   }
 
+  // Close and Esc do nothing while the pages are being prepared, and nothing is handed on once the scanner has gone.
   async function finish() {
     const files: Prepared[] = [];
-    for (let i = 0; i < pages.length; i++) {
-      setWorking(t("scan.preparing", { n: i + 1, m: pages.length }));
-      const p = pages[i];
-      try {
-        files.push({ blob: await finalPage(p.shot, p.quad, p.turns, p.filter), name: `${label}${pages.length > 1 ? ` ${i + 1}` : ""}.jpg`, jpeg: true });
-      } catch {
-        setWorking("");
-        say(t("scan.photo_failed"));
-        return;
+    setFinishing(true);
+    try {
+      for (let i = 0; i < pages.length; i++) {
+        setWorking(t("scan.preparing", { n: i + 1, m: pages.length }));
+        const p = pages[i];
+        const blob = await finalPage(p.shot, p.quad, p.turns, p.filter);
+        if (gone.current) return;
+        files.push({ blob, name: `${label}${pages.length > 1 ? ` ${i + 1}` : ""}.jpg`, jpeg: true });
+        await pause();
+        if (gone.current) return;
       }
-      await pause();
+    } catch {
+      setWorking("");
+      setFinishing(false);
+      say(t("scan.photo_failed"));
+      return;
     }
     onDone(files);
   }
@@ -200,7 +225,7 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
     >
       <header>
         <h2 id="scan-title">{t("scan.title", { label })}</h2>
-        <button type="button" onClick={close}>
+        <button type="button" disabled={finishing} onClick={close}>
           {t("scan.close")}
         </button>
       </header>
@@ -212,7 +237,7 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
               <button type="button" class="danger" onClick={onClose}>
                 {t("scan.discard_yes")}
               </button>
-              <button type="button" onClick={() => setLeaving(false)}>
+              <button id="leave-keep" type="button" onClick={() => setLeaving(false)}>
                 {t("scan.discard_no")}
               </button>
             </div>
@@ -255,6 +280,9 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
 
         {step === "review" && page && (
           <>
+            <h3 id="review-title" tabIndex={-1} class="review-title">
+              {t("scan.page_n", { n: at + 1, m: pages.length })}
+            </h3>
             <Preview img={page.shown} label={t("scan.page_alt", { n: at + 1, m: pages.length, filter: t(`scan.filter_${page.filter}`) })} />
             {page.issues.length > 0 && !page.accepted && (
               <div class="callout notice" role="group" aria-labelledby="issues-title">
@@ -317,7 +345,7 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
               <button type="button" onClick={() => setStep(home)}>
                 {t("scan.add")}
               </button>
-              <button type="button" class="primary" disabled={Boolean(working)} onClick={finish}>
+              <button type="button" class="primary" disabled={finishing || Boolean(working)} onClick={finish}>
                 {t("scan.done", { n: pages.length })}
               </button>
             </div>
