@@ -9,7 +9,7 @@ import { sentBackText } from "./reasons";
 import { regionOf, type Region } from "./regions";
 import { findRequest } from "./requests";
 import type { AppEnv } from "./session";
-import { notFound } from "./validate";
+import { invalid, notFound, readBody } from "./validate";
 import { END_RECORD, cleanName, entryOverhead, uniqueName, zipStream, type ZipEntry } from "./zip";
 
 export const exportZip = new Hono<AppEnv>();
@@ -138,4 +138,18 @@ exportZip.get("/requests/:id/export", async (c) => {
       "Cache-Control": "no-store",
     },
   });
+});
+
+// the IRCC package is built in the browser from files fetched one by one; this only records that it was made
+exportZip.post("/requests/:id/export/ircc", async (c) => {
+  const req = await findRequest(c);
+  if (!req) return notFound(c);
+  const firm = c.get("firm");
+  if (await keyLimited(c.env.EXPORT, firm.id)) return c.json({ error: "rate_limited" }, 429);
+  const body = await readBody(c);
+  const files = body?.files;
+  const limit = body?.limit_mb;
+  if (!Number.isInteger(files) || (files as number) < 1 || (files as number) > MAX_ENTRIES || ![2, 4, 5, 10].includes(limit as number)) return invalid(c);
+  await audit(c, "export.ircc", "request", req.id, { files, limit_mb: limit }).run();
+  return c.body(null, 204);
 });
