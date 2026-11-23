@@ -2,6 +2,8 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { purgeClosed } from "../src/account";
 import { DAY, HOUR, sha256 } from "../src/util";
+import { Authenticator } from "./authenticator";
+import { addPasskey } from "./passkey-flow";
 import { addMember, api, codeFrom, cookieFrom, firmRow, login, mockOutbound, openRequest, setup, start } from "./helpers";
 
 const OWNER = "owner@firm.test";
@@ -428,6 +430,26 @@ describe("owners of an untouched account", () => {
     expect(again.user.role).toBe("owner");
     expect(again.firm.id).toBe((await me(quiet)).firm.id);
     expect(used.cookie).toBeTruthy();
+  });
+
+  it("stay put when they hold a passkey or their account requires them", async () => {
+    const { cookie } = await setup();
+    mockOutbound();
+    const keyed = await login("keyed@firm.test");
+    expect((await invite(cookie, "keyed@firm.test")).status).toBe(201);
+    expect((await addPasskey(keyed, await Authenticator.create())).status).toBe(201);
+    // the code alone must not move them; the account is theirs and the passkey step follows
+    const sent = mockOutbound();
+    await start("keyed@firm.test");
+    const res = await api("/api/auth/verify", { method: "POST", body: { email: "keyed@firm.test", code: codeFrom(sent[0]) } });
+    expect((await res.json<any>()).step).toBe("passkey");
+    const user = await row("SELECT role, firm_id FROM users WHERE email = 'keyed@firm.test'");
+    expect(user.role).toBe("owner");
+    expect(user.firm_id).toBe((await me(keyed)).firm.id);
+
+    const strict = await login("strict@firm.test");
+    await env.CONTROL.prepare("UPDATE firms SET require_passkeys = 1 WHERE id = ?").bind((await me(strict)).firm.id).run();
+    expect((await invite(cookie, "strict@firm.test")).status).toBe(409);
   });
 
   it("cannot invite themselves", async () => {

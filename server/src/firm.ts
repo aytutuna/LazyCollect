@@ -28,13 +28,14 @@ export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at" | "past_due
   }
 }
 
-// An owner who signed in once and did nothing: alone in the account, no clients, requests or templates, no billing, nothing pending.
+// An owner who signed in once and did nothing: alone in the account, no clients, requests or templates, no billing, no passkeys, nothing pending.
 export function untouchedSql(firmId: string, now: number) {
   return {
     sql: `(SELECT COUNT(*) FROM users WHERE firm_id = ?) = 1
       AND NOT EXISTS (SELECT 1 FROM invites WHERE firm_id = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?)
-      AND EXISTS (SELECT 1 FROM firms WHERE id = ? AND closed_at IS NULL AND stripe_customer_id IS NULL AND stripe_subscription_id IS NULL)`,
-    binds: [firmId, firmId, now, firmId],
+      AND EXISTS (SELECT 1 FROM firms WHERE id = ? AND closed_at IS NULL AND stripe_customer_id IS NULL AND stripe_subscription_id IS NULL AND require_passkeys = 0)
+      AND NOT EXISTS (SELECT 1 FROM passkeys WHERE user_id IN (SELECT id FROM users WHERE firm_id = ?))`,
+    binds: [firmId, firmId, now, firmId, firmId],
   };
 }
 
