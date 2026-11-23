@@ -69,6 +69,12 @@ export async function purgeRequest(db: D1Database, bucket: R2Bucket, req: Target
       db.prepare(`DELETE FROM files WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db.prepare(`DELETE FROM items WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db.prepare(`DELETE FROM links WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
+      db
+        .prepare(
+          `DELETE FROM batches WHERE firm_id = ? AND id IN (SELECT batch_id FROM batch_items WHERE firm_id = ? AND request_id = ?)
+           AND NOT EXISTS (SELECT 1 FROM batch_items WHERE firm_id = batches.firm_id AND batch_id = batches.id AND request_id != ?) AND ${mine}`,
+        )
+        .bind(req.firm_id, ...own, req.id, ...held),
       db.prepare(`DELETE FROM batch_items WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db.prepare("DELETE FROM requests WHERE firm_id = ? AND id = ? AND purging_at = ?").bind(...held),
     ]);

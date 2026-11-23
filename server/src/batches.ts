@@ -11,8 +11,8 @@ import type { AppEnv } from "./session";
 import { PAGE, offsetOf } from "./search";
 import { visible } from "./questions";
 import { builtinTemplates, type Item } from "./templates";
-import { atHour, dayOf, inHours, nextReminder, plusYear } from "./tz";
-import { DAY, MINUTE, randomId } from "./util";
+import { addDays, atHour, dayOf, inHours, nextOpening, nextReminder, plusYear } from "./tz";
+import { DAY, HOUR, MINUTE, randomId } from "./util";
 import { invalid, notFound, readBody, text } from "./validate";
 
 export const batches = new Hono<AppEnv>();
@@ -44,7 +44,7 @@ type Plan = { id: string; client_id: string; title: string; note: string | null;
 const hexIds = (v: unknown): string[] | undefined =>
   Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string" && /^[0-9a-f]{32}$/.test(x)) ? [...new Set(v as string[])] : undefined;
 
-const SUMMARY = `SELECT b.id, b.title, b.source_kind, b.source_name, b.deadline, b.reminders_on, b.send_at, b.status, b.total, b.limited_at, b.created_at, b.finished_at,
+const SUMMARY = `SELECT b.id, b.title, b.source_kind, b.source_name, b.deadline, b.reminders_on, b.send_at, b.status, b.total, b.limited_at, b.stop_reason, b.created_at, b.finished_at,
     COALESCE(SUM(i.state = 'pending'), 0) AS pending, COALESCE(SUM(i.state = 'sent'), 0) AS sent, COALESCE(SUM(i.state = 'no_email'), 0) AS no_email,
     COALESCE(SUM(i.state = 'skipped'), 0) AS skipped, COALESCE(SUM(i.state = 'failed'), 0) AS failed, COALESCE(SUM(i.state = 'cancelled'), 0) AS cancelled,
     COALESCE(SUM(r.first_opened_at IS NOT NULL), 0) AS opened, COALESCE(SUM(r.status = 'complete'), 0) AS complete,
@@ -120,12 +120,14 @@ batches.post("/batches", async (c) => {
     for (const r of results) {
       const next = plusYear(r.deadline, firm.tz);
       if (next <= now) return c.json({ error: "repeat_deadline_passed" }, 400);
+      if (next <= sendAt) return c.json({ error: "deadline_before_send" }, 400);
       if (deadline(next) === undefined) return invalid(c);
       plans.push({ id: randomId(), client_id: r.client_id, title: nextYearTitle(r.title).slice(0, 200), note: r.note, deadline: next, reminders_on: body.reminders_on ? 1 : 0, src: r.id });
     }
   } else {
     due = deadline(body.deadline) ?? null;
     if (due === null) return invalid(c);
+    if (due <= sendAt) return c.json({ error: "deadline_before_send" }, 400);
     const clients = await loadClients(ids);
     if (clients.length !== ids.length) return notFound(c);
     let sourceNote: string | null = null;
@@ -178,10 +180,10 @@ batches.post("/batches", async (c) => {
   const stmts = [
     db
       .prepare(
-        `INSERT INTO batches (id, firm_id, title, source_kind, source_name, deadline, reminders_on, send_at, total, created_by, created_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COALESCE(SUM(total), 0) FROM batches WHERE firm_id = ? AND created_at > ?) + ? <= ${MAX_BATCH_PER_DAY}`,
+        `INSERT INTO batches (id, firm_id, title, source_kind, source_name, deadline, reminders_on, send_at, next_try_at, total, created_by, created_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COALESCE(SUM(total), 0) FROM batches WHERE firm_id = ? AND created_at > ?) + ? <= ${MAX_BATCH_PER_DAY}`,
       )
-      .bind(batchId, firm.id, title, kind, sourceName, due, body.reminders_on ? 1 : 0, sendAt, rows.length, userId, now, firm.id, since, rows.length),
+      .bind(batchId, firm.id, title, kind, sourceName, due, body.reminders_on ? 1 : 0, sendAt, sendAt, rows.length, userId, now, firm.id, since, rows.length),
   ];
   for (let at = 0; at < rows.length; at += CHUNK) {
     const chunk = rows.slice(at, at + CHUNK);
@@ -278,7 +280,25 @@ batches.post("/batches/:id/cancel", async (c) => {
   return c.json({ ok: true, unsent: left.meta.changes });
 });
 
-type Due = { id: string; firm_id: string };
+type Due = { id: string; firm_id: string; blocked_since: number | null };
+
+// the first 9:00 of the next day, when earlier emails have left the 24 hour window
+const tomorrow = (now: number, tz: string) => atHour(addDays(dayOf(now, tz), 1), 9, tz);
+// a batch invite always takes slot 1, so a repeat after a failed write finds the row the first send made; invites sent by hand number from 1 as well but only on requests the batch skips
+const INVITE_SEQ = 1;
+const LEASE = 10 * MINUTE;
+const BLOCKED_WAIT = 6 * HOUR;
+const GIVE_UP = 30 * DAY;
+
+// the account has not been able to send for a long time: what was not sent stays as drafts
+async function stopBatch(db: D1Database, b: Due, reason: string, now: number) {
+  await db.batch([
+    db.prepare("UPDATE batches SET status = 'cancelled', finished_at = ?, stop_reason = ? WHERE firm_id = ? AND id = ? AND status IN ('scheduled', 'sending')").bind(now, reason, b.firm_id, b.id),
+    db
+      .prepare("UPDATE batch_items SET state = 'cancelled' WHERE firm_id = ? AND batch_id = ? AND state = 'pending' AND EXISTS (SELECT 1 FROM batches WHERE firm_id = ? AND id = ? AND status = 'cancelled' AND finished_at = ?)")
+      .bind(b.firm_id, b.id, b.firm_id, b.id, now),
+  ]);
+}
 
 type Row = {
   request_id: string;
@@ -304,20 +324,36 @@ export async function runBatches(env: Env, now = Date.now()) {
   for (const region of regionIds) {
     const { db } = regionOf(env, region);
     const { results } = await db
-      .prepare("SELECT id, firm_id FROM batches WHERE status IN ('scheduled', 'sending') AND send_at <= ? ORDER BY send_at, created_at LIMIT 50")
+      .prepare("SELECT id, firm_id, blocked_since FROM batches WHERE status IN ('scheduled', 'sending') AND next_try_at <= ? ORDER BY next_try_at, created_at LIMIT 50")
       .bind(now)
       .all<Due>();
     const senders = await sendersOf(env, region, results.map((b) => b.firm_id));
     let budget = PER_TICK;
     const full = new Set<string>();
+    // a batch that cannot go now is put off, so it stops taking one of the 50 places in every run
+    const later = (b: Due, at: number, blocked = false) =>
+      db
+        .prepare("UPDATE batches SET next_try_at = ?, blocked_since = CASE WHEN ? THEN COALESCE(blocked_since, ?) ELSE NULL END WHERE firm_id = ? AND id = ? AND status IN ('scheduled', 'sending')")
+        .bind(at, blocked ? 1 : 0, now, b.firm_id, b.id)
+        .run();
     for (const b of results) {
       if (budget <= 0) break;
-      const sender = senders.get(b.firm_id);
-      if (!canSend(sender, now) || !inHours(now, sender.tz) || full.has(b.firm_id)) continue;
       try {
-        const left = await sendSome(env, region, db, b, sender, budget, now);
-        budget -= left.used;
-        if (left.full) full.add(b.firm_id);
+        const sender = senders.get(b.firm_id);
+        if (!canSend(sender, now)) {
+          if (b.blocked_since !== null && now - b.blocked_since > GIVE_UP) await stopBatch(db, b, "cannot_send", now);
+          else await later(b, now + BLOCKED_WAIT, true);
+        } else if (!inHours(now, sender.tz)) {
+          await later(b, nextOpening(now, sender.tz));
+        } else if (full.has(b.firm_id)) {
+          await later(b, tomorrow(now, sender.tz));
+        } else {
+          const left = await sendSome(env, region, db, b, sender, budget, now);
+          budget -= left.used;
+          if (left.full) full.add(b.firm_id);
+          // the end of the queue for the next run, or a day out when the daily limit was reached
+          await later(b, left.full ? tomorrow(now, sender.tz) : left.busy ? now + 15 * MINUTE : now);
+        }
       } catch (e) {
         log(e);
       }
@@ -327,7 +363,7 @@ export async function runBatches(env: Env, now = Date.now()) {
 
 async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender: Sender & { address: string; owner_email: string }, budget: number, now: number) {
   const claim = await db.prepare("UPDATE batches SET status = 'sending' WHERE firm_id = ? AND id = ? AND status IN ('scheduled', 'sending')").bind(b.firm_id, b.id).run();
-  if (!claim.meta.changes) return { used: 0, full: false };
+  if (!claim.meta.changes) return { used: 0, full: false, busy: false };
   const { results } = await db
     .prepare(
       `SELECT i.request_id, i.client_id, i.tries, i.linked_at, r.title, r.deadline, r.status, r.deleted_at, cl.name AS client_name, cl.email, cl.email_ok_at, cl.email_stop_at, cl.deleted_at AS client_deleted
@@ -339,6 +375,19 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
 
   const settle = (r: Row, state: string, reason: string) =>
     db.prepare("UPDATE batch_items SET state = ?, reason = ? WHERE firm_id = ? AND request_id = ? AND state = 'pending'").bind(state, reason, b.firm_id, r.request_id).run();
+
+  // a row is held for a while by the run that sends it, and only while the batch is still sending
+  const hold = async (r: Row) =>
+    (
+      await db
+        .prepare(
+          `UPDATE batch_items SET reason = ? WHERE firm_id = ? AND request_id = ? AND state = 'pending'
+           AND (reason IS NULL OR reason NOT LIKE 'sending:%' OR CAST(substr(reason, 9) AS INTEGER) < ?)
+           AND EXISTS (SELECT 1 FROM batches WHERE firm_id = ? AND id = ? AND status = 'sending')`,
+        )
+        .bind(`sending:${now}`, b.firm_id, r.request_id, now - LEASE, b.firm_id, b.id)
+        .run()
+    ).meta.changes > 0;
 
   let used = 0;
   let full = false;
@@ -358,6 +407,9 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
       } else if (!(await hasRoom(env, db, b.firm_id, r.request_id, now))) {
         full = true;
         break;
+      } else if (!(await hold(r))) {
+        // another run has this row, or the batch was stopped since it was read
+        continue;
       } else {
         if (r.status === "draft") {
           await db.batch([
@@ -375,7 +427,7 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
         const url = await linkUrl(env, db, region, b.firm_id, r.request_id, r.deadline, now);
         const { outcome } = await deliver(
           env,
-          { db, firmId: b.firm_id, requestId: r.request_id, clientId: r.client_id, kind: "invite", seq: null },
+          { db, firmId: b.firm_id, requestId: r.request_id, clientId: r.client_id, kind: "invite", seq: INVITE_SEQ },
           {
             kind: "invite",
             sender: senderName(sender),
@@ -402,13 +454,14 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
               .bind(randomId(), b.firm_id, now, r.request_id, JSON.stringify({ request: r.request_id, batch: b.id })),
           ]);
         } else if (outcome === "capped") {
+          await db.prepare("UPDATE batch_items SET reason = NULL WHERE firm_id = ? AND request_id = ? AND state = 'pending'").bind(b.firm_id, r.request_id).run();
           full = true;
           break;
         } else {
           // provider trouble: a few more runs may get it through
           const tries = r.tries + 1;
           await db
-            .prepare("UPDATE batch_items SET tries = ?, state = CASE WHEN ? >= ? THEN 'failed' ELSE state END, reason = CASE WHEN ? >= ? THEN 'send_failed' ELSE reason END WHERE firm_id = ? AND request_id = ? AND state = 'pending'")
+            .prepare("UPDATE batch_items SET tries = ?, state = CASE WHEN ? >= ? THEN 'failed' ELSE state END, reason = CASE WHEN ? >= ? THEN 'send_failed' ELSE NULL END WHERE firm_id = ? AND request_id = ? AND state = 'pending'")
             .bind(tries, tries, MAX_TRIES, tries, MAX_TRIES, b.firm_id, r.request_id)
             .run();
           if (outcome === "later") {
@@ -429,5 +482,5 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
     )
     .bind(now, b.firm_id, b.id, b.firm_id, b.id)
     .run();
-  return { used, full: full || busy };
+  return { used, full, busy };
 }

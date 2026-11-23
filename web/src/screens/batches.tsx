@@ -145,7 +145,7 @@ export function BatchPage({ id }: { id: string }) {
           {me.data && <p class="muted">{t(me.data.firm.subscribed ? "batch.limit_paid" : "batch.limit_trial")}</p>}
         </div>
       )}
-      {b.status === "cancelled" && <p class="muted">{t("batch.cancelled_note", { n: b.cancelled })}</p>}
+      {b.status === "cancelled" && <p class="muted">{t(b.stop_reason ? "batch.stopped_note" : "batch.cancelled_note", { n: b.cancelled })}</p>}
 
       <div class="chips" role="group" aria-label={t("batch.filter_label")}>
         <button class="chip" aria-pressed={filter === "all"} onClick={() => set({ show: "" })}>

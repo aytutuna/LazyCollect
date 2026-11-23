@@ -164,6 +164,7 @@ export type Batch = {
   status: "scheduled" | "sending" | "done" | "cancelled";
   total: number;
   limited_at: number | null;
+  stop_reason: string | null;
   created_at: number;
   finished_at: number | null;
   pending: number;

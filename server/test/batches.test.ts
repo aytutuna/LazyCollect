@@ -297,7 +297,8 @@ describe("sending a batch", () => {
     expect(invites(sent)).toHaveLength(0);
     expect((await one(batch.id, cookie)).pending).toBe(2);
     await env.CONTROL.prepare("UPDATE firms SET address = ?").bind(ADDRESS).run();
-    await runBatches(env, NOW);
+    // the batch was put off for six hours
+    await runBatches(env, NOW + 7 * HOUR);
     expect(invites(sent)).toHaveLength(2);
   });
 
@@ -456,5 +457,117 @@ describe("a batch with questions", () => {
     expect(await one(batch.id, cookie)).toMatchObject({ complete: 1, review: 0 });
     const rows = async (filter: string) => (await (await api(`/api/batches/${batch.id}/rows?filter=${filter}`, { cookie })).json<any>()).rows.length;
     expect([await rows("complete"), await rows("review")]).toEqual([1, 0]);
+  });
+});
+
+describe("batches that cannot go out", () => {
+  const blank = (email: string) =>
+    env.CONTROL.prepare("UPDATE firms SET address = NULL WHERE id = (SELECT firm_id FROM users WHERE email = ?)").bind(email).run();
+
+  it("does not let blocked batches crowd out other accounts", async () => {
+    const stuck = await ready(1, "stuck@firm.test");
+    for (let i = 0; i < 52; i++) expect((await create(stuck.cookie, body(stuck.ids))).status).toBe(201);
+    await blank("stuck@firm.test");
+    const other = await ready(1, "other@firm.test");
+    const sent = mockOutbound();
+    const mine = await (await create(other.cookie, body(other.ids))).json<any>();
+    await runBatches(env, NOW);
+    await runBatches(env, NOW + MINUTE);
+    expect(sent.filter((m) => m.subject.startsWith("Documents requested"))).toHaveLength(1);
+    expect((await one(mine.id, other.cookie)).status).toBe("done");
+    const waiting = await q("SELECT COUNT(*) AS n FROM batches WHERE next_try_at > ?", NOW + MINUTE);
+    expect(waiting[0].n).toBe(52);
+  });
+
+  it("waits for the next morning outside sending hours", async () => {
+    const { cookie, ids } = await ready(1);
+    const sent = mockOutbound();
+    const batch = await (await create(cookie, body(ids))).json<any>();
+    await runBatches(env, at(2027, 1, 12, 22));
+    expect(sent).toHaveLength(0);
+    expect((await q("SELECT next_try_at FROM batches WHERE id = ?", batch.id))[0].next_try_at).toBe(at(2027, 1, 13, 9));
+    await runBatches(env, at(2027, 1, 13, 9, 1));
+    expect((await one(batch.id, cookie)).status).toBe("done");
+  });
+
+  it("tries again in six hours when the account cannot send, then stops after 30 days", async () => {
+    const { cookie, ids } = await ready(2);
+    const sent = mockOutbound();
+    const batch = await (await create(cookie, body(ids))).json<any>();
+    await blank("owner@firm.test");
+    await runBatches(env, NOW);
+    expect((await q("SELECT next_try_at, blocked_since FROM batches WHERE id = ?", batch.id))[0]).toEqual({ next_try_at: NOW + 6 * HOUR, blocked_since: NOW });
+    await runBatches(env, NOW + 29 * DAY);
+    expect((await one(batch.id, cookie)).status).toBe("scheduled");
+    await runBatches(env, NOW + 31 * DAY);
+    expect(await one(batch.id, cookie)).toMatchObject({ status: "cancelled", stop_reason: "cannot_send", cancelled: 2, pending: 0 });
+    expect(sent).toHaveLength(0);
+    expect((await q("SELECT status FROM requests")).map((r) => r.status)).toEqual(["draft", "draft"]);
+  });
+});
+
+describe("sending one invite", () => {
+  it("leaves a row that another run holds, and takes it again once the hold is old", async () => {
+    const { cookie, ids } = await ready(2);
+    const sent = mockOutbound();
+    const batch = await (await create(cookie, body(ids))).json<any>();
+    const [held] = await q("SELECT request_id FROM batch_items ORDER BY position LIMIT 1");
+    await env.DB_NA.prepare("UPDATE batch_items SET reason = ? WHERE request_id = ?").bind(`sending:${NOW}`, held.request_id).run();
+    await runBatches(env, NOW + MINUTE);
+    expect(sent.filter((m) => m.subject.startsWith("Documents requested"))).toHaveLength(1);
+    expect((await one(batch.id, cookie)).status).toBe("sending");
+    await env.DB_NA.prepare("UPDATE batches SET next_try_at = 0").run();
+    await runBatches(env, NOW + 11 * MINUTE);
+    expect(sent.filter((m) => m.subject.startsWith("Documents requested"))).toHaveLength(2);
+    expect((await one(batch.id, cookie)).status).toBe("done");
+  });
+
+  it("does not email twice when the row was not marked sent after the provider took it", async () => {
+    const { cookie, ids } = await ready(1);
+    const sent = mockOutbound();
+    const batch = await (await create(cookie, body(ids))).json<any>();
+    await runBatches(env, NOW);
+    expect(sent.filter((m) => m.subject.startsWith("Documents requested"))).toHaveLength(1);
+    await env.DB_NA.prepare("UPDATE batch_items SET state = 'pending', reason = NULL, sent_at = NULL").run();
+    await env.DB_NA.prepare("UPDATE batches SET status = 'scheduled', finished_at = NULL, next_try_at = 0").run();
+    await runBatches(env, NOW + MINUTE);
+    expect(sent.filter((m) => m.subject.startsWith("Documents requested"))).toHaveLength(1);
+    expect((await one(batch.id, cookie)).status).toBe("done");
+    expect(await q("SELECT seq FROM messages WHERE kind = 'invite'")).toEqual([{ seq: 1 }]);
+  });
+});
+
+describe("a batch's deadline", () => {
+  it("has to come after the time the emails go out", async () => {
+    const { cookie, ids } = await ready(1);
+    const later = new Date(Date.now() + 30 * DAY).toISOString().slice(0, 11) + "09:00";
+    const res = await create(cookie, body(ids, { send_at: later, deadline: inDays(29) }));
+    expect([res.status, (await res.json<any>()).error]).toEqual([400, "deadline_before_send"]);
+    expect((await create(cookie, body(ids, { send_at: later, deadline: inDays(40) }))).status).toBe(201);
+  });
+
+  it("is checked for repeats against the send time too", async () => {
+    const { cookie, ids } = await ready(1);
+    const src = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: ids[0], title: "2026 taxes", deadline: inDays(30), items: [{ label: "A", required: true }] } })).json<any>();
+    await env.DB_NA.prepare("UPDATE requests SET deadline = ? WHERE id = ?").bind(Date.now() - 300 * DAY, src.id).run();
+    const res = await create(cookie, { request_ids: [src.id], title: "Again", reminders_on: true, send_at: new Date(Date.now() + 80 * DAY).toISOString().slice(0, 11) + "09:00" });
+    expect([res.status, (await res.json<any>()).error]).toEqual([400, "deadline_before_send"]);
+  });
+});
+
+describe("purging a batch", () => {
+  it("removes the batch row with its last purged request", async () => {
+    const { cookie, ids } = await ready(2);
+    await create(cookie, body(ids));
+    const reqs = await q("SELECT id FROM requests");
+    await api(`/api/requests/${reqs[0].id}`, { method: "DELETE", cookie });
+    await env.DB_NA.prepare("UPDATE requests SET deleted_at = 1 WHERE id = ?").bind(reqs[0].id).run();
+    await purgeExpired(env, Date.now());
+    expect(await q("SELECT 1 FROM batches")).toHaveLength(1);
+    await api(`/api/requests/${reqs[1].id}`, { method: "DELETE", cookie });
+    await env.DB_NA.prepare("UPDATE requests SET deleted_at = 1").run();
+    await purgeExpired(env, Date.now());
+    expect(await q("SELECT 1 FROM batches")).toHaveLength(0);
+    expect(await q("SELECT 1 FROM batch_items")).toHaveLength(0);
   });
 });
