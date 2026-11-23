@@ -159,6 +159,8 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
       },
       now,
     );
+    // over the daily cap: not sent, so it stays due and is looked at again later
+    if (outcome === "capped") return move(now + HOUR);
     if (outcome === "later") busy = true;
     if (outcome === "failed" || outcome === "busy" || outcome === "later") return;
     await db
@@ -213,6 +215,7 @@ async function rejectedPass(env: Env, region: Region, db: D1Database, now: numbe
       },
       now,
     );
+    if (outcome === "capped") return hold(now + HOUR);
     if (outcome === "later") busy = true;
     if (outcome === "failed" || outcome === "busy" || outcome === "later") return;
     await db

@@ -477,6 +477,8 @@ requests.post("/requests/:id/link", async (c) => {
       now,
     );
     if (outcome === "sent") return c.json({ url, emailed: true });
+    // the link above is already made, so it comes back for the person to share another way
+    if (outcome === "capped") return c.json({ error: "email_limit", url }, 429);
   } catch (e) {
     console.error(e instanceof Error ? e.message : "error");
   }

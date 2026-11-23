@@ -1,11 +1,16 @@
 import { Transient, escapeHtml, sendMail } from "./email";
 import { isRegion, type Region } from "./regions";
-import { MINUTE, hmac, randomId, sha256 } from "./util";
+import { DAY, MINUTE, hmac, randomId, sha256 } from "./util";
 
 export const TEMPLATE_VERSION = 1;
 
 const MAX_ATTEMPTS = 3;
 const STALE = 30 * MINUTE;
+
+// emails per account in any 24 hours, and invites per request; the shared sender key must not be a relay
+const TRIAL_DAILY = 50;
+const PAID_DAILY = 500;
+const INVITES_PER_REQUEST = 3;
 
 export type Kind = "invite" | "reminder" | "deadline" | "rejected";
 export type Missing = { label: string; required: boolean; reject_note: string | null };
@@ -102,9 +107,16 @@ ${p(`${escapeHtml(why)} <a href="${escapeHtml(l.unsubUrl)}" style="color:#666666
   return { subject, text, html };
 }
 
-export type Outcome = "sent" | "failed" | "later" | "done" | "busy" | "gave_up";
+// the key for an address in email_stops; clients' addresses are stored lowercased already
+export const stopHash = (env: Env, email: string) => hmac(env.HASH_KEY, `email-stop:${email.trim().toLowerCase()}`);
+
+export type Outcome = "sent" | "failed" | "later" | "done" | "busy" | "gave_up" | "capped";
 
 type Slot = { db: D1Database; firmId: string; requestId: string; clientId: string; kind: Kind; seq: number | null };
+
+// Counted inside the statement that claims the slot, so parallel sends can't pass a cap together; the slot itself is left out of the count.
+const ROOM = `(SELECT COUNT(*) FROM messages WHERE firm_id = ?2 AND status IN ('sent', 'sending') AND sent_at > ?10 AND NOT (request_id = ?3 AND kind = ?5 AND seq IS ?6)) < ?11
+  AND (?5 != 'invite' OR (SELECT COUNT(*) FROM messages WHERE firm_id = ?2 AND request_id = ?3 AND kind = 'invite' AND status IN ('sent', 'sending') AND sent_at > ?10 AND seq IS NOT ?6) < ${INVITES_PER_REQUEST})`;
 
 // The row goes in as 'sending' before the provider is called; the unique key lets only one run claim a slot.
 export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now()): Promise<{ outcome: Outcome; seq: number }> {
@@ -112,16 +124,19 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
   const { subject, text, html } = render(l);
   const hash = await sha256(`${subject}\n${text}\n${html}`);
   const id = randomId();
+  const paid = await env.CONTROL.prepare("SELECT stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<{ stripe_subscription_id: string | null }>();
+  // both statements below read the same numbered values
+  const args = [id, firmId, requestId, slot.clientId, kind, slot.seq, TEMPLATE_VERSION, hash, now, now - DAY, paid?.stripe_subscription_id ? PAID_DAILY : TRIAL_DAILY, now - STALE];
   const inserted = await db
     .prepare(
       `INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at)
        SELECT ?1, ?2, ?3, ?4, 'email', ?5,
          COALESCE(?6, (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE firm_id = ?2 AND request_id = ?3 AND kind = ?5 AND channel = 'email')),
          ?7, ?8, 'sending', 1, ?9
-       WHERE true
+       WHERE ${ROOM}
        ON CONFLICT (firm_id, request_id, kind, seq, channel) DO NOTHING`,
     )
-    .bind(id, firmId, requestId, slot.clientId, kind, slot.seq, TEMPLATE_VERSION, hash, now)
+    .bind(...args.slice(0, 11))
     .run();
 
   let messageId = id;
@@ -131,11 +146,11 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
   } else {
     const retried = await db
       .prepare(
-        `UPDATE messages SET status = 'sending', attempts = attempts + 1, body_hash = ?, error = NULL, sent_at = ?
-         WHERE firm_id = ? AND request_id = ? AND kind = ? AND seq = ? AND channel = 'email' AND attempts < ${MAX_ATTEMPTS}
-         AND (status = 'failed' OR (status = 'sending' AND sent_at < ?)) RETURNING id`,
+        `UPDATE messages SET status = 'sending', attempts = attempts + 1, body_hash = ?8, error = NULL, sent_at = ?9
+         WHERE firm_id = ?2 AND request_id = ?3 AND kind = ?5 AND seq = ?6 AND channel = 'email' AND attempts < ${MAX_ATTEMPTS}
+         AND (status = 'failed' OR (status = 'sending' AND sent_at < ?12)) AND ${ROOM} RETURNING id`,
       )
-      .bind(hash, now, firmId, requestId, kind, slot.seq, now - STALE)
+      .bind(...args)
       .first<{ id: string }>();
     if (!retried) {
       // a last attempt that never reported back is given up on, or its request would stay due forever
@@ -147,9 +162,13 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
         .bind(firmId, requestId, kind, slot.seq, now - STALE)
         .run();
       const row = await db
-        .prepare("SELECT status FROM messages WHERE firm_id = ? AND request_id = ? AND kind = ? AND seq = ? AND channel = 'email'")
+        .prepare("SELECT status, attempts, sent_at FROM messages WHERE firm_id = ? AND request_id = ? AND kind = ? AND seq = ? AND channel = 'email'")
         .bind(firmId, requestId, kind, slot.seq)
-        .first<{ status: string }>();
+        .first<{ status: string; attempts: number; sent_at: number }>();
+      // nothing was inserted, or a row that could have been tried again was left alone: only the cap says no to those
+      if (!row || (row.attempts < MAX_ATTEMPTS && (row.status === "failed" || (row.status === "sending" && row.sent_at < now - STALE)))) {
+        return { outcome: "capped", seq: slot.seq! };
+      }
       const outcome = row?.status === "sent" ? "done" : row?.status === "failed" ? "gave_up" : "busy";
       return { outcome, seq: slot.seq! };
     }

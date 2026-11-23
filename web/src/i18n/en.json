@@ -57,6 +57,7 @@
   "error.locked": "This request is closed, so it can no longer be changed.",
   "error.has_upload": "This item already has a file, so it cannot be removed.",
   "error.too_many_items": "A request can have up to 100 items.",
+  "error.email_limit": "Too many emails today. Try again tomorrow.",
   "error.firm_profile": "Add your name or business name in Settings first.",
   "error.plan_member": "The plan has ended. Ask the account owner to subscribe.",
   "error.plan_past_due": "Your payment did not go through and the grace period has ended. Use Update payment in Settings to send new links or change deadlines.",
