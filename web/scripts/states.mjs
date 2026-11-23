@@ -185,6 +185,14 @@ export const states = [
     },
   },
   {
+    name: "scanner-whiteboard",
+    view: base,
+    async run(page) {
+      await scanPhoto(page);
+      await page.getByRole("radio", { name: "Whiteboard" }).check();
+    },
+  },
+  {
     // the corner editor, reached from the page that was found
     name: "scanner-corners",
     view: base,

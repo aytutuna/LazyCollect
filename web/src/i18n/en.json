@@ -956,6 +956,7 @@
   "scan.look": "Look",
   "scan.filter_original": "Original",
   "scan.filter_enhanced": "Enhanced",
+  "scan.filter_whiteboard": "Whiteboard",
   "scan.filter_gray": "Grayscale",
   "scan.filter_bw": "Black & white",
   "scan.adjust": "Adjust corners",

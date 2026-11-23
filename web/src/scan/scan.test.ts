@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { SIDE, acceptable, decodeHeatmap, modelInput } from "./corners";
-import { applyFilter } from "./filters";
 import { boxBlur, mapPixels, photoOf, textPage } from "./fixtures";
 import { aspect, fromCorners, isConvex, warp, type Pixels, type Quad } from "./geometry";
 import { frameIssues, pageIssues } from "./quality";
@@ -145,38 +144,5 @@ describe("quality", () => {
     expect(frameIssues([[0, 100], [700, 100], [700, 500], [0, 500]], 0.9, 800, 600)).toEqual(["cut"]);
     expect(frameIssues([[100, 100], [700, 100], [700, 500], [100, 500]], 0.55, 800, 600)).toEqual(["cut"]);
     expect(frameIssues([[300, 200], [500, 200], [500, 400], [300, 400]], null, 800, 600)).toEqual(["small"]);
-  });
-});
-
-describe("filters", () => {
-  // a page lit from one side: the paper runs from 235 down to 110
-  const lit = mapPixels(textPage(600, 800), (v, x) => (v * (235 - (x / 600) * 125)) / 255);
-  const at = (img: Pixels, x: number, y: number) => img.data[(y * img.width + x) * 4];
-
-  it("evens the lighting and whitens the paper", () => {
-    const flat = applyFilter(lit, "enhanced");
-    expect(at(flat, 560, 790)).toBeGreaterThan(235);
-    expect(at(flat, 20, 790)).toBeGreaterThan(235);
-    expect(at(lit, 560, 790)).toBeLessThan(130);
-  });
-
-  it("keeps the ink dark in every filter", () => {
-    for (const f of ["enhanced", "gray", "bw"] as const) {
-      const img = applyFilter(lit, f);
-      let darkest = 255;
-      for (let y = 80; y < 94; y++) for (let x = 80; x < 400; x++) darkest = Math.min(darkest, at(img, x, y));
-      expect(darkest).toBeLessThan(90);
-    }
-  });
-
-  it("gives black and white only two levels", () => {
-    const bw = applyFilter(lit, "bw");
-    let other = 0;
-    for (let i = 0; i < bw.data.length; i += 4) if (bw.data[i] !== 0 && bw.data[i] !== 255) other++;
-    expect(other).toBe(0);
-  });
-
-  it("leaves the original alone", () => {
-    expect(applyFilter(lit, "original")).toBe(lit);
   });
 });

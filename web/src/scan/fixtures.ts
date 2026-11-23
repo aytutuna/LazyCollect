@@ -81,3 +81,33 @@ export function mapPixels(img: Pixels, f: (v: number, x: number, y: number) => n
   }
   return { width: img.width, height: img.height, data };
 }
+
+// Lazy Scan's shadowed test page (EnhancerPages.shadowed): paper lit from 100 % at the top left to 37 % at the bottom right,
+// ruled print, a red stamp and optionally a dark picture, so its clean-up can be compared byte for byte with the app's.
+export function shadowedPage(stamp = true, picture = false, width = 240, height = 320): Pixels {
+  const paper = [232, 226, 212];
+  const ink = [40, 38, 44];
+  const red = [196, 48, 44];
+  const dark = [70, 74, 80];
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let c = paper;
+      if (x >= 24 && x < width - 24 && y >= 70 && y < height - 30 && (y - 70) % 12 < 3 && Math.floor((x - 24) / 18) % 5 !== 4) c = ink;
+      if (stamp && x >= 150 && x < 200 && y >= 24 && y < 52) c = red;
+      if (picture && x >= 40 && x < 140 && y >= 200 && y < 290) c = dark;
+      const s = 255 - Math.floor((130 * x) / (width - 1)) - Math.floor((30 * y) / (height - 1));
+      const o = (y * width + x) * 4;
+      for (let k = 0; k < 3; k++) data[o + k] = Math.floor((c[k] * s + 127) / 255);
+      data[o + 3] = 255;
+    }
+  }
+  return { width, height, data };
+}
+
+// FNV-1a over the RGBA bytes, the page checksum Lazy Scan's tests use
+export function checksum(img: Pixels): number {
+  let hash = 2166136261;
+  for (const b of img.data) hash = Math.imul(hash ^ b, 16777619) >>> 0;
+  return hash;
+}
