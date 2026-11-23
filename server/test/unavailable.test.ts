@@ -75,6 +75,15 @@ describe("client says they do not have a document", () => {
     expect(await audits()).toContain("client:item.available");
   });
 
+  it("goes back to sent back when it was sent back with reasons only", async () => {
+    const { req, path } = await openRequest();
+    const passport = req.items[0].id;
+    await env.DB_NA.prepare(`UPDATE items SET status = 'rejected', reject_reasons = '["blurry"]' WHERE id = ?`).bind(passport).run();
+    await mark(path, passport);
+    await unmark(path, passport);
+    expect(await status(passport)).toBe("rejected");
+  });
+
   it("is submitted by an upload to the item", async () => {
     const { req, path } = await openRequest();
     const passport = req.items[0].id;

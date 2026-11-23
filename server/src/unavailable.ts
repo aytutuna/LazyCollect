@@ -47,7 +47,7 @@ async function clientSide(c: Context<AppEnv>, mark: boolean) {
             `UPDATE items SET unavailable_note = NULL, unavailable_at = NULL,
                status = CASE
                  WHEN EXISTS (SELECT 1 FROM files WHERE firm_id = items.firm_id AND item_id = items.id AND state = 'live' AND deleted_at IS NULL AND uploaded_at > COALESCE(items.reviewed_at, 0)) THEN 'submitted'
-                 WHEN reject_note IS NOT NULL THEN 'rejected'
+                 WHEN reject_note IS NOT NULL OR reject_reasons IS NOT NULL THEN 'rejected'
                  ELSE 'empty' END
              WHERE firm_id = ? AND request_id = ? AND id = ? AND kind = 'file' AND status IN (${from}) AND ${OPEN}`,
           )
