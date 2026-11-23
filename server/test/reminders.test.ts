@@ -1,5 +1,5 @@
 import { env, exports } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runReminders } from "../src/reminders";
 import { addDays, atHour, dayOf, nextOpening, nextReminder } from "../src/tz";
 import { unsubUrl } from "../src/mail";
@@ -640,5 +640,206 @@ describe("timezone setting", () => {
     expect((await (await api("/api/firm", { cookie })).json<any>()).tz).toBe("America/Vancouver");
     expect((await api("/api/firm", { method: "PATCH", cookie, body: { tz: "Mars/Base" } })).status).toBe(400);
     expect((await api("/api/firm", { method: "PATCH", cookie, body: { tz: 5 } })).status).toBe(400);
+  });
+});
+
+describe("email caps", () => {
+  // sent mail for the account, as if the cron had been busy; seq starts high so it never meets a real slot
+  const fill = (requestId: string, clientId: string, count: number, sentAt: number, from = 100) =>
+    env.DB_NA.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${count})
+       INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at)
+       SELECT lower(hex(randomblob(16))), (SELECT firm_id FROM requests WHERE id = ?1), ?1, ?2, 'email', 'rejected', ?4 + i, 1, 'x', 'sent', 1, ?3 FROM n`,
+    )
+      .bind(requestId, clientId, sentAt, from)
+      .run();
+
+  it("allows three invites per request in 24 hours, then answers 429 with the link", async () => {
+    const { cookie, req } = await ready();
+    const sent = mockOutbound();
+    for (let i = 0; i < 3; i++) expect((await invite(cookie, req.id)).status).toBe(200);
+    const res = await invite(cookie, req.id);
+    expect(res.status).toBe(429);
+    const body = await res.json<any>();
+    expect(body.error).toBe("email_limit");
+    expect(body.url).toContain("/c/na_");
+    expect(sent).toHaveLength(3);
+    expect((await messages()).filter((m) => m.kind === "invite")).toHaveLength(3);
+    const old = Date.now() - 25 * HOUR;
+    await env.DB_NA.prepare("UPDATE messages SET sent_at = ?").bind(old).run();
+    expect((await invite(cookie, req.id)).status).toBe(200);
+  });
+
+  it("counts failed invites for nothing", async () => {
+    const { cookie, req } = await ready();
+    mockOutbound(true, 400);
+    for (let i = 0; i < 4; i++) expect((await invite(cookie, req.id)).status).toBe(200);
+    const sent = mockOutbound();
+    expect((await invite(cookie, req.id)).status).toBe(200);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("stops a trial account at 50 emails a day and a subscribed one at 500", async () => {
+    const { cookie, req, client } = await ready();
+    mockOutbound();
+    await fill(req.id, client.id, 50, Date.now() - HOUR);
+    const res = await invite(cookie, req.id);
+    expect(res.status).toBe(429);
+    expect((await res.json<any>()).error).toBe("email_limit");
+    await env.CONTROL.prepare("UPDATE firms SET stripe_subscription_id = 'sub_1'").run();
+    expect((await invite(cookie, req.id)).status).toBe(200);
+    await fill(req.id, client.id, 450, Date.now() - HOUR, 1000);
+    expect((await invite(cookie, req.id)).status).toBe(429);
+  });
+
+  it("leaves a capped reminder due and sends it once there is room", async () => {
+    const { cookie, req, client } = await ready();
+    const sent = mockOutbound();
+    await invite(cookie, req.id);
+    sent.length = 0;
+    await pin(req.id, at(2027, 1, 5, 10));
+    const now = at(2027, 1, 5, 10, 5);
+    await fill(req.id, client.id, 49, now - HOUR);
+    await runReminders(env, now);
+    expect(sent).toHaveLength(1);
+    await pin(req.id, at(2027, 1, 12, 10), 1);
+    sent.length = 0;
+    const later = at(2027, 1, 12, 10, 5);
+    await fill(req.id, client.id, 50, later - HOUR, 1000);
+    await runReminders(env, later);
+    expect(sent).toHaveLength(0);
+    const row = await requestRow(req.id);
+    expect(row.reminder_seq).toBe(1);
+    expect(row.next_reminder_at).toBe(later + HOUR);
+    expect((await messages()).filter((m) => m.kind === "reminder")).toHaveLength(1);
+    await env.DB_NA.prepare("UPDATE messages SET sent_at = ? WHERE seq >= 100").bind(later - 25 * HOUR).run();
+    await runReminders(env, later + HOUR + MINUTE);
+    expect(sent).toHaveLength(1);
+    expect((await requestRow(req.id)).reminder_seq).toBe(2);
+  });
+
+  it("does not let a capped account's rejection emails hold up the queue", async () => {
+    const o = await openRequest();
+    await api("/api/firm", { method: "PATCH", cookie: o.cookie, body: { address: ADDRESS } });
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'active'").run();
+    const item = o.req.items[0].id;
+    await upload(o.path, item, pdf(500));
+    await review(o.cookie, o.req.id, item, { decision: "reject", note: "Blurry" });
+    const sent = mockOutbound();
+    const client = (await env.DB_NA.prepare("SELECT client_id FROM requests").first<any>()).client_id;
+    const day = addDays(dayOf(Date.now(), TZ), 1);
+    const now = atHour(day, 11, TZ);
+    await env.DB_NA.prepare("UPDATE requests SET reject_mark_at = ?").bind(now - HOUR).run();
+    await env.DB_NA.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 50)
+       INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at)
+       SELECT lower(hex(randomblob(16))), (SELECT firm_id FROM requests), ?1, ?2, 'email', 'rejected', 100 + i, 1, 'x', 'sent', 1, ?3 FROM n`,
+    )
+      .bind(o.req.id, client, now - HOUR)
+      .run();
+    await runReminders(env, now);
+    expect(sent.filter((m) => m.subject.startsWith("Please resend"))).toHaveLength(0);
+    expect((await requestRow(o.req.id)).reject_mark_at).toBe(now + HOUR - 10 * MINUTE);
+  });
+});
+
+describe("unsubscribe by address", () => {
+  async function stopped() {
+    const o = await ready();
+    const sent = mockOutbound();
+    await invite(o.cookie, o.req.id);
+    const link = sent[0].text.match(/https:\/\/\S+\/u\/\S+/)![0];
+    const res = await exports.default.fetch(`https://collect.alazy.app${new URL(link).pathname}`, { method: "POST", headers: { "CF-Connecting-IP": "198.51.100.7" } });
+    expect(res.status).toBe(200);
+    return o;
+  }
+
+  const again = async (cookie: string, email: string) => {
+    const client = await (await api("/api/clients", { method: "POST", cookie, body: { name: "Amy again", email, contact_ok: true } })).json<any>();
+    const req = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "2026 taxes", deadline: Date.now() + 40 * DAY, items: [{ label: "T4", required: true }] } })).json<any>();
+    return { client, req };
+  };
+
+  it("keeps a recreated client with the same address from being mailed", async () => {
+    const { cookie } = await stopped();
+    const { req } = await again(cookie, "amy@mail.test");
+    const sent = mockOutbound();
+    const res = await invite(cookie, req.id);
+    expect(res.status).toBe(400);
+    expect((await res.json<any>()).error).toBe("client_unsubscribed");
+    expect(sent).toHaveLength(0);
+  });
+
+  it("stops reminders for the new client row and keeps them in the cadence", async () => {
+    const { cookie } = await stopped();
+    const { req } = await again(cookie, "amy@mail.test");
+    const sent = mockOutbound();
+    // a link made some other way, so the request is open with no invite mail
+    expect((await invite(cookie, req.id, {})).status).toBe(200);
+    await pin(req.id, at(2027, 1, 5, 10));
+    await runReminders(env, at(2027, 1, 5, 10, 5));
+    expect(sent).toHaveLength(0);
+    expect((await requestRow(req.id)).next_reminder_at).toBe(at(2027, 1, 5, 10, 5) + DAY);
+  });
+
+  it("does not stop a different address, and stores no plain address", async () => {
+    const { cookie } = await stopped();
+    const { req } = await again(cookie, "other@mail.test");
+    mockOutbound();
+    expect((await invite(cookie, req.id)).status).toBe(200);
+    const rows = (await env.DB_NA.prepare("SELECT * FROM email_stops").all<any>()).results;
+    expect(rows).toHaveLength(1);
+    expect(JSON.stringify(rows)).not.toContain("amy@mail.test");
+    expect(rows[0].email_hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("rejection emails out of hours", () => {
+  it("moves a row to the next opening instead of leaving it at the head of the queue", async () => {
+    const o = await openRequest();
+    await api("/api/firm", { method: "PATCH", cookie: o.cookie, body: { address: ADDRESS } });
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'active'").run();
+    const item = o.req.items[0].id;
+    await upload(o.path, item, pdf(500));
+    await review(o.cookie, o.req.id, item, { decision: "reject", note: "Blurry" });
+    const sent = mockOutbound();
+    await env.CONTROL.prepare("UPDATE firms SET tz = ?").bind(TZ).run();
+    const night = at(2027, 1, 5, 22);
+    await env.DB_NA.prepare("UPDATE requests SET reject_mark_at = ?").bind(night - HOUR).run();
+    await runReminders(env, night);
+    const resend = () => sent.filter((m) => m.subject.startsWith("Please resend"));
+    expect(resend()).toHaveLength(0);
+    expect((await requestRow(o.req.id)).reject_mark_at).toBe(at(2027, 1, 6, 9) - 10 * MINUTE);
+    await runReminders(env, at(2027, 1, 6, 8, 59));
+    expect(resend()).toHaveLength(0);
+    await runReminders(env, at(2027, 1, 6, 9, 1));
+    expect(resend()).toHaveLength(1);
+  });
+});
+
+describe("a firm that stops being usable mid-run", () => {
+  it("sends no reminder to the request behind the one that was sent when the account closed", async () => {
+    const { cookie, req } = await ready();
+    const bo = await (await api("/api/clients", { method: "POST", cookie, body: { name: "Bo", email: "bo@mail.test", contact_ok: true } })).json<any>();
+    const second = await (
+      await api("/api/requests", { method: "POST", cookie, body: { client_id: bo.id, title: "Bo's taxes", deadline: Date.now() + 40 * DAY, items: [{ label: "T4", required: true }] } })
+    ).json<any>();
+    const sent = mockOutbound();
+    await invite(cookie, req.id);
+    await invite(cookie, second.id);
+    sent.length = 0;
+    await pin(req.id, at(2027, 1, 5, 10));
+    await pin(second.id, at(2027, 1, 5, 10, 1));
+    const spy = vi.mocked(globalThis.fetch);
+    const real = spy.getMockImplementation()!;
+    spy.mockImplementation(async (input, init) => {
+      const res = await real(input, init);
+      await env.CONTROL.prepare("UPDATE firms SET closed_at = ?").bind(1).run();
+      return res;
+    });
+    await runReminders(env, at(2027, 1, 5, 10, 5));
+    expect(sent.filter((m) => m.subject.startsWith("Reminder"))).toHaveLength(1);
+    expect((await requestRow(second.id)).next_reminder_at).toBe(at(2027, 1, 5, 10, 5) + DAY);
+    expect((await messages()).filter((m) => m.kind === "reminder")).toHaveLength(1);
   });
 });
