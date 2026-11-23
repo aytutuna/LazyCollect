@@ -38,7 +38,9 @@ const run = async ({ fixtures, base }) => {
     const { Detector } = await import("/src/scan/detector.ts");
     const { readPixels } = await import("/src/scan/pipeline.ts");
     const { acceptable } = await import("/src/scan/corners.ts");
-    const { fromCorners } = await import("/src/scan/geometry.ts");
+    const { fromCorners, warp, aspect } = await import("/src/scan/geometry.ts");
+    const { refine, trusted } = await import("/src/scan/refine.ts");
+    const { applyFilter } = await import("/src/scan/filters.ts");
     const detector = new Detector();
     const t0 = performance.now();
     const ok = await detector.ready;
@@ -59,12 +61,37 @@ const run = async ({ fixtures, base }) => {
       }
       const expected = fromCorners([f.topLeft, f.topRight, f.bottomRight, f.bottomLeft]);
       let worst = null;
+      let refined = null;
+      let support = null;
+      let refineMs = null;
+      let filterMs = null;
       if (found) {
         const got = fromCorners(found.quad.map((p) => [p[0] * img.naturalWidth, p[1] * img.naturalHeight]));
-        worst = Math.max(...got.map((p, i) => Math.hypot(p[0] - expected[i][0], p[1] - expected[i][1])));
+        const off = (q) => Math.max(...fromCorners(q).map((p, i) => Math.hypot(p[0] - expected[i][0], p[1] - expected[i][1])));
+        worst = off(got);
+        // the edge refinement on the full-size photo, and its cost on a 3200 px still (the photo drawn larger)
+        const photo = readPixels(img, img.naturalWidth, img.naturalHeight, 2000);
+        const r1 = refine(photo, got);
+        refined = off(trusted(r1, got));
+        support = r1.support;
+        const big = document.createElement("canvas");
+        big.width = 3200;
+        big.height = 1800;
+        big.getContext("2d").drawImage(img, 0, 0, 3200, 1800);
+        const bigPixels = readPixels(big, 3200, 1800, 3200);
+        const k = 3200 / img.naturalWidth;
+        const t = performance.now();
+        refine(bigPixels, got.map((p) => [p[0] * k, p[1] * k]));
+        refineMs = performance.now() - t;
+        // an enhanced page of 1600 px, as the review step makes it
+        const r = aspect(got, img.naturalWidth, img.naturalHeight);
+        const flat = warp(bigPixels, got.map((p) => [p[0] * k, p[1] * k]), r >= 1 ? 1600 : Math.round(1600 * r), r >= 1 ? Math.round(1600 / r) : 1600);
+        const t2 = performance.now();
+        applyFilter(flat, "enhanced");
+        filterMs = performance.now() - t2;
       }
       times.sort((a, b) => a - b);
-      out.runs.push({ file: f.file, found: Boolean(found), confidence: found?.confidence ?? null, accepted: found ? acceptable(found, frame.width, frame.height) : false, worst, median: times[6], first: times[0] });
+      out.runs.push({ file: f.file, found: Boolean(found), confidence: found?.confidence ?? null, accepted: found ? acceptable(found, frame.width, frame.height) : false, worst, refined, support, refineMs, filterMs, median: times[6], first: times[0] });
     }
     return out;
 };
@@ -81,9 +108,9 @@ for (let attempt = 0; !results; attempt++) {
 console.log(`model loaded: ${results.ok} in ${results.load.toFixed(0)} ms`);
 let failures = results.ok ? 0 : 1;
 for (const r of results.runs) {
-  const bad = !r.found || !r.accepted || r.worst > 25;
+  const bad = !r.found || !r.accepted || r.worst > 25 || r.refined > r.worst + 1;
   if (bad) failures++;
-  console.log(`${bad ? "FAIL" : "ok  "} ${r.file}: confidence ${r.confidence?.toFixed(2)}, worst corner off by ${r.worst?.toFixed(1)} px of 1280, inference median ${r.median.toFixed(0)} ms`);
+  console.log(`${bad ? "FAIL" : "ok  "} ${r.file}: confidence ${r.confidence?.toFixed(2)}, worst corner off by ${r.worst?.toFixed(1)} px of 1280 (${r.refined?.toFixed(1)} refined at support ${r.support?.toFixed(2)}, ${r.refineMs?.toFixed(0)} ms on a 3200 px still; enhanced filter ${r.filterMs?.toFixed(0)} ms at 1600 px), inference median ${r.median.toFixed(0)} ms`);
 }
 await browser.close();
 await server.close();

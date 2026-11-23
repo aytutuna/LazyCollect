@@ -7,7 +7,7 @@ import { acceptable } from "./corners";
 import { Detector } from "./detector";
 import { FILTERS, applyFilter, type Filter } from "./filters";
 import { rotate, scaled, type Pixels, type Quad } from "./geometry";
-import { draw, finalPage, flatPreview, pause, readPixels, release, shotOf, startQuad, toCanvas, type Shot } from "./pipeline";
+import { draw, finalPage, flatPreview, pause, refinedQuad, readPixels, release, shotOf, startQuad, toCanvas, type Shot } from "./pipeline";
 import { frameIssues, pageIssues, type Issue } from "./quality";
 
 type Page = {
@@ -123,7 +123,8 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
   }
 
   async function captured(c: Capture) {
-    if (c.quad) return place(c.shot, c.quad, c.confidence, null);
+    if (c.quad) setWorking(t("scan.working"));
+    if (c.quad) return place(c.shot, await refinedQuad(c.shot, c.quad), c.confidence, null);
     edit(c.shot, startQuad(c.shot.width, c.shot.height), null, null);
   }
 
@@ -143,7 +144,7 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
       bitmap.close();
       const found = await detector.detect({ ...small, data: small.data.slice() });
       setWorking("");
-      if (found && acceptable(found, small.width, small.height)) return place(shot, scaled(found.quad, shot.width, shot.height), found.confidence, null);
+      if (found && acceptable(found, small.width, small.height)) return place(shot, await refinedQuad(shot, scaled(found.quad, shot.width, shot.height)), found.confidence, null);
       edit(shot, startQuad(shot.width, shot.height), null, null);
     } catch {
       setWorking("");

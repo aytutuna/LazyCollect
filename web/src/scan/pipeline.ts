@@ -1,5 +1,6 @@
 import { applyFilter, type Filter } from "./filters";
 import { aspect, edge, rotate, warp, type Pixels, type Quad } from "./geometry";
+import { refine, trusted } from "./refine";
 
 // The photo a page is cut from is kept at no more than this on its long side
 export const SOURCE_MAX = 3200;
@@ -62,6 +63,15 @@ async function decode(shot: Shot): Promise<Pixels> {
     return readPixels(bitmap, bitmap.width, bitmap.height, SOURCE_MAX);
   } finally {
     bitmap.close();
+  }
+}
+
+// the model's corners moved onto the page's edges in the photo (Lazy Scan's QuadRefiner), or as they were when edges back them too little
+export async function refinedQuad(shot: Shot, quad: Quad): Promise<Quad> {
+  try {
+    return trusted(refine(await decode(shot), quad), quad);
+  } catch {
+    return quad;
   }
 }
 
