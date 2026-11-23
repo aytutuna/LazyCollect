@@ -1,10 +1,12 @@
 import { Hono } from "hono";
-import ircCitizenship from "../templates/ircc-citizenship.json";
-import ircExpressEntry from "../templates/ircc-express-entry.json";
-import ircSpousal from "../templates/ircc-spousal-sponsorship.json";
-import ircStudy from "../templates/ircc-study-permit.json";
-import ircVisitor from "../templates/ircc-visitor-visa.json";
-import ircWork from "../templates/ircc-work-permit.json";
+import ircCitizenship from "../templates/ircc-citizenship";
+import ircExpressEntry from "../templates/ircc-express-entry";
+import ircPgwp from "../templates/ircc-pgwp";
+import ircSpousal from "../templates/ircc-spousal-sponsorship";
+import ircStudy from "../templates/ircc-study-permit";
+import ircVisitor from "../templates/ircc-visitor-visa";
+import ircWork from "../templates/ircc-work-permit";
+import ircWorkExtension from "../templates/ircc-work-permit-extension";
 import bookkeeping from "../templates/bookkeeping-month-end";
 import onboarding from "../templates/client-onboarding";
 import gstHst from "../templates/gst-hst-return";
@@ -33,7 +35,9 @@ export const builtinTemplates: Template[] = [
   ircExpressEntry,
   ircSpousal,
   ircStudy,
+  ircPgwp,
   ircWork,
+  ircWorkExtension,
   ircVisitor,
   ircCitizenship,
 ];
