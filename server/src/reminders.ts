@@ -185,8 +185,11 @@ async function rejectedPass(env: Env, region: Region, db: D1Database, now: numbe
     const sender = senders.get(r.firm_id);
     const clear = () =>
       db.prepare("UPDATE requests SET reject_mark_at = NULL WHERE firm_id = ? AND id = ? AND reject_mark_at = ?").bind(r.firm_id, r.id, r.mark).run();
+    // a mark in the future is how a row waits: it leaves the head of the queue instead of blocking the accounts behind it
+    const hold = (until: number) =>
+      db.prepare("UPDATE requests SET reject_mark_at = ? WHERE firm_id = ? AND id = ? AND reject_mark_at = ?").bind(until - REJECT_QUIET, r.firm_id, r.id, r.mark).run();
     if (!sender || !reachable(r) || !canSend(sender, now) || (r.status !== "open" && r.status !== "complete")) return clear();
-    if (!inHours(now, sender.tz)) return;
+    if (!inHours(now, sender.tz)) return hold(nextOpening(now, sender.tz));
     const items = await missingItems(db, r.firm_id, r.id, true);
     if (!items.length) return clear();
     if (!(await stillUsable(env, r.firm_id, now))) return clear();
