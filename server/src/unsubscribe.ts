@@ -3,7 +3,7 @@ import { rateLimited } from "./auth";
 import { auditClient } from "./audit";
 import { escapeHtml } from "./email";
 import { htmlHeaders } from "./headers";
-import { readUnsubToken } from "./mail";
+import { readUnsubToken, stopHash } from "./mail";
 import { regionOf } from "./regions";
 import type { AppEnv } from "./session";
 import { hmac, ipPrefix } from "./util";
@@ -53,6 +53,7 @@ unsubscribe.post("/:token", async (c) => {
   if (!found) return invalid(c);
   const { db, firmId, clientId } = found;
   const ipHash = await hmac(c.env.HASH_KEY, ipPrefix(ip ?? "unknown"));
+  const hash = found.client.email ? await stopHash(c.env, found.client.email) : null;
   // the audit row goes first so only the first stop is recorded
   await db.batch([
     auditClient(db, firmId, ipHash, "email.unsubscribe", "client", clientId, {}, {
@@ -60,6 +61,7 @@ unsubscribe.post("/:token", async (c) => {
       binds: [firmId, clientId],
     }),
     db.prepare("UPDATE clients SET email_stop_at = ? WHERE firm_id = ? AND id = ? AND email_stop_at IS NULL").bind(Date.now(), firmId, clientId),
+    ...(hash ? [db.prepare("INSERT OR IGNORE INTO email_stops (firm_id, email_hash, stopped_at) VALUES (?, ?, ?)").bind(firmId, hash, Date.now())] : []),
   ]);
   return page(c, 200, `<p>Done. ${escapeHtml(found.sender)} will not send you any more emails about document requests.</p>`);
 });

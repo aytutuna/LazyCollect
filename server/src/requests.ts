@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { usable } from "./firm";
 import { LINK_GRACE, sealToken } from "./links";
-import { deliver, unsubUrl } from "./mail";
+import { deliver, stopHash, unsubUrl } from "./mail";
 import { regionOf, type Region } from "./regions";
 import { missingItems, senderName, sendersOf } from "./reminders";
 import { endNow, syncStatus } from "./status";
@@ -424,6 +424,8 @@ requests.post("/requests/:id/link", async (c) => {
       .first<{ name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null }>();
     if (!client?.email || !client.email_ok_at) return c.json({ error: "client_email_needed" }, 400);
     if (client.email_stop_at) return c.json({ error: "client_unsubscribed" }, 400);
+    const stopped = await db.prepare("SELECT 1 FROM email_stops WHERE firm_id = ? AND email_hash = ?").bind(firm.id, await stopHash(c.env, client.email)).first();
+    if (stopped) return c.json({ error: "client_unsubscribed" }, 400);
     invitee = { name: client.name, email: client.email };
   }
 

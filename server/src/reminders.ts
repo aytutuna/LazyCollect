@@ -1,7 +1,7 @@
 import { sendMail } from "./email";
 import { usable } from "./firm";
 import { linkUrl } from "./links";
-import { deliver, unsubUrl, type Missing } from "./mail";
+import { deliver, stopHash, unsubUrl, type Missing } from "./mail";
 import { regionIds, regionOf, type Region } from "./regions";
 import { SPACING, dayOf, inHours, nextOpening, nextReminder, sameDay } from "./tz";
 import { DAY, HOUR, MINUTE } from "./util";
@@ -66,12 +66,26 @@ type Row = {
   email_ok_at: number | null;
   email_stop_at: number | null;
   client_deleted: number | null;
+  stopped?: boolean;
 };
 
 const ROW = `r.id, r.firm_id, r.client_id, r.title, r.deadline, c.name AS client_name, c.email, c.email_ok_at, c.email_stop_at, c.deleted_at AS client_deleted`;
 const JOIN = `FROM requests r JOIN clients c ON c.firm_id = r.firm_id AND c.id = r.client_id`;
 
-const reachable = (r: Row) => Boolean(r.email && r.email_ok_at && !r.email_stop_at && !r.client_deleted);
+const reachable = (r: Row) => Boolean(r.email && r.email_ok_at && !r.email_stop_at && !r.stopped && !r.client_deleted);
+
+// an address that asked to stop stays stopped for the account, whatever client row holds it now
+async function markStops(env: Env, db: D1Database, rows: Row[]) {
+  const hashes = await Promise.all(rows.map((r) => (r.email ? stopHash(env, r.email) : null)));
+  const { results } = await db
+    .prepare("SELECT firm_id, email_hash FROM email_stops WHERE firm_id IN (SELECT value FROM json_each(?)) AND email_hash IN (SELECT value FROM json_each(?))")
+    .bind(JSON.stringify([...new Set(rows.map((r) => r.firm_id))]), JSON.stringify(hashes.filter(Boolean)))
+    .all<{ firm_id: string; email_hash: string }>();
+  const stopped = new Set(results.map((s) => `${s.firm_id}:${s.email_hash}`));
+  rows.forEach((r, i) => {
+    r.stopped = hashes[i] !== null && stopped.has(`${r.firm_id}:${hashes[i]}`);
+  });
+}
 
 export async function runReminders(env: Env, now = Date.now()) {
   for (const region of regionIds) {
@@ -108,6 +122,7 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
     )
     .bind(now)
     .all<Row>();
+  await markStops(env, db, results);
   const senders = await sendersOf(env, region, results.map((r) => r.firm_id));
 
   let busy = false;
@@ -179,6 +194,7 @@ async function rejectedPass(env: Env, region: Region, db: D1Database, now: numbe
     )
     .bind(now - REJECT_QUIET)
     .all<Row & { status: string }>();
+  await markStops(env, db, results);
   const senders = await sendersOf(env, region, results.map((r) => r.firm_id));
 
   let busy = false;
