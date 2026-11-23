@@ -181,7 +181,7 @@ const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/cs
 
 // the headers the site sends on every path, from the _headers file the build copies to dist/
 async function siteHeaders() {
-  const lines = (await readFile(join(dist, "_headers"), "utf8")).split(/\r?\n/).slice(1);
+  const lines = (await readFile(join(dist, "_headers"), "utf8")).split(/\r?\n\r?\n/)[0].split(/\r?\n/).slice(1);
   return Object.fromEntries(lines.filter((l) => l.includes(":")).map((l) => [l.slice(0, l.indexOf(":")).trim(), l.slice(l.indexOf(":") + 1).trim()]));
 }
 
