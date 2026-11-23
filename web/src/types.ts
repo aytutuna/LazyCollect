@@ -101,6 +101,10 @@ export type ActivityRow = {
   client_id: string | null;
 };
 
+export type Person = { id: string; email: string; name: string | null; role: "owner" | "member"; created_at: number };
+
+export type PendingInvite = { id: string; email: string; name: string | null; created_at: number; expires_at: number };
+
 export type Message = { id: string; kind: "invite" | "reminder" | "deadline" | "rejected"; seq: number; status: "sending" | "sent" | "failed"; sent_at: number };
 
 export type LinkResult = { url: string; emailed?: true; email_failed?: true };
