@@ -36,7 +36,7 @@ export function App() {
     try {
       const found = await get<Me>("/me");
       setZone(found.firm.tz);
-      setOwner(found.user.role === "owner");
+      setOwner(found.user.role === "owner", found.firm.plan_status === "past_due");
       setMe(found);
       return found;
     } catch (e) {

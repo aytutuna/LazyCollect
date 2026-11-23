@@ -59,6 +59,8 @@
   "error.too_many_items": "A request can have up to 100 items.",
   "error.firm_profile": "Add your name or business name in Settings first.",
   "error.plan_member": "The plan has ended. Ask the account owner to subscribe.",
+  "error.plan_past_due": "Your payment did not go through and the grace period has ended. Use Update payment in Settings to send new links or change deadlines.",
+  "error.plan_past_due_member": "The payment did not go through and the grace period has ended. Ask the account owner to update the payment details.",
   "error.plan": "Your plan has ended. Subscribe in Settings to send new links or change deadlines.",
   "error.billing": "We could not reach the payment service. Try again in a moment.",
   "error.subscribed": "This account already has a subscription. Use Manage billing instead.",
