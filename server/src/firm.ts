@@ -10,10 +10,11 @@ export const firm = new Hono<AppEnv>();
 
 const PROVINCES = ["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"];
 
-// how long a failed renewal keeps the account working while the card is fixed
+// how long a failed renewal keeps the account working while the card is fixed; counted from the first failure,
+// since Stripe has already moved current_period_end a month ahead by then
 export const PAST_DUE_GRACE = 7 * DAY;
 
-export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at" | "current_period_end" | "closed_at">, now: number): boolean {
+export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at" | "past_due_since" | "closed_at">, now: number): boolean {
   if (f.closed_at) return false;
   switch (f.plan_status) {
     case "active":
@@ -21,7 +22,7 @@ export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at" | "current_
     case "trialing":
       return f.trial_ends_at !== null && f.trial_ends_at > now;
     case "past_due":
-      return f.current_period_end !== null && now < f.current_period_end + PAST_DUE_GRACE;
+      return f.past_due_since !== null && now < f.past_due_since + PAST_DUE_GRACE;
     default:
       return false;
   }
@@ -32,7 +33,7 @@ function load(allowClosed: boolean): MiddlewareHandler<AppEnv> {
     const session = c.get("session");
     if (!session) return c.json({ error: "unauthorized" }, 401);
     const row = await c.env.CONTROL.prepare(
-      `SELECT id, name, legal_name, address, phone, province, tz, region, plan_status, trial_ends_at, current_period_end,
+      `SELECT id, name, legal_name, address, phone, province, tz, region, plan_status, trial_ends_at, current_period_end, past_due_since,
          cancel_at_period_end, stripe_customer_id, stripe_subscription_id, closed_at FROM firms WHERE id = ?`,
     )
       .bind(session.firmId)

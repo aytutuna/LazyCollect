@@ -211,7 +211,7 @@ auth.get("/me", async (c) => {
   if (!session) return c.json({ error: "unauthorized" }, 401);
   const row = await c.env.CONTROL.prepare(
     `SELECT u.id, u.email, u.name, u.role, f.id AS firm_id, f.name AS firm_name, f.tz, f.plan_status, f.trial_ends_at,
-       f.current_period_end, f.cancel_at_period_end, f.stripe_subscription_id IS NOT NULL AS subscribed, f.closed_at
+       f.current_period_end, f.past_due_since, f.cancel_at_period_end, f.stripe_subscription_id IS NOT NULL AS subscribed, f.closed_at
      FROM users u JOIN firms f ON f.id = u.firm_id WHERE u.id = ?`,
   )
     .bind(session.userId)
@@ -226,6 +226,7 @@ auth.get("/me", async (c) => {
       plan_status: string;
       trial_ends_at: number | null;
       current_period_end: number | null;
+      past_due_since: number | null;
       cancel_at_period_end: number;
       subscribed: number;
       closed_at: number | null;
@@ -240,6 +241,7 @@ auth.get("/me", async (c) => {
       plan_status: row.plan_status,
       trial_ends_at: row.trial_ends_at,
       current_period_end: row.current_period_end,
+      past_due_since: row.past_due_since,
       cancel_at_period_end: row.cancel_at_period_end === 1,
       subscribed: row.subscribed === 1,
       closed_at: row.closed_at,

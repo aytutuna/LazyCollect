@@ -85,6 +85,18 @@ describe("close", () => {
     expect(row.closed_at).toBeGreaterThan(0);
   });
 
+  it("can be repeated after a failure, keeping the first closing time", async () => {
+    const { cookie, path } = await openRequest();
+    await close(cookie);
+    const again = await login();
+    const first = (await firmRow(again)).closed_at;
+    await env.DB_NA.prepare("UPDATE links SET revoked_at = NULL").run();
+    expect((await close(again)).status).toBe(200);
+    expect((await env.CONTROL.prepare("SELECT closed_at FROM firms").first<any>()).closed_at).toBe(first);
+    expect((await api(path)).status).toBe(404);
+    expect((await env.DB_NA.prepare("SELECT DISTINCT revoked_at FROM links").first<any>()).revoked_at).toBe(first);
+  });
+
   it("stays open when Stripe cannot cancel", async () => {
     const { cookie, path } = await openRequest();
     await env.CONTROL.prepare("UPDATE firms SET plan_status = 'active', stripe_customer_id = 'cus_1', stripe_subscription_id = 'sub_1'").run();
@@ -152,6 +164,21 @@ describe("reopen", () => {
 });
 
 describe("purge of a closed account", () => {
+  it("gives a firm that cannot finish no more turns than the others", async () => {
+    const held = await withUpload("held@firm.test");
+    await api(`/api/requests/${held.req.id}/hold`, { method: "PUT", cookie: held.cookie, body: { on: true } });
+    await close(held.cookie);
+    await new Promise((r) => setTimeout(r, 5));
+    const other = await withUpload("other@firm.test");
+    await close(other.cookie);
+    await ageClose(31);
+    await env.CONTROL.prepare("UPDATE firms SET purge_tried_at = 1 WHERE id = ?").bind(held.firm.id).run();
+    await purgeClosed(env);
+    const tried = await env.CONTROL.prepare("SELECT purge_tried_at FROM firms WHERE id = ?").bind(held.firm.id).first<any>();
+    expect(tried.purge_tried_at).toBeGreaterThan(1);
+    expect(await env.CONTROL.prepare("SELECT 1 FROM firms WHERE id = ?").bind(other.firm.id).first()).toBeNull();
+  });
+
   it("does nothing inside the 30 days", async () => {
     await withUpload();
     const { cookie } = await openRequest("other@firm.test");

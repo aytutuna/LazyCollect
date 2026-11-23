@@ -28,30 +28,34 @@ account.post("/account/close", async (c) => {
   const now = Date.now();
   const db = c.get("db");
 
-  // first, so a failure here leaves the account open instead of closed and still billed
-  if (firm.stripe_subscription_id && firm.plan_status !== "canceled") {
+  // a retry after a failure further down finds the account closed already and carries on from the stored time
+  const at = firm.closed_at ?? now;
+  if (!firm.closed_at && firm.stripe_subscription_id && firm.plan_status !== "canceled") {
+    // first, so a failure here leaves the account open instead of closed and still billed
+    const id = encodeURIComponent(firm.stripe_subscription_id);
     try {
-      await stripe(c.env, "DELETE", `/v1/subscriptions/${encodeURIComponent(firm.stripe_subscription_id)}`);
+      await stripe(c.env, "DELETE", `/v1/subscriptions/${id}`);
     } catch (e) {
-      if (!(e instanceof StripeError && e.status === 404)) {
+      const ended = await stripe<{ status: string }>(c.env, "GET", `/v1/subscriptions/${id}`).then((s) => s.status === "canceled", () => false);
+      if (!ended && !(e instanceof StripeError && e.status === 404)) {
         log(e);
         return c.json({ error: "billing" }, 502);
       }
     }
   }
+  await c.env.CONTROL.prepare(
+    `UPDATE firms SET closed_at = ?, cancel_at_period_end = 0,
+       plan_status = CASE WHEN stripe_subscription_id IS NOT NULL THEN 'canceled' ELSE plan_status END
+     WHERE id = ? AND closed_at IS NULL`,
+  )
+    .bind(at, firm.id)
+    .run();
   // links go dark with revoked_at = closed_at, which is how a reopen finds the ones to bring back
   await db.batch([
-    db.prepare("UPDATE links SET revoked_at = ? WHERE firm_id = ? AND revoked_at IS NULL").bind(now, firm.id),
+    db.prepare("UPDATE links SET revoked_at = ? WHERE firm_id = ? AND revoked_at IS NULL").bind(at, firm.id),
     audit(c, "account.close", "firm", firm.id),
   ]);
-  await c.env.CONTROL.batch([
-    c.env.CONTROL.prepare(
-      `UPDATE firms SET closed_at = ?, cancel_at_period_end = 0,
-         plan_status = CASE WHEN stripe_subscription_id IS NOT NULL THEN 'canceled' ELSE plan_status END
-       WHERE id = ? AND closed_at IS NULL`,
-    ).bind(now, firm.id),
-    c.env.CONTROL.prepare("DELETE FROM sessions WHERE firm_id = ?").bind(firm.id),
-  ]);
+  await c.env.CONTROL.prepare("DELETE FROM sessions WHERE firm_id = ?").bind(firm.id).run();
   deleteCookie(c, "__Host-lc_session", { path: "/", secure: true });
   return c.json({ ok: true });
 });
@@ -61,16 +65,18 @@ account.post("/account/reopen", async (c) => {
   const firm = c.get("firm");
   if (!firm.closed_at) return c.json({ error: "not_closed" }, 409);
   const now = Date.now();
-  // the purge takes over once the window is up, so it is checked in the same statement that reopens
-  const done = await c.env.CONTROL.prepare("UPDATE firms SET closed_at = NULL WHERE id = ? AND closed_at = ? AND closed_at > ?")
-    .bind(firm.id, firm.closed_at, now - CLOSE_WINDOW)
-    .run();
-  if (!done.meta.changes) return c.json({ error: "expired" }, 409);
+  if (firm.closed_at <= now - CLOSE_WINDOW) return c.json({ error: "expired" }, 409);
+  // links first: it can be repeated, while a failure after the account is open again could not be retried
   const db = c.get("db");
   await db.batch([
     db.prepare("UPDATE links SET revoked_at = NULL WHERE firm_id = ? AND revoked_at = ?").bind(firm.id, firm.closed_at),
     audit(c, "account.reopen", "firm", firm.id),
   ]);
+  // the purge takes over once the window is up, so it is checked in the same statement that reopens
+  const done = await c.env.CONTROL.prepare("UPDATE firms SET closed_at = NULL WHERE id = ? AND closed_at = ? AND closed_at > ?")
+    .bind(firm.id, firm.closed_at, now - CLOSE_WINDOW)
+    .run();
+  if (!done.meta.changes) return c.json({ error: "expired" }, 409);
   return c.json({ ok: true });
 });
 
@@ -79,6 +85,8 @@ type Req = { id: string; firm_id: string };
 // Requests go through the usual purge, so objects and rows leave in the same order and the same logs are written. The account's
 // own rows and key go last, so a run that stops halfway is finished by the next one.
 async function purgeFirm(env: Env, id: string, regionId: string, now: number) {
+  // tried first, so a firm that can't finish (held requests) goes to the back of the line
+  await env.CONTROL.prepare("UPDATE firms SET purge_tried_at = ? WHERE id = ?").bind(now, id).run();
   if (!isRegion(regionId)) return;
   const { db, bucket } = regionOf(env, regionId);
   await db.prepare("UPDATE requests SET deleted_at = ? WHERE firm_id = ? AND deleted_at IS NULL AND hold_at IS NULL").bind(now, id).run();
@@ -120,7 +128,7 @@ async function purgeFirm(env: Env, id: string, regionId: string, now: number) {
 }
 
 export async function purgeClosed(env: Env, now = Date.now()) {
-  const { results } = await env.CONTROL.prepare("SELECT id, region FROM firms WHERE closed_at IS NOT NULL AND closed_at <= ? ORDER BY closed_at LIMIT ?")
+  const { results } = await env.CONTROL.prepare("SELECT id, region FROM firms WHERE closed_at IS NOT NULL AND closed_at <= ? ORDER BY COALESCE(purge_tried_at, 0), closed_at LIMIT ?")
     .bind(now - CLOSE_WINDOW, FIRMS)
     .all<{ id: string; region: string }>();
   for (const f of results) await purgeFirm(env, f.id, f.region, now).catch(log);

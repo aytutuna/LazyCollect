@@ -67,7 +67,7 @@ describe("firm", () => {
 
 describe("usable", () => {
   const now = 1_000_000_000_000;
-  const f = (over: Partial<Parameters<typeof usable>[0]>) => ({ plan_status: "trialing", trial_ends_at: null, current_period_end: null, closed_at: null, ...over });
+  const f = (over: Partial<Parameters<typeof usable>[0]>) => ({ plan_status: "trialing", trial_ends_at: null, past_due_since: null, closed_at: null, ...over });
 
   it("follows the plan status", () => {
     expect(usable(f({ plan_status: "active" }), now)).toBe(true);
@@ -80,8 +80,8 @@ describe("usable", () => {
     expect(usable(f({ trial_ends_at: null }), now)).toBe(false);
   });
 
-  it("gives a past due account a week after the period end", () => {
-    const due = f({ plan_status: "past_due", current_period_end: now - 6 * DAY });
+  it("gives a past due account a week from its first failed payment", () => {
+    const due = f({ plan_status: "past_due", past_due_since: now - 6 * DAY });
     expect(usable(due, now)).toBe(true);
     expect(usable(due, now + DAY - 1)).toBe(true);
     expect(usable(due, now + DAY)).toBe(false);

@@ -15,6 +15,7 @@ export type Firm = {
   plan_status: string;
   trial_ends_at: number | null;
   current_period_end: number | null;
+  past_due_since: number | null;
   cancel_at_period_end: number;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;

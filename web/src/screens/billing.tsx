@@ -17,7 +17,7 @@ function line(f: PlanFirm): string {
   if (f.plan_status === "active") {
     return t(f.cancel_at_period_end ? "settings.plan_cancelling" : "settings.plan_active", { date: fmtDate(f.current_period_end ?? Date.now()) });
   }
-  if (f.plan_status === "past_due" && f.usable) return t("settings.plan_past_due", { date: fmtDate((f.current_period_end ?? 0) + GRACE) });
+  if (f.plan_status === "past_due" && f.usable) return t("settings.plan_past_due", { date: fmtDate((f.past_due_since ?? 0) + GRACE) });
   if (trialing) return t(f.subscribed ? "settings.plan_trial_subscribed" : "settings.plan_trial", { date: fmtDate(f.trial_ends_at!) });
   return t("settings.plan_ended");
 }

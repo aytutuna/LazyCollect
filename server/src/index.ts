@@ -43,7 +43,7 @@ app.route("/api", client);
 app.route("/api", uploads);
 app.use("/api/firm", loadFirm);
 app.use("/api/billing/*", loadFirm);
-app.use("/api/account/close", loadFirm);
+app.use("/api/account/close", loadClosedFirm);
 app.use("/api/account/reopen", loadClosedFirm);
 app.use("/api/retention/*", loadFirm);
 app.use("/api/retention", loadFirm);

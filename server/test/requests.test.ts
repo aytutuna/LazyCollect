@@ -178,12 +178,12 @@ describe("request link", () => {
     expect((await link(cookie, id)).status).toBe(402);
   });
 
-  it("keeps a past due account working for a week after its period", async () => {
+  it("keeps a past due account working for a week after its first failed payment", async () => {
     const { cookie, client } = await setup();
     const id = await draft(cookie, client.id);
-    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'past_due', current_period_end = ?").bind(Date.now() - 6 * 86_400_000).run();
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'past_due', past_due_since = ?").bind(Date.now() - 6 * 86_400_000).run();
     expect((await link(cookie, id)).status).toBe(200);
-    await env.CONTROL.prepare("UPDATE firms SET current_period_end = ?").bind(Date.now() - 8 * 86_400_000).run();
+    await env.CONTROL.prepare("UPDATE firms SET past_due_since = ?").bind(Date.now() - 8 * 86_400_000).run();
     expect((await link(cookie, id)).status).toBe(402);
   });
 

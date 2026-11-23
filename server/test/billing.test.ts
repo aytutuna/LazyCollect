@@ -241,6 +241,39 @@ describe("webhook", () => {
     }
   });
 
+  it("counts the grace from the first failure only", async () => {
+    const { cookie, customer } = await subscribed();
+    stripeFake.sub("sub_1", customer, { status: "past_due" });
+    await webhook({ id: "evt_1", type: "invoice.payment_failed", data: { object: { customer, subscription: "sub_1" } } });
+    const first = (await firmRow(cookie)).past_due_since;
+    expect(first).toBeGreaterThan(0);
+    await env.CONTROL.prepare("UPDATE firms SET past_due_since = ?").bind(first - 1000).run();
+    await webhook({ id: "evt_2", type: "invoice.payment_failed", data: { object: { customer, subscription: "sub_1" } } });
+    expect((await firmRow(cookie)).past_due_since).toBe(first - 1000);
+    stripeFake.sub("sub_1", customer, { status: "active" });
+    await webhook({ id: "evt_3", type: "invoice.paid", data: { object: { customer, subscription: "sub_1" } } });
+    expect((await firmRow(cookie)).past_due_since).toBeNull();
+  });
+
+  it("cancels a subscription that completes after the account was closed", async () => {
+    const { cookie, customer } = await subscribed();
+    await env.CONTROL.prepare("UPDATE firms SET closed_at = 5").run();
+    stripeFake.sub("sub_1", customer);
+    await webhook({ id: "evt_1", type: "checkout.session.completed", data: { object: { mode: "subscription", customer, subscription: "sub_1" } } });
+    expect(stripeFake.subs.get("sub_1")!.status).toBe("canceled");
+    expect((await firmRow(cookie)).stripe_subscription_id).toBeNull();
+  });
+
+  it("cancels a second live subscription", async () => {
+    const { cookie, customer } = await subscribed();
+    stripeFake.sub("sub_1", customer);
+    await webhook({ id: "evt_1", type: "customer.subscription.created", data: { object: { id: "sub_1", customer } } });
+    stripeFake.sub("sub_2", customer);
+    await webhook({ id: "evt_2", type: "customer.subscription.created", data: { object: { id: "sub_2", customer } } });
+    expect(stripeFake.subs.get("sub_2")!.status).toBe("canceled");
+    expect((await firmRow(cookie)).stripe_subscription_id).toBe("sub_1");
+  });
+
   it("does not trust the payload's own status", async () => {
     const { cookie, customer } = await subscribed();
     stripeFake.sub("sub_1", customer, { status: "past_due" });

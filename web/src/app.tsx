@@ -112,7 +112,7 @@ export function App() {
       </header>
       {(ended || pastDue) && (
         <div class="banner" role="status">
-          {ended ? t("plan.ended") : t("plan.past_due", { date: fmtDate((me.firm.current_period_end ?? 0) + 7 * 86_400_000) })}
+          {ended ? t("plan.ended") : t("plan.past_due", { date: fmtDate((me.firm.past_due_since ?? 0) + 7 * 86_400_000) })}
         </div>
       )}
       {notice}
