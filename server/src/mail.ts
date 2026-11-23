@@ -31,9 +31,9 @@ export type Letter = {
   unsubUrl: string;
 };
 
-// the display name sits inside quotes in a header, so nothing that could end or fold it survives
+// the display name sits inside quotes in a header, so nothing that could end or fold it survives; commas go too, for parsers that split on them
 function senderName(name: string): string {
-  return name.replace(/[\u0000-\u001f\u007f"<>\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
+  return name.replace(/[\u0000-\u001f\u007f"<>\\,]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
 }
 
 export function fromHeader(env: Env, name: string): string {
