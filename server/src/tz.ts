@@ -35,6 +35,13 @@ export function addDays(day: Day, n: number): Day {
   return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() };
 }
 
+// the same wall clock time a year later; 29 February falls back to the 28th
+export function plusYear(ms: number, tz: string): number {
+  const l = local(ms, tz);
+  const day = { y: l.y + 1, m: l.m, d: l.m === 2 && l.d === 29 ? 28 : l.d };
+  return atHour(day, l.h, tz) + l.min * 60_000;
+}
+
 export const sameDay = (a: Day, b: Day) => a.y === b.y && a.m === b.m && a.d === b.d;
 
 // the instant a wall clock hour starts on a day; the second pass settles zones whose offset changes that day

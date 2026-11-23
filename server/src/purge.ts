@@ -69,6 +69,7 @@ export async function purgeRequest(db: D1Database, bucket: R2Bucket, req: Target
       db.prepare(`DELETE FROM files WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db.prepare(`DELETE FROM items WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db.prepare(`DELETE FROM links WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
+      db.prepare(`DELETE FROM batch_items WHERE firm_id = ? AND request_id = ? AND ${mine}`).bind(...own, ...held),
       db.prepare("DELETE FROM requests WHERE firm_id = ? AND id = ? AND purging_at = ?").bind(...held),
     ]);
     // an upload that was already in flight can land after the first pass
