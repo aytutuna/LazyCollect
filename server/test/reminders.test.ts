@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { runReminders } from "../src/reminders";
 import { addDays, atHour, dayOf, nextOpening, nextReminder } from "../src/tz";
 import { unsubUrl } from "../src/mail";
-import { DAY, HOUR, MINUTE, sha256 } from "../src/util";
+import { DAY, HOUR, MINUTE, hmac, sha256 } from "../src/util";
 import { api, mockOutbound, openRequest, pdf, review, setup, upload, type Sent } from "./helpers";
 
 const TZ = "America/Toronto";
@@ -573,7 +573,7 @@ describe("unsubscribe", () => {
     }
     const rows = await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM clients WHERE email_stop_at IS NOT NULL").first<any>();
     expect(rows.n).toBe(0);
-    const forThem = await unsubUrl(env, "na", other.id, (await env.CONTROL.prepare("SELECT id FROM firms").first<any>()).id);
+    const forThem = await unsubUrl(env, "na", other.id, (await env.CONTROL.prepare("SELECT id FROM firms").first<any>()).id, "bo@mail.test");
     expect(forThem).not.toBe(link);
   });
 });
@@ -848,5 +848,83 @@ describe("a firm that stops being usable mid-run", () => {
     expect(sent.filter((m) => m.subject.startsWith("Reminder"))).toHaveLength(1);
     expect((await requestRow(second.id)).next_reminder_at).toBe(at(2027, 1, 5, 10, 5) + DAY);
     expect((await messages()).filter((m) => m.kind === "reminder")).toHaveLength(1);
+  });
+});
+
+describe("unsubscribe tokens and old stops", () => {
+  const stop = (url: string) =>
+    exports.default.fetch(`https://collect.alazy.app${new URL(url).pathname}`, { method: "POST", headers: { "CF-Connecting-IP": "198.51.100.7" } });
+  const sentLink = async (o: Awaited<ReturnType<typeof ready>>) => {
+    const sent = mockOutbound();
+    await invite(o.cookie, o.req.id);
+    return sent[0].text.match(/https:\/\/\S+\/u\/\S+/)![0];
+  };
+  const hashOf = (email: string) => hmac(env.HASH_KEY, `email-stop:${email}`);
+  const stops = async () => (await env.DB_NA.prepare("SELECT email_hash FROM email_stops").all<any>()).results.map((r) => r.email_hash);
+
+  it("stops the address the email went to when the client's address changed", async () => {
+    const o = await ready();
+    const link = await sentLink(o);
+    await env.DB_NA.prepare("UPDATE clients SET email = 'new@mail.test' WHERE id = ?").bind(o.client.id).run();
+    expect((await stop(link)).status).toBe(200);
+    expect(await stops()).toEqual([await hashOf("amy@mail.test")]);
+    expect((await env.DB_NA.prepare("SELECT email_stop_at FROM clients WHERE id = ?").bind(o.client.id).first<any>()).email_stop_at).toBeNull();
+    expect((await invite(o.cookie, o.req.id)).status).toBe(200);
+  });
+
+  it("still records the stop when the client's address was cleared or the client is gone", async () => {
+    const o = await ready();
+    const link = await sentLink(o);
+    await env.DB_NA.prepare("UPDATE clients SET email = NULL WHERE id = ?").bind(o.client.id).run();
+    expect((await stop(link)).status).toBe(200);
+    expect(await stops()).toEqual([await hashOf("amy@mail.test")]);
+
+    const firmId = (await env.CONTROL.prepare("SELECT id FROM firms").first<any>()).id;
+    const solo = await (await api("/api/clients", { method: "POST", cookie: o.cookie, body: { name: "Gone", email: "gone@mail.test", contact_ok: true } })).json<any>();
+    const url = await unsubUrl(env, "na", solo.id, firmId, "gone@mail.test");
+    await env.DB_NA.prepare("DELETE FROM clients WHERE id = ?").bind(solo.id).run();
+    expect((await stop(url)).status).toBe(200);
+    expect(await stops()).toContain(await hashOf("gone@mail.test"));
+  });
+
+  it("takes a token from an email sent before addresses were signed in, using the current address", async () => {
+    const o = await ready();
+    const firmId = (await env.CONTROL.prepare("SELECT id FROM firms").first<any>()).id;
+    const sig = (await hmac(env.HASH_KEY, `unsubscribe:na:${o.client.id}:${firmId}`)).slice(0, 32);
+    const old = `https://collect.alazy.app/u/na_${o.client.id}${firmId}${sig}`;
+    expect((await stop(old)).status).toBe(200);
+    expect(await stops()).toEqual([await hashOf("amy@mail.test")]);
+    expect((await env.DB_NA.prepare("SELECT email_stop_at FROM clients WHERE id = ?").bind(o.client.id).first<any>()).email_stop_at).toBeGreaterThan(0);
+    const forged = `${old.slice(0, -1)}${old.endsWith("0") ? "1" : "0"}`;
+    expect((await stop(forged)).status).toBe(404);
+  });
+
+  it("treats an address stopped before email_stops existed as stopped, and records it", async () => {
+    const o = await ready();
+    // the old client row carries the stop and is deleted now, as for an account that unsubscribed before the table
+    await env.DB_NA.prepare("UPDATE clients SET email_stop_at = 5, deleted_at = 6 WHERE id = ?").bind(o.client.id).run();
+    expect(await stops()).toEqual([]);
+    const { cookie } = o;
+    const next = await (await api("/api/clients", { method: "POST", cookie, body: { name: "Amy again", email: "amy@mail.test", contact_ok: true } })).json<any>();
+    const req = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: next.id, title: "2026", deadline: Date.now() + 40 * DAY, items: [{ label: "T4", required: true }] } })).json<any>();
+    const sent = mockOutbound();
+    const res = await invite(cookie, req.id);
+    expect(res.status).toBe(400);
+    expect((await res.json<any>()).error).toBe("client_unsubscribed");
+    expect(await stops()).toEqual([await hashOf("amy@mail.test")]);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("keeps reminders from an address stopped before email_stops existed", async () => {
+    const o = await ready();
+    expect((await invite(o.cookie, o.req.id, {})).status).toBe(200);
+    await env.DB_NA.prepare("UPDATE clients SET email_stop_at = 5, deleted_at = 6 WHERE id = ?").bind(o.client.id).run();
+    const next = await (await api("/api/clients", { method: "POST", cookie: o.cookie, body: { name: "Amy again", email: "amy@mail.test", contact_ok: true } })).json<any>();
+    await env.DB_NA.prepare("UPDATE requests SET client_id = ? WHERE id = ?").bind(next.id, o.req.id).run();
+    const sent = mockOutbound();
+    await pin(o.req.id, at(2027, 1, 5, 10));
+    await runReminders(env, at(2027, 1, 5, 10, 5));
+    expect(sent).toHaveLength(0);
+    expect(await stops()).toEqual([await hashOf("amy@mail.test")]);
   });
 });

@@ -77,11 +77,26 @@ const reachable = (r: Row) => Boolean(r.email && r.email_ok_at && !r.email_stop_
 // an address that asked to stop stays stopped for the account, whatever client row holds it now
 async function markStops(env: Env, db: D1Database, rows: Row[]) {
   const hashes = await Promise.all(rows.map((r) => (r.email ? stopHash(env, r.email) : null)));
-  const { results } = await db
-    .prepare("SELECT firm_id, email_hash FROM email_stops WHERE firm_id IN (SELECT value FROM json_each(?)) AND email_hash IN (SELECT value FROM json_each(?))")
-    .bind(JSON.stringify([...new Set(rows.map((r) => r.firm_id))]), JSON.stringify(hashes.filter(Boolean)))
-    .all<{ firm_id: string; email_hash: string }>();
-  const stopped = new Set(results.map((s) => `${s.firm_id}:${s.email_hash}`));
+  const firms = JSON.stringify([...new Set(rows.map((r) => r.firm_id))]);
+  const [kept, old] = await db.batch([
+    db
+      .prepare("SELECT firm_id, email_hash FROM email_stops WHERE firm_id IN (SELECT value FROM json_each(?)) AND email_hash IN (SELECT value FROM json_each(?))")
+      .bind(firms, JSON.stringify(hashes.filter(Boolean))),
+    // stops from before email_stops existed live on client rows only; they get their row here
+    db
+      .prepare(
+        `SELECT firm_id, lower(email) AS email, MIN(email_stop_at) AS at FROM clients
+         WHERE email_stop_at IS NOT NULL AND firm_id IN (SELECT value FROM json_each(?)) AND lower(email) IN (SELECT value FROM json_each(?)) GROUP BY firm_id, lower(email)`,
+      )
+      .bind(firms, JSON.stringify(rows.flatMap((r) => (r.email ? [r.email.trim().toLowerCase()] : [])))),
+  ]);
+  const stopped = new Set((kept.results as { firm_id: string; email_hash: string }[]).map((s) => `${s.firm_id}:${s.email_hash}`));
+  for (const o of old.results as { firm_id: string; email: string; at: number }[]) {
+    const hash = await stopHash(env, o.email);
+    if (stopped.has(`${o.firm_id}:${hash}`)) continue;
+    stopped.add(`${o.firm_id}:${hash}`);
+    await db.prepare("INSERT OR IGNORE INTO email_stops (firm_id, email_hash, stopped_at) VALUES (?, ?, ?)").bind(o.firm_id, hash, o.at).run();
+  }
   rows.forEach((r, i) => {
     r.stopped = hashes[i] !== null && stopped.has(`${r.firm_id}:${hashes[i]}`);
   });
@@ -170,7 +185,7 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
         tz,
         items,
         url: await linkUrl(env, db, region, r.firm_id, r.id, r.deadline, now),
-        unsubUrl: await unsubUrl(env, region, r.client_id, r.firm_id),
+        unsubUrl: await unsubUrl(env, region, r.client_id, r.firm_id, r.email!),
       },
       now,
     );
@@ -227,7 +242,7 @@ async function rejectedPass(env: Env, region: Region, db: D1Database, now: numbe
         tz: sender.tz,
         items,
         url: await linkUrl(env, db, region, r.firm_id, r.id, r.deadline, now),
-        unsubUrl: await unsubUrl(env, region, r.client_id, r.firm_id),
+        unsubUrl: await unsubUrl(env, region, r.client_id, r.firm_id, r.email!),
       },
       now,
     );

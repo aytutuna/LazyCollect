@@ -233,20 +233,37 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
   }
 }
 
-// The token is signed over the client and the account, so it needs no table and can't be pointed at another client.
-async function sign(env: Env, region: string, clientId: string, firmId: string) {
-  return (await hmac(env.HASH_KEY, `unsubscribe:${region}:${clientId}:${firmId}`)).slice(0, 32);
+// The token is signed over the client, the account and the address the email went to, so it needs no table and can't be
+// pointed at another client. Tokens in emails sent before the address was added are shorter and carry none.
+async function sign(env: Env, region: string, clientId: string, firmId: string, hash: string | null) {
+  return (await hmac(env.HASH_KEY, `unsubscribe:${region}:${clientId}:${firmId}${hash ? `:${hash}` : ""}`)).slice(0, 32);
 }
 
-export async function unsubUrl(env: Env, region: Region, clientId: string, firmId: string): Promise<string> {
-  return `${env.APP_URL}/u/${region}_${clientId}${firmId}${await sign(env, region, clientId, firmId)}`;
+export async function unsubUrl(env: Env, region: Region, clientId: string, firmId: string, email: string): Promise<string> {
+  const hash = await stopHash(env, email);
+  return `${env.APP_URL}/u/${region}_${clientId}${firmId}${hash}${await sign(env, region, clientId, firmId, hash)}`;
 }
 
-export async function readUnsubToken(env: Env, token: string): Promise<{ region: Region; clientId: string; firmId: string } | null> {
-  const m = /^([a-z]+)_([0-9a-f]{32})([0-9a-f]{32})([0-9a-f]{32})$/.exec(token);
+export async function readUnsubToken(env: Env, token: string): Promise<{ region: Region; clientId: string; firmId: string; hash: string | null } | null> {
+  const m = /^([a-z]+)_([0-9a-f]{32})([0-9a-f]{32})([0-9a-f]{64})?([0-9a-f]{32})$/.exec(token);
   if (!m || !isRegion(m[1])) return null;
-  const expected = await sign(env, m[1], m[2], m[3]);
+  const expected = await sign(env, m[1], m[2], m[3], m[4] ?? null);
   let diff = 0;
-  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ m[4].charCodeAt(i);
-  return diff === 0 ? { region: m[1], clientId: m[2], firmId: m[3] } : null;
+  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ m[5].charCodeAt(i);
+  return diff === 0 ? { region: m[1], clientId: m[2], firmId: m[3], hash: m[4] ?? null } : null;
+}
+
+// Stops recorded before email_stops existed sit only on a client row, deleted ones included. Finding one writes the
+// missing row, so each address is looked up this way once.
+export async function addressStopped(env: Env, db: D1Database, firmId: string, email: string): Promise<boolean> {
+  const hash = await stopHash(env, email);
+  const [kept, old] = await db.batch([
+    db.prepare("SELECT 1 FROM email_stops WHERE firm_id = ? AND email_hash = ?").bind(firmId, hash),
+    db.prepare("SELECT MIN(email_stop_at) AS at FROM clients WHERE firm_id = ? AND lower(email) = ? AND email_stop_at IS NOT NULL").bind(firmId, email.trim().toLowerCase()),
+  ]);
+  if (kept.results.length) return true;
+  const at = (old.results[0] as { at: number | null }).at;
+  if (at === null) return false;
+  await db.prepare("INSERT OR IGNORE INTO email_stops (firm_id, email_hash, stopped_at) VALUES (?, ?, ?)").bind(firmId, hash, at).run();
+  return true;
 }

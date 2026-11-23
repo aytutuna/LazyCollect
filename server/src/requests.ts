@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { usable } from "./firm";
 import { LINK_GRACE, sealToken } from "./links";
-import { deliver, hasRoom, stopHash, unsubUrl } from "./mail";
+import { addressStopped, deliver, hasRoom, unsubUrl } from "./mail";
 import { regionOf, type Region } from "./regions";
 import { missingItems, senderName, sendersOf } from "./reminders";
 import { endNow, syncStatus } from "./status";
@@ -430,8 +430,7 @@ requests.post("/requests/:id/link", async (c) => {
       .first<{ name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null }>();
     if (!client?.email || !client.email_ok_at) return c.json({ error: "client_email_needed" }, 400);
     if (client.email_stop_at) return c.json({ error: "client_unsubscribed" }, 400);
-    const stopped = await db.prepare("SELECT 1 FROM email_stops WHERE firm_id = ? AND email_hash = ?").bind(firm.id, await stopHash(c.env, client.email)).first();
-    if (stopped) return c.json({ error: "client_unsubscribed" }, 400);
+    if (await addressStopped(c.env, db, firm.id, client.email)) return c.json({ error: "client_unsubscribed" }, 400);
     // before the link is rotated, so a refusal leaves the client's working link alone
     if (!(await hasRoom(c.env, db, firm.id, req.id, now))) return c.json({ error: "email_limit" }, 429);
     invitee = { name: client.name, email: client.email };
@@ -485,7 +484,7 @@ requests.post("/requests/:id/link", async (c) => {
         tz: firm.tz,
         items: await missingItems(db, firm.id, req.id, false),
         url,
-        unsubUrl: await unsubUrl(c.env, firm.region as Region, req.client_id, firm.id),
+        unsubUrl: await unsubUrl(c.env, firm.region as Region, req.client_id, firm.id, invitee.email),
       },
       now,
     );
