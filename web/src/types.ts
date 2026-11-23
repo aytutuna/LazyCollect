@@ -41,7 +41,25 @@ export type Client = {
 
 export type Kind = "file" | "yesno" | "text" | "longtext" | "number" | "date" | "choice" | "multi";
 
-export type TemplateItem = { label: string; help?: string; required: boolean; kind?: Kind; options?: string[]; show_if?: { item: number; value: string }; example?: string };
+export type Filter = "everyone" | "adults" | "spouse" | "children" | "principal";
+
+export type TemplateItem = {
+  label: string;
+  help?: string;
+  required: boolean;
+  kind?: Kind;
+  options?: string[];
+  show_if?: { item: number; value: string };
+  example?: string;
+  per_person?: Filter;
+  expiry?: "expiry" | "issue";
+  valid_months?: number;
+  translation?: boolean;
+};
+
+export type Role = "principal" | "spouse" | "child" | "other";
+
+export type Applicant = { id: string; position: number; role: Role; name: string; dob: string | null };
 
 export type Template = { id: string; name: string; builtin: boolean; items: TemplateItem[] };
 
@@ -59,9 +77,11 @@ export type RequestRow = {
   unavailable: number;
   waived: number;
   unanswered: number;
+  expiring: number;
+  expiring_on: string | null;
 };
 
-export type RequestCounts = { all: number; to_review: number; waiting: number; overdue: number; due_soon: number; done: number };
+export type RequestCounts = { all: number; to_review: number; waiting: number; expiring: number; overdue: number; due_soon: number; done: number };
 
 export type ClientRow = Client & { requests: number };
 
@@ -84,6 +104,17 @@ export type Item = {
   answer: string | string[] | null;
   answer_at: number | null;
   hidden: boolean;
+  person_pos: number | null;
+  label_base: string | null;
+  for_pos: number | null;
+  companion: "question" | "translation" | "affidavit" | null;
+  translation: boolean;
+  expiry_rule: "expiry" | "issue" | null;
+  valid_months: number | null;
+  expires_on: string | null;
+  issued_on: string | null;
+  valid_to: string | null;
+  expiry_flag: "expired" | "short" | "soon" | null;
 };
 
 export type FileRow = { id: string; name: string; size: number; mime: string; uploaded_at: number; sent_back_at: number | null };
@@ -104,6 +135,10 @@ export type RequestDetail = {
   ended_at: number | null;
   keep_until: number | null;
   hold_at: number | null;
+  valid_until: string;
+  valid_until_set: boolean;
+  per_person_items: number;
+  people: Applicant[];
   items: ItemWithFiles[];
 };
 
@@ -137,7 +172,7 @@ export type Message = { id: string; kind: "invite" | "reminder" | "deadline" | "
 
 export type LinkResult = { url: string; emailed?: true; email_failed?: true };
 
-export type ClientItem = Omit<Item, "position" | "show_if_pos" | "show_if_value" | "answer_at" | "hidden"> & { files: Omit<FileRow, "mime">[] };
+export type ClientItem = Omit<Item, "position" | "show_if_pos" | "show_if_value" | "answer_at" | "hidden" | "label_base" | "for_pos" | "companion" | "translation" | "valid_to" | "expiry_flag"> & { files: Omit<FileRow, "mime">[] };
 
 export type Note = { id: string; author: "client" | "user"; body: string; created_at: number };
 
@@ -153,6 +188,7 @@ export type ClientView = {
   expires_at: number;
   contact: { name: string | null; email: string | null; phone: string | null; address: string | null } | null;
   notes: Note[];
+  people: { position: number; role: Role; name: string }[];
   items: ClientItem[];
 };
 

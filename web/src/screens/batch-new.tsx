@@ -216,6 +216,7 @@ export function NewBatch() {
                     ))}
                   </optgroup>
                 </select>
+                {templates.data.find((x) => x.id === templateId)?.items.some((i) => i.per_person) && <span class="hint">{t("batch.person_items")}</span>}
               </Field>
             ) : (
               <RequestPicker value={requestId} onChange={setRequestId} />
