@@ -1,11 +1,13 @@
 import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { itemsFromTemplate } from "./copy";
+import { ownsExamples, parseExample } from "./examples";
 import { usable } from "./firm";
 import { LINK_GRACE, sealToken } from "./links";
 import { MANUAL_SEQ, addressStopped, deliver, hasRoom, unsubUrl } from "./mail";
-import { ITEM_COLS, conditionOk, presentItem } from "./questions";
+import { ITEM_COLS, conditionOk, isQuestion, presentItem } from "./questions";
 import { regionOf, type Region } from "./regions";
+import { parseReasons } from "./reasons";
 import { listRequests } from "./search";
 import { missingItems, senderName, sendersOf } from "./reminders";
 import { endNow, syncStatus } from "./status";
@@ -70,7 +72,7 @@ requests.post("/requests", async (c) => {
     }
   } else if (body.items !== undefined) {
     const parsed = parseItems(body.items);
-    if (!parsed) return invalid(c);
+    if (!parsed || !(await ownsExamples(db, firmId, parsed.map((i) => i.example)))) return invalid(c);
     items = parsed;
   }
 
@@ -100,7 +102,7 @@ export async function loadRequest(c: Context<AppEnv>, id: string) {
     .bind(firmId, id)
     .all<any>();
   const { results: files } = await db
-    .prepare("SELECT id, item_id, name, size, mime, uploaded_at FROM files WHERE firm_id = ? AND request_id = ? AND state = 'live' AND deleted_at IS NULL ORDER BY uploaded_at, rowid")
+    .prepare("SELECT id, item_id, name, size, mime, uploaded_at, sent_back_at FROM files WHERE firm_id = ? AND request_id = ? AND state = 'live' AND deleted_at IS NULL ORDER BY uploaded_at, rowid")
     .bind(firmId, id)
     .all<{ item_id: string }>();
   return {
@@ -197,6 +199,7 @@ requests.post("/requests/:id/items", async (c) => {
   const id = randomId();
   const firmId = c.get("firm").id;
   const db = c.get("db");
+  if (!(await ownsExamples(db, firmId, [item.example]))) return invalid(c);
   if (item.show_if) {
     // here the condition names a position that is already in the request
     const p = await db
@@ -208,13 +211,13 @@ requests.post("/requests/:id/items", async (c) => {
   const [res] = await db.batch([
     db
       .prepare(
-        `INSERT INTO items (id, firm_id, request_id, position, label, help, required, kind, options_json, show_if_pos, show_if_value)
-         SELECT ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM items WHERE firm_id = ? AND request_id = ?), ?, ?, ?, ?, ?, ?, ?
+        `INSERT INTO items (id, firm_id, request_id, position, label, help, required, kind, options_json, show_if_pos, show_if_value, example)
+         SELECT ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM items WHERE firm_id = ? AND request_id = ?), ?, ?, ?, ?, ?, ?, ?, ?
          WHERE ${LIVE} AND (SELECT COUNT(*) FROM items WHERE firm_id = ? AND request_id = ?) < ${MAX_ITEMS}`,
       )
       .bind(
         id, firmId, req.id, firmId, req.id, item.label, item.help ?? null, item.required ? 1 : 0,
-        item.kind ?? "file", item.options ? JSON.stringify(item.options) : null, item.show_if?.item ?? null, item.show_if?.value ?? null,
+        item.kind ?? "file", item.options ? JSON.stringify(item.options) : null, item.show_if?.item ?? null, item.show_if?.value ?? null, item.example ?? null,
         firmId, req.id, firmId, req.id,
       ),
     audit(c, "item.add", "item", id, { request: req.id }, { sql: "EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND id = ?)", binds: [firmId, id] }),
@@ -246,6 +249,11 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
     if (typeof body.required !== "boolean") return invalid(c);
     fields.required = body.required ? 1 : 0;
   }
+  if ("example" in body) {
+    const example = parseExample(body.example);
+    if (example === undefined) return invalid(c);
+    fields.example = example;
+  }
   if (!Object.keys(fields).length) return invalid(c);
   const req = await findRequest(c);
   if (!req) return notFound(c);
@@ -253,6 +261,7 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
   const set = setClause(fields);
   const db = c.get("db");
   const firmId = c.get("firm").id;
+  if (!(await ownsExamples(db, firmId, [fields.example as string | null]))) return invalid(c);
   const itemId = c.req.param("itemId");
   const [res] = await db.batch([
     db
@@ -319,13 +328,18 @@ requests.post("/requests/:id/items/:itemId/review", async (c) => {
   const seen = answered !== undefined && Array.isArray(body.files) && body.files.every((f) => typeof f === "string") ? [...new Set(body.files as string[])] : null;
   if (!seen) return invalid(c);
   const approve = body.decision === "approve";
-  const note = approve ? null : text(body.note, 500);
-  if (!approve && !note) return invalid(c);
   const req = await findRequest(c);
   if (!req) return notFound(c);
   const db = c.get("db");
   const firmId = c.get("firm").id;
   const itemId = c.req.param("itemId");
+  const kind = (await db.prepare("SELECT kind FROM items WHERE firm_id = ? AND request_id = ? AND id = ?").bind(firmId, req.id, itemId).first<{ kind: string }>())?.kind;
+  if (!kind) return notFound(c);
+  // a document needs a reason; a question can go back with just a note, and "other" is explained by it
+  const reasons = approve ? [] : parseReasons(body.reasons, kind);
+  const note = approve ? null : maybe(body.note, 500);
+  if (!reasons || note === undefined) return invalid(c);
+  if (!approve && ((!reasons.length && (!isQuestion(kind) || !note)) || (reasons.includes("other") && !note))) return invalid(c);
   const status = approve ? "approved" : "rejected";
   const ready = `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status IN ('submitted', 'approved'))
     AND EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('open', 'complete') AND deleted_at IS NULL)`;
@@ -339,15 +353,22 @@ requests.post("/requests/:id/items/:itemId/review", async (c) => {
   // the audit row goes first: its condition reads the status the update changes
   const at = Date.now();
   const [, res] = await db.batch([
-    audit(c, "item.review", "item", itemId, { request: req.id, decision: body.decision }, { sql: `${ready} AND ${same}`, binds: [...binds, ...sameBinds] }),
+    audit(c, "item.review", "item", itemId, { request: req.id, decision: body.decision, ...(reasons.length ? { reasons } : {}) }, { sql: `${ready} AND ${same}`, binds: [...binds, ...sameBinds] }),
     db
-      .prepare(`UPDATE items SET status = ?, reject_note = ?, reviewed_by = ?, reviewed_at = ? WHERE firm_id = ? AND request_id = ? AND id = ? AND ${ready} AND ${same}`)
-      .bind(status, note, c.get("session")!.userId, at, firmId, req.id, itemId, ...binds, ...sameBinds),
+      .prepare(`UPDATE items SET status = ?, reject_note = ?, reject_reasons = ?, reviewed_by = ?, reviewed_at = ? WHERE firm_id = ? AND request_id = ? AND id = ? AND ${ready} AND ${same}`)
+      .bind(status, note, reasons.length ? JSON.stringify(reasons) : null, c.get("session")!.userId, at, firmId, req.id, itemId, ...binds, ...sameBinds),
     syncStatus(db, firmId, req.id),
     // the client hears about rejections from the reminder pass, once they stop coming in
     ...(approve
       ? []
       : [
+          // the files the reviewer saw are the ones sent back; a newer upload is not
+          db
+            .prepare(
+              `UPDATE files SET sent_back_at = COALESCE(sent_back_at, ?) WHERE firm_id = ? AND item_id = ? AND state = 'live' AND deleted_at IS NULL
+               AND EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ? AND status = 'rejected' AND reviewed_at = ?)`,
+            )
+            .bind(at, firmId, itemId, firmId, req.id, itemId, at),
           db
             .prepare(
               `UPDATE requests SET reject_mark_at = ? WHERE firm_id = ? AND id = ?

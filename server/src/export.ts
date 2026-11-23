@@ -5,6 +5,7 @@ import { fileKey, decryptStream } from "./crypt";
 import { disposition } from "./files";
 import { firmDek } from "./keys";
 import { visible } from "./questions";
+import { sentBackText } from "./reasons";
 import { regionOf, type Region } from "./regions";
 import { findRequest } from "./requests";
 import type { AppEnv } from "./session";
@@ -13,34 +14,45 @@ import { END_RECORD, cleanName, entryOverhead, uniqueName, zipStream, type ZipEn
 
 export const exportZip = new Hono<AppEnv>();
 
-// what the client said about items they could not send, and what the account answered; null when no item has such a story
+// what the client said about items they could not send, what the account answered, and what was sent back and why; null when no item has such a story
 async function checklistText(db: D1Database, firmId: string, requestId: string): Promise<string | null> {
   const { results } = await db
     .prepare(
-      `SELECT label, status, reject_note, unavailable_note FROM items WHERE firm_id = ? AND request_id = ?
-       AND (status IN ('unavailable', 'waived') OR unavailable_at IS NOT NULL) ORDER BY position`,
+      `SELECT label, status, reject_note, reject_reasons, unavailable_note, unavailable_at FROM items WHERE firm_id = ? AND request_id = ?
+       AND (status IN ('unavailable', 'waived') OR unavailable_at IS NOT NULL OR (status = 'rejected' AND reject_reasons IS NOT NULL)) ORDER BY position`,
     )
     .bind(firmId, requestId)
-    .all<{ label: string; status: string; reject_note: string | null; unavailable_note: string | null }>();
+    .all<{ label: string; status: string; reject_note: string | null; reject_reasons: string | null; unavailable_note: string | null; unavailable_at: number | null }>();
   if (!results.length) return null;
-  const state = (i: { status: string; reject_note: string | null }) =>
-    i.status === "waived" ? "accepted as not needed" : i.status === "unavailable" ? "client says they do not have it, waiting for an answer" : i.reject_note ? `asked again: ${i.reject_note}` : "client has it after all";
-  return results.map((i) => `${i.label}\n  ${state(i)}\n  ${i.unavailable_note ? `client's reason: ${i.unavailable_note}` : "no reason given"}\n`).join("\n");
+  const state = (i: (typeof results)[number]) =>
+    i.status === "waived"
+      ? "accepted as not needed"
+      : i.status === "unavailable"
+        ? "client says they do not have it, waiting for an answer"
+        : i.reject_reasons
+          ? `sent back: ${sentBackText(i.reject_reasons, i.reject_note)}`
+          : i.reject_note
+            ? `asked again: ${i.reject_note}`
+            : "client has it after all";
+  // an item only sent back has no word from the client to report
+  const said = (i: (typeof results)[number]) =>
+    i.unavailable_at === null && i.status !== "waived" ? "" : `  ${i.unavailable_note ? `client's reason: ${i.unavailable_note}` : "no reason given"}\n`;
+  return results.map((i) => `${i.label}\n  ${state(i)}\n${said(i)}`).join("\n");
 }
 
 // the questions that apply to the client and what they answered, in checklist order; null when there are none
 async function answersText(db: D1Database, firmId: string, requestId: string): Promise<string | null> {
   const { results } = await db
     .prepare(
-      `SELECT label, kind, answer, status, reject_note FROM items i WHERE firm_id = ? AND request_id = ? AND kind != 'file' AND ${visible("i")} ORDER BY position`,
+      `SELECT label, kind, answer, status, reject_note, reject_reasons FROM items i WHERE firm_id = ? AND request_id = ? AND kind != 'file' AND ${visible("i")} ORDER BY position`,
     )
     .bind(firmId, requestId)
-    .all<{ label: string; kind: string; answer: string | null; status: string; reject_note: string | null }>();
+    .all<{ label: string; kind: string; answer: string | null; status: string; reject_note: string | null; reject_reasons: string | null }>();
   if (!results.length) return null;
   const shown = (i: { kind: string; answer: string | null }) =>
     i.answer === null ? "no answer" : i.kind === "multi" ? (JSON.parse(i.answer) as string[]).join(", ") : i.kind === "yesno" ? (i.answer === "yes" ? "Yes" : "No") : i.answer;
   return results
-    .map((i) => `${i.label}\n  ${shown(i)}${i.status === "rejected" && i.reject_note ? `\n  sent back: ${i.reject_note}` : ""}\n`)
+    .map((i) => `${i.label}\n  ${shown(i)}${i.status === "rejected" && (i.reject_note || i.reject_reasons) ? `\n  sent back: ${sentBackText(i.reject_reasons, i.reject_note)}` : ""}\n`)
     .join("\n");
 }
 

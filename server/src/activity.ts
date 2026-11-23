@@ -7,9 +7,12 @@ import { invalid, notFound } from "./validate";
 export const activity = new Hono<AppEnv>();
 
 const PAGE = 50;
-const COLS = "id, at, actor_type, actor_id, action, object_type, object_id, request_id";
+// the reasons a document was sent back for are removed from the audit row when the request is purged
+const COLS = `id, at, actor_type, actor_id, action, object_type, object_id, request_id,
+  CASE WHEN action = 'item.review' THEN json_extract(meta, '$.decision') END AS decision,
+  CASE WHEN action = 'item.review' THEN json_extract(meta, '$.reasons') END AS reasons`;
 
-type Row = { id: string; at: number; actor_type: string; actor_id: string | null; action: string; object_type: string; object_id: string; request_id: string | null };
+type Row = { id: string; at: number; actor_type: string; actor_id: string | null; action: string; object_type: string; object_id: string; request_id: string | null; decision: string | null; reasons: string | null };
 
 // staff emails come from CONTROL, by the ids this account's own rows name, so a person who has since moved to another account stays named; the links are checked against what still exists; neither is joined in the region query
 async function enrich(c: Context<AppEnv>, rows: Row[]) {
@@ -40,6 +43,7 @@ async function enrich(c: Context<AppEnv>, rows: Row[]) {
       actor_type: r.actor_type,
       actor: r.actor_id ? (email.get(r.actor_id) ?? null) : null,
       action: r.action,
+      ...(r.decision ? { decision: r.decision, reasons: r.reasons ? (JSON.parse(r.reasons) as string[]) : [] } : {}),
       object_type: r.object_type,
       object_id: r.object_id,
       request_id: request && liveRequests.has(request) ? request : null,

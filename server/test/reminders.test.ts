@@ -533,8 +533,8 @@ describe("rejected items email", () => {
     await runReminders(env, atHour(day, 10, TZ) + 11 * MINUTE);
     const mails = sent.filter((m) => m.subject.startsWith("Please resend"));
     expect(mails).toHaveLength(1);
-    expect(mails[0].text).toContain("Passport (sent back: Blurry)");
-    expect(mails[0].text).toContain("Visa (sent back: Wrong year)");
+    expect(mails[0].text).toContain("Passport (sent back: blurry or hard to read; Blurry)");
+    expect(mails[0].text).toContain("Visa (sent back: blurry or hard to read; Wrong year)");
     expect(mails[0].text).toContain("/u/na_");
     await runReminders(env, atHour(day, 10, TZ) + 21 * MINUTE);
     expect(sent.filter((m) => m.subject.startsWith("Please resend"))).toHaveLength(1);

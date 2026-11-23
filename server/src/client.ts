@@ -43,13 +43,13 @@ export async function findLink(env: Env, token: string): Promise<LiveLink | null
 export async function clientItems(db: D1Database, firmId: string, requestId: string) {
   const { results } = await db
     .prepare(
-      `SELECT id, label, help, required, status, reject_note, unavailable_note, kind, options_json, answer FROM items i
+      `SELECT id, label, help, required, status, reject_note, reject_reasons, unavailable_note, kind, example, options_json, answer FROM items i
        WHERE firm_id = ? AND request_id = ? AND ${visible("i")} ORDER BY position`,
     )
     .bind(firmId, requestId)
     .all<any>();
   const { results: files } = await db
-    .prepare("SELECT id, item_id, name, size, uploaded_at FROM files WHERE firm_id = ? AND request_id = ? AND state = 'live' AND deleted_at IS NULL ORDER BY uploaded_at, rowid")
+    .prepare("SELECT id, item_id, name, size, uploaded_at, sent_back_at FROM files WHERE firm_id = ? AND request_id = ? AND state = 'live' AND deleted_at IS NULL ORDER BY uploaded_at, rowid")
     .bind(firmId, requestId)
     .all<{ item_id: string }>();
   return results.map((i) => ({ ...presentItem(i), files: files.filter((f) => f.item_id === i.id).map(({ item_id: _item, ...f }) => f) }));

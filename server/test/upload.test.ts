@@ -24,7 +24,7 @@ describe("client upload", () => {
 
     const view = await (await api(path)).json<any>();
     expect(view.items[0].status).toBe("submitted");
-    expect(view.items[0].files).toEqual([{ id: file.id, name: "Passport scan.pdf", size: 5000, uploaded_at: file.uploaded_at }]);
+    expect(view.items[0].files).toEqual([{ id: file.id, name: "Passport scan.pdf", size: 5000, uploaded_at: file.uploaded_at, sent_back_at: null }]);
     expect(view.items[1].files).toEqual([]);
   });
 

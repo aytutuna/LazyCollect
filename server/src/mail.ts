@@ -1,4 +1,5 @@
 import { Transient, escapeHtml, sendMail } from "./email";
+import { reasonLabels } from "./reasons";
 import { isRegion, type Region } from "./regions";
 import { DAY, MINUTE, hmac, randomId, sha256 } from "./util";
 
@@ -17,7 +18,7 @@ const PAID_DAILY = 500;
 const INVITES_PER_REQUEST = 3;
 
 export type Kind = "invite" | "reminder" | "deadline" | "rejected" | "answer";
-export type Missing = { label: string; required: boolean; reject_note: string | null };
+export type Missing = { label: string; required: boolean; reject_note: string | null; reject_reasons?: string | null };
 
 export type Letter = {
   kind: Kind;
@@ -71,7 +72,10 @@ function intro(l: Letter, date: string): string {
 }
 
 function lists(l: Letter) {
-  const line = (i: Missing) => (i.reject_note ? `${i.label} (sent back: ${i.reject_note})` : i.label);
+  const line = (i: Missing) => {
+    const why = [...reasonLabels(i.reject_reasons ?? null), ...(i.reject_note ? [i.reject_note] : [])].join("; ");
+    return why ? `${i.label} (sent back: ${why})` : i.label;
+  };
   if (l.kind === "answer") return [];
   if (l.kind === "rejected") return [{ heading: "Please send again:", items: l.items.map(line) }];
   const needed = l.items.filter((i) => i.required).map(line);

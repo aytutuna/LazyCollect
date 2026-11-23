@@ -94,7 +94,7 @@ unavailable.post("/requests/:id/items/:itemId/unavailable", async (c) => {
   const [, res] = await db.batch([
     audit(c, accept ? "item.waive" : "item.ask_again", "item", itemId, { request: req.id }, { sql: ready, binds }),
     db
-      .prepare(`UPDATE items SET status = ?, reject_note = ?, reviewed_by = ?, reviewed_at = ? WHERE firm_id = ? AND request_id = ? AND id = ? AND ${ready}`)
+      .prepare(`UPDATE items SET status = ?, reject_note = ?, reject_reasons = NULL, reviewed_by = ?, reviewed_at = ? WHERE firm_id = ? AND request_id = ? AND id = ? AND ${ready}`)
       .bind(accept ? "waived" : "rejected", note, c.get("session")!.userId, at, firmId, req.id, itemId, ...binds),
     syncStatus(db, firmId, req.id),
     ...(accept
