@@ -32,6 +32,30 @@ describe("client link", () => {
     expect(row.ip_hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("records the first time the client opened the link, once", async () => {
+    const { path, req, cookie } = await openRequest();
+    const opened = () => env.DB_NA.prepare("SELECT first_opened_at FROM requests WHERE id = ?").bind(req.id).first<any>().then((r) => r.first_opened_at);
+    expect(await opened()).toBeNull();
+    await api(path);
+    const first = await opened();
+    expect(first).toBeGreaterThan(0);
+    await env.DB_NA.prepare("UPDATE audit SET at = 1 WHERE action = 'link.open'").run();
+    await api(path);
+    expect(await opened()).toBe(first);
+    expect((await (await api(`/api/requests/${req.id}`, { cookie })).json<any>()).first_opened_at).toBe(first);
+  });
+
+  it("does not count the account's own staff opening the link while signed in", async () => {
+    const { path, req, cookie } = await openRequest();
+    await api(path, { cookie });
+    const row = await env.DB_NA.prepare("SELECT first_opened_at FROM requests WHERE id = ?").bind(req.id).first<any>();
+    expect(row.first_opened_at).toBeNull();
+    await api(`/api/requests/${req.id}/link`, { cookie });
+    expect((await env.DB_NA.prepare("SELECT first_opened_at FROM requests WHERE id = ?").bind(req.id).first<any>()).first_opened_at).toBeNull();
+    await api(path);
+    expect((await env.DB_NA.prepare("SELECT first_opened_at FROM requests WHERE id = ?").bind(req.id).first<any>()).first_opened_at).toBeGreaterThan(0);
+  });
+
   it("answers the same 404 for every kind of bad token", async () => {
     const { cookie, req, path } = await openRequest();
     const token = path.split("/c/")[1];

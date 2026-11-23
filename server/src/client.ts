@@ -15,7 +15,7 @@ export type LiveLink = {
   region: Region;
   db: D1Database;
   hash: string;
-  req: { id: string; firm_id: string; firm_name: string; tz: string | null; title: string; note: string | null; deadline: number; status: string; expires_at: number };
+  req: { id: string; firm_id: string; firm_name: string; tz: string | null; title: string; note: string | null; deadline: number; status: string; expires_at: number; first_opened_at: number | null };
 };
 
 export async function findLink(env: Env, token: string): Promise<LiveLink | null> {
@@ -26,7 +26,7 @@ export async function findLink(env: Env, token: string): Promise<LiveLink | null
   const hash = await hmac(env.HASH_KEY, match[2]);
   const req = await db
     .prepare(
-      `SELECT r.id, r.firm_id, r.firm_name, r.tz, r.title, r.note, r.deadline, r.status, l.expires_at
+      `SELECT r.id, r.firm_id, r.firm_name, r.tz, r.title, r.note, r.deadline, r.status, r.first_opened_at, l.expires_at
        FROM links l JOIN requests r ON r.firm_id = l.firm_id AND r.id = l.request_id
        JOIN clients cl ON cl.firm_id = r.firm_id AND cl.id = r.client_id AND cl.deleted_at IS NULL
        WHERE l.token_hash = ? AND l.revoked_at IS NULL AND l.expires_at > ?
@@ -60,6 +60,10 @@ client.get("/c/:token", async (c) => {
     .all();
   // only what the emails to this client already show
   const [sender] = (await sendersOf(c.env, link.region, [req.firm_id])).values();
+  // the first look by the client counts; the account's own staff opening the link while signed in do not
+  if (req.first_opened_at === null && c.get("session")?.firmId !== req.firm_id) {
+    await db.prepare("UPDATE requests SET first_opened_at = ? WHERE firm_id = ? AND id = ? AND first_opened_at IS NULL").bind(now, req.firm_id, req.id).run();
+  }
   const meta = JSON.stringify({ link: hash });
   await db
     .prepare(

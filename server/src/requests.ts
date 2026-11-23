@@ -15,7 +15,7 @@ import { invalid, maybe, notFound, readBody, setClause, text } from "./validate"
 
 export const requests = new Hono<AppEnv>();
 
-const COLS = "id, client_id, title, note, deadline, firm_name, status, sent_at, closed_at, created_at, reminders_on, next_reminder_at, ended_at, keep_until, hold_at";
+const COLS = "id, client_id, title, note, deadline, firm_name, status, sent_at, closed_at, created_at, first_opened_at, reminders_on, next_reminder_at, ended_at, keep_until, hold_at";
 export const ITEM_COLS = "id, position, label, help, required, status, reject_note, reviewed_at, unavailable_note";
 const MAX_ITEMS = 100;
 const MAX_PER_DAY = 300;
