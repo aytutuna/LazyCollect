@@ -12,6 +12,7 @@ interface __BaseEnv_Env {
 	FIRM_WRITE: RateLimit;
 	EXPORT: RateLimit;
 	FILE_VIEW: RateLimit;
+	NOTE: RateLimit;
 	ASSETS: Fetcher;
 	APP_URL: "https://collect.alazy.app";
 	EMAIL_FROM: "Lazy Collect <noreply@alazy.app>";

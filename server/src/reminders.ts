@@ -265,12 +265,14 @@ async function noticePass(env: Env, db: D1Database, now: number) {
     .prepare(
       `SELECT r.id, r.firm_id, r.title, r.notified_at, r.notice_due_at AS due, r.notice_tries AS tries, c.name AS client_name,
          (SELECT COUNT(*) FROM files f WHERE f.firm_id = r.firm_id AND f.request_id = r.id AND f.uploaded_by = 'client'
-           AND f.state = 'live' AND f.deleted_at IS NULL AND f.uploaded_at > COALESCE(r.notified_at, 0)) AS n
+           AND f.state = 'live' AND f.deleted_at IS NULL AND f.uploaded_at > COALESCE(r.notified_at, 0)) AS n,
+         (SELECT COUNT(*) FROM notes q WHERE q.firm_id = r.firm_id AND q.request_id = r.id AND q.author = 'client' AND q.created_at > COALESCE(r.notified_at, 0)) AS q,
+         (SELECT COUNT(*) FROM items i WHERE i.firm_id = r.firm_id AND i.request_id = r.id AND i.status = 'unavailable' AND i.unavailable_at > COALESCE(r.notified_at, 0)) AS u
        ${JOIN} WHERE r.notice_due_at IS NOT NULL AND (r.notified_at IS NULL OR r.notified_at <= ?) AND r.deleted_at IS NULL
        ORDER BY r.notice_due_at LIMIT ${BATCH}`,
     )
     .bind(now - HOUR)
-    .all<{ id: string; firm_id: string; title: string; notified_at: number | null; due: number; tries: number; client_name: string; n: number }>();
+    .all<{ id: string; firm_id: string; title: string; notified_at: number | null; due: number; tries: number; client_name: string; n: number; q: number; u: number }>();
   const owners = await ownersOf(env, results.map((r) => r.firm_id));
 
   await each(results, async (r) => {
@@ -279,8 +281,13 @@ async function noticePass(env: Env, db: D1Database, now: number) {
       .bind(now, r.firm_id, r.id, r.due)
       .run();
     const to = owners.get(r.firm_id);
-    if (claimed.meta.changes !== 1 || !to || !r.n) return;
-    const what = `${r.client_name} uploaded ${r.n} ${r.n === 1 ? "document" : "documents"} to ${r.title}`;
+    if (claimed.meta.changes !== 1 || !to || !(r.n || r.q || r.u)) return;
+    const parts = [
+      r.n && `uploaded ${r.n} ${r.n === 1 ? "document" : "documents"}`,
+      r.u && `said they don't have ${r.u} ${r.u === 1 ? "item" : "items"}`,
+      r.q && `sent ${r.q} ${r.q === 1 ? "message" : "messages"}`,
+    ].filter(Boolean);
+    const what = `${r.client_name} ${parts.join(", ")} ${r.u || r.q ? "on" : "to"} ${r.title}`;
     try {
       await sendMail(env, {
         from: env.EMAIL_FROM,

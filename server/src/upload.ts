@@ -202,7 +202,7 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
         .bind(Date.now(), ...here, req.firm_id, req.id, req.firm_id, req.id, itemId),
       db
         .prepare(
-          `UPDATE items SET status = 'submitted' WHERE firm_id = ? AND request_id = ? AND id = ? AND status IN ('empty', 'rejected')
+          `UPDATE items SET status = 'submitted' WHERE firm_id = ? AND request_id = ? AND id = ? AND status IN ('empty', 'rejected', 'unavailable', 'waived')
            AND EXISTS (SELECT 1 FROM files WHERE firm_id = ? AND id = ? AND state = 'live')`,
         )
         .bind(req.firm_id, req.id, itemId, ...here),

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { rateLimited } from "./auth";
 import { isRegion, regionOf, type Region } from "./regions";
+import { sendersOf } from "./reminders";
 import type { AppEnv } from "./session";
 import { HOUR, hmac, ipPrefix, randomId } from "./util";
 import { notFound } from "./validate";
@@ -13,7 +14,7 @@ export type LiveLink = {
   region: Region;
   db: D1Database;
   hash: string;
-  req: { id: string; firm_id: string; firm_name: string; tz: string | null; title: string; note: string | null; deadline: number; status: string };
+  req: { id: string; firm_id: string; firm_name: string; tz: string | null; title: string; note: string | null; deadline: number; status: string; expires_at: number };
 };
 
 export async function findLink(env: Env, token: string): Promise<LiveLink | null> {
@@ -24,7 +25,7 @@ export async function findLink(env: Env, token: string): Promise<LiveLink | null
   const hash = await hmac(env.HASH_KEY, match[2]);
   const req = await db
     .prepare(
-      `SELECT r.id, r.firm_id, r.firm_name, r.tz, r.title, r.note, r.deadline, r.status
+      `SELECT r.id, r.firm_id, r.firm_name, r.tz, r.title, r.note, r.deadline, r.status, l.expires_at
        FROM links l JOIN requests r ON r.firm_id = l.firm_id AND r.id = l.request_id
        JOIN clients cl ON cl.firm_id = r.firm_id AND cl.id = r.client_id AND cl.deleted_at IS NULL
        WHERE l.token_hash = ? AND l.revoked_at IS NULL AND l.expires_at > ?
@@ -45,13 +46,19 @@ client.get("/c/:token", async (c) => {
   const now = Date.now();
 
   const { results } = await db
-    .prepare("SELECT id, label, help, required, status, reject_note FROM items WHERE firm_id = ? AND request_id = ? ORDER BY position")
+    .prepare("SELECT id, label, help, required, status, reject_note, unavailable_note FROM items WHERE firm_id = ? AND request_id = ? ORDER BY position")
     .bind(req.firm_id, req.id)
     .all<{ id: string; required: number }>();
   const { results: files } = await db
     .prepare("SELECT id, item_id, name, size, uploaded_at FROM files WHERE firm_id = ? AND request_id = ? AND state = 'live' AND deleted_at IS NULL ORDER BY uploaded_at, rowid")
     .bind(req.firm_id, req.id)
     .all<{ item_id: string }>();
+  const { results: notes } = await db
+    .prepare("SELECT id, author, body, created_at FROM notes WHERE firm_id = ? AND request_id = ? ORDER BY created_at, rowid LIMIT 300")
+    .bind(req.firm_id, req.id)
+    .all();
+  // only what the emails to this client already show
+  const [sender] = (await sendersOf(c.env, link.region, [req.firm_id])).values();
   const meta = JSON.stringify({ link: hash });
   await db
     .prepare(
@@ -68,6 +75,9 @@ client.get("/c/:token", async (c) => {
     note: req.note,
     deadline: req.deadline,
     status: req.status,
+    expires_at: req.expires_at,
+    contact: sender ? { name: sender.legal_name ?? sender.name, email: sender.owner_email, phone: sender.phone, address: sender.address } : null,
+    notes,
     items: results.map((i) => ({
       ...i,
       required: i.required === 1,
