@@ -22,6 +22,7 @@ export async function stripe<T>(env: Env, method: "GET" | "POST" | "DELETE", pat
   if (!env.STRIPE_SECRET_KEY) throw new Error("STRIPE_SECRET_KEY is not set");
   const body = new URLSearchParams();
   if (params) encode(params, "", body);
+  const query = method === "GET" && params ? `?${body}` : "";
   const headers: Record<string, string> = { authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, "stripe-version": API_VERSION };
   if (method === "POST") {
     headers["content-type"] = "application/x-www-form-urlencoded";
@@ -29,7 +30,7 @@ export async function stripe<T>(env: Env, method: "GET" | "POST" | "DELETE", pat
   }
   let res: Response;
   try {
-    res = await fetch(`${env.STRIPE_API_BASE ?? "https://api.stripe.com"}${path}`, {
+    res = await fetch(`${env.STRIPE_API_BASE ?? "https://api.stripe.com"}${path}${query}`, {
       method,
       headers,
       body: method === "POST" ? body : undefined,

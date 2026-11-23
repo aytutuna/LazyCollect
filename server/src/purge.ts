@@ -7,7 +7,10 @@ const BUDGET = 20;
 const RETENTION_BATCH = 50;
 
 type Reason = "deleted" | "retention" | "closed";
-type Target = { id: string; firm_id: string; deleted_reason?: string | null };
+type Target = { id: string; firm_id: string; deleted_reason?: string | null; deleted_with_account?: number };
+
+// the request's own reason for going; the column is separate because deleted_reason's check can't be widened without rebuilding the table
+const reasonOf = (r: Target): Reason => (r.deleted_reason === "retention" ? "retention" : r.deleted_with_account ? "closed" : "deleted");
 
 // A request is only retired once it is closed or its link has run out, so a live link is never cut. Takes the time once.
 export const FINISHED = `ended_at IS NOT NULL AND hold_at IS NULL AND deleted_at IS NULL AND purging_at IS NULL
@@ -83,7 +86,7 @@ async function purgeClient(db: D1Database, bucket: R2Bucket, client: Target, bud
   let files = 0;
   const { results } = await db
     .prepare(
-      `SELECT id, firm_id, deleted_reason FROM requests WHERE firm_id = ? AND client_id = ? AND hold_at IS NULL AND (purge_failed_at IS NULL OR purge_failed_at < ?)
+      `SELECT id, firm_id, deleted_reason, deleted_with_account FROM requests WHERE firm_id = ? AND client_id = ? AND hold_at IS NULL AND (purge_failed_at IS NULL OR purge_failed_at < ?)
        ORDER BY COALESCE(purge_failed_at, 0), created_at LIMIT ?`,
     )
     .bind(client.firm_id, client.id, now - HOUR, budget.left)
@@ -92,7 +95,7 @@ async function purgeClient(db: D1Database, bucket: R2Bucket, client: Target, bud
   for (const req of results) {
     budget.left--;
     try {
-      files += (await purgeRequest(db, bucket, req, req.deleted_reason === "retention" ? "retention" : "deleted", now, cutoff)) ?? 0;
+      files += (await purgeRequest(db, bucket, req, reasonOf(req), now, cutoff)) ?? 0;
     } catch (e) {
       log(e);
       failed = true;
@@ -157,14 +160,14 @@ export async function purgeExpired(env: Env, now = Date.now()) {
       const budget = { left: BUDGET };
       const { results } = await db
         .prepare(
-          `SELECT id, firm_id, deleted_reason FROM requests WHERE deleted_at <= ? AND hold_at IS NULL AND (purging_at IS NULL OR purging_at < ?)
+          `SELECT id, firm_id, deleted_reason, deleted_with_account FROM requests WHERE deleted_at <= ? AND hold_at IS NULL AND (purging_at IS NULL OR purging_at < ?)
            AND (purge_failed_at IS NULL OR purge_failed_at < ?) ORDER BY COALESCE(purge_failed_at, 0), deleted_at LIMIT ?`,
         )
         .bind(cutoff, now - HOUR, now - HOUR, budget.left)
         .all<Target>();
       for (const req of results) {
         budget.left--;
-        await purgeRequest(db, bucket, req, req.deleted_reason === "retention" ? "retention" : "deleted", now, cutoff).catch(log);
+        await purgeRequest(db, bucket, req, reasonOf(req), now, cutoff).catch(log);
       }
 
       if (budget.left <= 0) continue;

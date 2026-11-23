@@ -44,6 +44,11 @@ export const stripeFake = {
     if (method === "POST" && url.pathname === "/v1/customers") return reply({ id: `cus_${++this.next}` });
     if (method === "POST" && url.pathname === "/v1/checkout/sessions") return reply({ id: `cs_${++this.next}`, url: `https://checkout.stripe.test/cs_${this.next}` });
     if (method === "POST" && url.pathname === "/v1/billing_portal/sessions") return reply({ url: `https://portal.stripe.test/p_${++this.next}` });
+    if (method === "GET" && url.pathname === "/v1/subscriptions") {
+      const customer = url.searchParams.get("customer");
+      const limit = Number(url.searchParams.get("limit") ?? 10);
+      return Response.json({ data: [...this.subs.values()].filter((s) => s.customer === customer).slice(0, limit) });
+    }
     const sub = /^\/v1\/subscriptions\/([\w-]+)$/.exec(url.pathname);
     if (sub && method === "GET") {
       const found = this.subs.get(sub[1]);

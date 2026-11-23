@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { purgeClosed } from "../src/account";
+import { purgeExpired } from "../src/purge";
 import { canSend } from "../src/reminders";
 import { DAY } from "../src/util";
 import { addMember, api, firmRow, inDays, login, mockOutbound, openRequest, pdf, upload } from "./helpers";
@@ -154,6 +155,16 @@ describe("reopen", () => {
     expect((await firmRow(again)).closed_at).not.toBeNull();
   });
 
+  it("stays possible past the 30 days while held requests remain", async () => {
+    const { cookie, req } = await openRequest();
+    await api(`/api/requests/${req.id}/hold`, { method: "PUT", cookie, body: { on: true } });
+    await close(cookie);
+    const again = await login();
+    await ageClose(40);
+    expect((await reopen(again)).status).toBe(200);
+    expect((await firmRow(again)).closed_at).toBeNull();
+  });
+
   it("does not let a member reopen", async () => {
     const { cookie } = await openRequest();
     await close(cookie);
@@ -177,6 +188,60 @@ describe("purge of a closed account", () => {
     const tried = await env.CONTROL.prepare("SELECT purge_tried_at FROM firms WHERE id = ?").bind(held.firm.id).first<any>();
     expect(tried.purge_tried_at).toBeGreaterThan(1);
     expect(await env.CONTROL.prepare("SELECT 1 FROM firms WHERE id = ?").bind(other.firm.id).first()).toBeNull();
+  });
+
+  it("cancels subscriptions still open at Stripe before the customer link goes", async () => {
+    const { cookie, firm } = await withUpload();
+    await env.CONTROL.prepare("UPDATE firms SET stripe_customer_id = 'cus_9'").run();
+    stripeFake.sub("sub_live", "cus_9");
+    stripeFake.sub("sub_done", "cus_9", { status: "canceled" });
+    stripeFake.sub("sub_other", "cus_8");
+    await close(cookie);
+    await ageClose(31);
+    await purgeClosed(env);
+    expect(stripeFake.subs.get("sub_live")!.status).toBe("canceled");
+    expect(stripeFake.subs.get("sub_other")!.status).toBe("active");
+    expect(stripeFake.calls.some((c) => c.method === "GET" && c.path === "/v1/subscriptions")).toBe(true);
+    expect(await env.CONTROL.prepare("SELECT 1 FROM firms WHERE id = ?").bind(firm.id).first()).toBeNull();
+  });
+
+  it("keeps the firm when Stripe fails, and finishes on the next run", async () => {
+    const { cookie, firm } = await withUpload();
+    await env.CONTROL.prepare("UPDATE firms SET stripe_customer_id = 'cus_9'").run();
+    await close(cookie);
+    await ageClose(31);
+    stripeFake.failing = true;
+    await purgeClosed(env);
+    expect(await env.CONTROL.prepare("SELECT 1 FROM firms WHERE id = ?").bind(firm.id).first()).not.toBeNull();
+    stripeFake.failing = false;
+    await purgeClosed(env);
+    expect(await env.CONTROL.prepare("SELECT 1 FROM firms WHERE id = ?").bind(firm.id).first()).toBeNull();
+    expect((await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM deletion_log WHERE kind = 'firm'").first<any>())!.n).toBe(1);
+  });
+
+  it("skips a firm with an unknown region without using a slot", async () => {
+    const odd = await withUpload("odd@firm.test");
+    await close(odd.cookie);
+    await env.CONTROL.prepare("UPDATE firms SET region = 'xx' WHERE id = ?").bind(odd.firm.id).run();
+    const others: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const o = await withUpload(`o${i}@firm.test`);
+      await close(o.cookie);
+      others.push(o.firm.id);
+    }
+    await ageClose(31);
+    await purgeClosed(env);
+    const left = await env.CONTROL.prepare("SELECT id FROM firms").all<any>();
+    expect(left.results.map((r) => r.id).filter((id) => others.includes(id)).length).toBe(1);
+    expect(left.results.some((r) => r.id === odd.firm.id)).toBe(true);
+  });
+
+  it("logs a request taken with the account as closed even when the usual purge takes it", async () => {
+    const { req, firm } = await withUpload();
+    await env.DB_NA.prepare("UPDATE requests SET deleted_at = 1, deleted_with_account = 1").run();
+    await purgeExpired(env);
+    const log = await env.DB_NA.prepare("SELECT reason FROM deletion_log WHERE firm_id = ? AND target_id = ?").bind(firm.id, req.id).first<any>();
+    expect(log.reason).toBe("closed");
   });
 
   it("does nothing inside the 30 days", async () => {
