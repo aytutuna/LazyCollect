@@ -142,6 +142,15 @@ describe("answers", () => {
     for (const value of ["2025-02-30", "30/06/2025", "1850-01-01"]) expect((await answer(path, date, value)).status).toBe(400);
   });
 
+  it("reads a comma as decimals only, and refuses thousands separators", async () => {
+    const { req, path } = await make();
+    const dependants = ids(req)[4];
+    for (const [value, want, saved] of [["12,5", 200, "12.5"], ["7,25", 200, "7.25"], ["1,000", 400, "7.25"], ["12,345.50", 400, "7.25"], ["1,2345", 400, "7.25"], ["1000", 200, "1000"]] as const) {
+      expect([value, (await answer(path, dependants, value)).status]).toEqual([value, want]);
+      expect(await stored(dependants)).toBe(saved);
+    }
+  });
+
   it("stores the answer, marks the item answered and clears it again", async () => {
     const { req, path } = await make();
     const [, , employer, , dependants, , , , income] = ids(req);

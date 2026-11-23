@@ -93,6 +93,15 @@ export const states = [
     },
   },
   {
+    // a question sent back can be confirmed as it stands
+    name: "questions-kept",
+    view: questions,
+    async run(page) {
+      await page.getByRole("button", { name: "Keep this answer" }).click();
+      await page.getByText("Answer saved.", { exact: false }).first().waitFor({ state: "attached" });
+    },
+  },
+  {
     // the upload never finishes, so the progress bar stays on screen
     name: "uploading",
     view: base,

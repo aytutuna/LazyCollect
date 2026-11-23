@@ -317,7 +317,8 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
 
 type Save = (item: ClientItem, answer: string | string[] | null) => Promise<boolean>;
 
-const NUMBER = /^-?\d{1,15}([.,]\d{1,6})?$/;
+// a dot, or a comma followed by one or two digits, marks the decimals; thousands separators are refused, since 1,000 reads two ways
+const NUMBER = /^-?\d{1,15}(\.\d{1,6}|,\d{1,2})?$/;
 
 function answerText(item: ClientItem): string {
   const a = item.answer;
@@ -332,8 +333,9 @@ function Question({ item, firm, save }: { item: ClientItem; firm: string; save: 
   // choices show at once and are saved behind them
   const [picked, setPicked] = useState(item.answer);
   const [bad, setBad] = useState(false);
-  const { error, run } = useAction();
+  const { busy, error, run } = useAction();
   const open = item.status !== "approved";
+  const grouped = item.kind === "yesno" || item.kind === "choice" || item.kind === "multi";
   const field = `in-${item.id}`;
   const describedBy = [item.help && `help-${item.id}`, `status-${item.id}`, bad && `bad-${item.id}`].filter(Boolean).join(" ");
 
@@ -343,14 +345,16 @@ function Question({ item, firm, save }: { item: ClientItem; firm: string; save: 
     if (document.activeElement?.id !== field) setText(typeof item.answer === "string" ? item.answer : "");
   }, [item.answer]);
 
-  const send = (answer: string | string[] | null) => {
+  const send = async (answer: string | string[] | null) => {
     setPicked(answer);
-    return run(() => save(item, answer));
+    const ok = await run(() => save(item, answer));
+    if (!ok) setPicked(item.answer);
   };
 
-  function leave() {
+  // a typed answer; the same value is saved again when the account sent the question back, since that is how it is confirmed
+  function leave(again = false) {
     const value = text.trim();
-    if (value === (typeof item.answer === "string" ? item.answer : "")) return;
+    if (!again && value === (typeof item.answer === "string" ? item.answer : "")) return;
     if (item.kind === "number" && value && !NUMBER.test(value)) {
       setBad(true);
       return;
@@ -358,6 +362,8 @@ function Question({ item, firm, save }: { item: ClientItem; firm: string; save: 
     setBad(false);
     send(value === "" ? null : item.kind === "number" ? value.replace(",", ".") : value);
   }
+
+  const keep = () => (grouped ? send(item.answer) : leave(true));
 
   const chosen = Array.isArray(picked) ? picked : [];
   const input = () => {
@@ -395,19 +401,18 @@ function Question({ item, firm, save }: { item: ClientItem; firm: string; save: 
           </div>
         );
       case "longtext":
-        return <textarea id={field} rows={5} maxLength={5000} value={text} aria-describedby={describedBy} onInput={(e) => setText(e.currentTarget.value)} onBlur={leave} />;
+        return <textarea id={field} rows={5} maxLength={5000} value={text} aria-describedby={describedBy} onInput={(e) => setText(e.currentTarget.value)} onBlur={() => leave()} />;
       case "date":
-        return <input id={field} type="date" min="1900-01-01" max="2100-12-31" value={text} aria-describedby={describedBy} onInput={(e) => setText(e.currentTarget.value)} onBlur={leave} />;
+        return <input id={field} type="date" min="1900-01-01" max="2100-12-31" value={text} aria-describedby={describedBy} onInput={(e) => setText(e.currentTarget.value)} onBlur={() => leave()} />;
       case "number":
         return (
-          <input id={field} type="text" inputMode="decimal" autoComplete="off" value={text} aria-invalid={bad} aria-describedby={describedBy} onInput={(e) => setText(e.currentTarget.value)} onBlur={leave} />
+          <input id={field} type="text" inputMode="decimal" autoComplete="off" value={text} aria-invalid={bad} aria-describedby={describedBy} onInput={(e) => setText(e.currentTarget.value)} onBlur={() => leave()} />
         );
       default:
-        return <input id={field} type="text" maxLength={500} value={text} aria-describedby={describedBy} onInput={(e) => setText(e.currentTarget.value)} onBlur={leave} />;
+        return <input id={field} type="text" maxLength={500} value={text} aria-describedby={describedBy} onInput={(e) => setText(e.currentTarget.value)} onBlur={() => leave()} />;
     }
   };
 
-  const grouped = item.kind === "yesno" || item.kind === "choice" || item.kind === "multi";
   const status = {
     approved: t("client.status_approved", { firm }),
     rejected: t("client.status_rejected_question"),
@@ -444,6 +449,11 @@ function Question({ item, firm, save }: { item: ClientItem; firm: string; save: 
           </div>
         )}
         {open ? input() : <p class="answer">{answerText(item)}</p>}
+        {item.status === "rejected" && item.answer !== null && (
+          <button class="quiet-link keep" disabled={busy} aria-describedby={`label-${item.id}`} onClick={keep}>
+            {t("client.keep_answer")}
+          </button>
+        )}
         {bad && (
           <p class="error" id={`bad-${item.id}`}>
             {t("client.number_invalid")}

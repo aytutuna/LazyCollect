@@ -71,7 +71,9 @@ export function parseAnswer(kind: Kind, options: string[] | null, v: unknown): s
     case "longtext":
       return text(v, LONG_TEXT_LEN);
     case "number": {
-      const s = typeof v === "number" ? String(v) : typeof v === "string" ? v.trim() : "";
+      // a comma only marks decimals, one or two digits after it; thousands separators are not accepted
+      const raw = typeof v === "number" ? String(v) : typeof v === "string" ? v.trim() : "";
+      const s = /^-?\d{1,15},\d{1,2}$/.test(raw) ? raw.replace(",", ".") : raw;
       return /^-?\d{1,15}(\.\d{1,6})?$/.test(s) ? s : undefined;
     }
     case "date": {

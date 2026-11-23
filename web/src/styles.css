@@ -1067,3 +1067,7 @@ td.pick {
   width: 2rem;
   padding-right: 0;
 }
+
+.client-page .question button.keep {
+  margin-top: 0.75rem;
+}
