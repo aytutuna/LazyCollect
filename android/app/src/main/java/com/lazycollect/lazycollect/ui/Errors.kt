@@ -54,6 +54,7 @@ fun errorText(code: String, owner: Boolean = true, pastDue: Boolean = false): In
     "legal_hold" -> R.string.error_legal_hold
     "too_many_notes" -> R.string.error_too_many_notes
     "missing_file" -> R.string.error_missing_file
+    "lost_record" -> R.string.error_lost_record
     "stale" -> R.string.error_stale
     "locked" -> R.string.error_locked
     "too_soon" -> R.string.error_too_soon

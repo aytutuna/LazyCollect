@@ -163,6 +163,7 @@
     <string name="error_not_allowed">This cannot be changed right now.</string>
     <string name="error_legal_hold">This request is on hold, so it cannot be changed.</string>
     <string name="error_too_many_notes">You have sent a lot of messages. Wait a day before sending more.</string>
+    <string name="error_lost_record">This file was kept but it is not known which item it was for. Remove it and add it again.</string>
     <string name="error_missing_file">This file is no longer on the phone. Remove it and add it again.</string>
 
     <string name="client_gone_title">Link not found</string>

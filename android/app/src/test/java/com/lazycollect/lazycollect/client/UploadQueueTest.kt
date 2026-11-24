@@ -75,6 +75,41 @@ class UploadQueueTest {
     }
 
     @Test
+    fun aDamagedDescriptionKeepsTheFileAsFailed() = runBlocking {
+        val q = queue()
+        val job = q.add("i1", "a.jpg", bytes("abc"))
+        File(dir, job.id + ".json").writeText("{\"id\":\"" + job.id + "\",\"it")
+        val after = queue()
+        val kept = after.jobs.value.single()
+        assertEquals(job.id, kept.id)
+        assertEquals(LOST_RECORD, kept.failed)
+        assertEquals(3L, kept.size)
+        assertTrue(File(dir, job.id + ".bin").exists())
+        assertEquals(Pass.Done, after.run())
+        assertEquals(0, after.reconcile(setOf("i2")))
+        after.remove(job.id)
+        assertTrue(dir.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun dataWithNoDescriptionAndADescriptionWithNoDataAreSwept() {
+        File(dir, "a.bin").writeText("abc")
+        File(dir, "b.json").writeText("{")
+        File(dir, "c.json.tmp").writeText("{")
+        assertTrue(queue().jobs.value.isEmpty())
+        assertTrue(dir.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun aChangeLeavesNoTemporaryFile() = runBlocking {
+        server.on("PUT /api/c/me/items/i1/files", json(503, """{"error":"server_error"}"""))
+        val q = queue()
+        q.add("i1", "a.jpg", bytes("abc"))
+        q.run()
+        assertEquals(listOf("json", "bin"), dir.listFiles().orEmpty().map { it.extension }.sortedDescending())
+    }
+
+    @Test
     fun aFileAddedDuringAPassGoesInTheSamePass() = runBlocking {
         val slow = MockResponse.Builder().code(201).addHeader("Content-Type", "application/json").body("""{"id":"f1","name":"a.jpg","size":3,"uploaded_at":1}""")
             .headersDelay(400, TimeUnit.MILLISECONDS).build()

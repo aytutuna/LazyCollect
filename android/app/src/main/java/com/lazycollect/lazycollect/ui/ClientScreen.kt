@@ -216,7 +216,7 @@ private fun JobRow(job: Job, progress: Float?, actions: ClientActions) {
                 }
                 job.failed?.let { ErrorNote(it) }
             }
-            if (job.failed != null) TextButton(onClick = { actions.retryJob(job.id) }) { Text(stringResource(R.string.client_try_now)) }
+            if (job.failed != null && job.itemId.isNotEmpty()) TextButton(onClick = { actions.retryJob(job.id) }) { Text(stringResource(R.string.client_try_now)) }
             TextButton(onClick = { actions.dropJob(job.id) }) { Text(stringResource(R.string.client_remove)) }
         }
     }

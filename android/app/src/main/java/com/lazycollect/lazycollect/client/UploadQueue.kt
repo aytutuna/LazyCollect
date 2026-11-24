@@ -5,6 +5,8 @@ import com.lazycollect.lazycollect.net.ApiError
 import com.lazycollect.lazycollect.net.ApiJson
 import java.io.File
 import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,6 +21,9 @@ private const val KEEP_DAYS = 14L
 // retries after the first try, as in the web queue: a file is tried AUTO_TRIES + 1 times before the person decides
 private const val AUTO_TRIES = 6
 private const val FIRST_BACKOFF = 10_000L
+
+/** The failure code of a file whose description was damaged; it has no item to go to. */
+const val LOST_RECORD = "lost_record"
 
 /** How long a file waits after its [tries]th failed try: 10 s, doubling to 320 s. */
 fun backoff(tries: Int): Long = FIRST_BACKOFF shl (tries - 1).coerceIn(0, 5)
@@ -70,8 +75,9 @@ class UploadQueue(private val dir: File, private val api: Api, private val now: 
     init {
         dir.mkdirs()
         val cutoff = now() - KEEP_DAYS * 24 * 3600 * 1000
+        dir.listFiles { f -> f.extension == "tmp" }.orEmpty().forEach { it.delete() }
         val found = dir.listFiles { f -> f.extension == "json" }.orEmpty().mapNotNull { f ->
-            runCatching { ApiJson.decodeFromString<Job>(f.readText()) }.getOrNull().also { if (it == null) f.delete() }
+            runCatching { ApiJson.decodeFromString<Job>(f.readText()) }.getOrNull() ?: recovered(f)
         }
         found.filter { it.at < cutoff }.forEach { drop(it.id) }
         val known = found.map { it.id }.toSet()
@@ -84,7 +90,19 @@ class UploadQueue(private val dir: File, private val api: Api, private val now: 
     private fun meta(id: String) = File(dir, "$id.json")
 
     private fun save(job: Job) {
-        meta(job.id).writeText(ApiJson.encodeToString(job))
+        val temp = File(dir, job.id + ".json.tmp")
+        temp.writeText(ApiJson.encodeToString(job))
+        Files.move(temp.toPath(), meta(job.id).toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    }
+
+    // The data is written before its description, so a description that cannot be read belongs to a file that was complete.
+    // Which item it was for is lost, so it only waits to be removed; a description with no data is of no use.
+    private fun recovered(f: File): Job? {
+        val id = f.nameWithoutExtension
+        val bin = data(id)
+        f.delete()
+        if (!bin.exists()) return null
+        return Job(id, "", id, bin.length(), UUID.randomUUID().toString(), bin.lastModified(), failed = LOST_RECORD)
     }
 
     private fun drop(id: String) {
@@ -147,7 +165,7 @@ class UploadQueue(private val dir: File, private val api: Api, private val now: 
 
     /** Drops what belongs to items the professional has taken off the list. Returns how many went. */
     fun reconcile(itemIds: Set<String>): Int {
-        val gone = flow.value.filter { it.itemId !in itemIds }
+        val gone = flow.value.filter { it.itemId.isNotEmpty() && it.itemId !in itemIds }
         gone.forEach { remove(it.id) }
         return gone.size
     }
