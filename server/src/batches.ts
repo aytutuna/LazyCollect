@@ -95,6 +95,7 @@ batches.post("/batches", async (c) => {
   let sourceName: string | null = null;
   let due: number | null = null;
   // the checklists of a batch come in the language asked for; a copy of a request keeps that request's
+  if (body.locale !== undefined && !isLang(body.locale)) return invalid(c);
   let lang: Lang = isLang(body.locale) ? body.locale : "en";
   let items: Item[] = [];
   let sourceId: string | null = null;
