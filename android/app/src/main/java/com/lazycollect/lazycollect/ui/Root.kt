@@ -1,6 +1,5 @@
 package com.lazycollect.lazycollect.ui
 
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -90,11 +89,7 @@ private fun ClientHost(vm: AppViewModel) {
     val dropped by vm.client.dropped.collectAsStateWithLifecycle()
     val progress by vm.client.progress.collectAsStateWithLifecycle()
     val online by vm.client.connected.collectAsStateWithLifecycle()
-    var waiting by remember { mutableStateOf<Pair<Uri, (Uri?) -> Unit>?>(null) }
-    val take = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        waiting?.let { (uri, done) -> done(if (ok) uri else null) }
-        waiting = null
-    }
+    val take = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture(), vm::cameraDone)
     val client = vm.client
     val actions = remember {
         ClientActions(
@@ -108,11 +103,7 @@ private fun ClientHost(vm: AppViewModel) {
             removeFile = client::removeFile,
             pick = vm::pick,
             scan = vm::scan,
-            camera = { _, done ->
-                val uri = vm.cameraUri()
-                waiting = uri to done
-                take.launch(uri)
-            },
+            camera = { item -> take.launch(vm.cameraUri(item)) },
             retryJob = client::retry,
             dropJob = client::drop,
             example = vm::example,

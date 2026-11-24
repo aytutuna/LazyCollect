@@ -75,7 +75,7 @@ class ClientActions(
     val removeFile: (String) -> Unit = {},
     val pick: (item: ClientItem, uris: List<Uri>) -> Unit = { _, _ -> },
     val scan: (item: ClientItem) -> Unit = {},
-    val camera: (item: ClientItem, done: (Uri?) -> Unit) -> Unit = { _, _ -> },
+    val camera: (item: ClientItem) -> Unit = {},
     val retryJob: (String) -> Unit = {},
     val dropJob: (String) -> Unit = {},
     val example: suspend (ClientItem) -> Bitmap? = { null },
@@ -335,7 +335,7 @@ private fun Adders(item: ClientItem, busy: Boolean, actions: ClientActions) {
         }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(enabled = !busy, onClick = { actions.camera(item) { uri -> if (uri != null) actions.pick(item, listOf(uri)) } }) { Text(stringResource(R.string.client_take_photo)) }
+        OutlinedButton(enabled = !busy, onClick = { actions.camera(item) }) { Text(stringResource(R.string.client_take_photo)) }
         OutlinedButton(enabled = !busy, onClick = { files.launch(arrayOf("image/*", "application/pdf")) }) { Text(stringResource(R.string.client_choose_file)) }
     }
 }

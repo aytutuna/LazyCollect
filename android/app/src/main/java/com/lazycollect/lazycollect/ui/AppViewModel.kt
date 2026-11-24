@@ -14,6 +14,7 @@ import androidx.lifecycle.viewModelScope
 import com.lazycollect.lazycollect.CollectApp
 import com.lazycollect.lazycollect.client.ClientModel
 import com.lazycollect.lazycollect.client.ExampleRef
+import com.lazycollect.lazycollect.client.clearCameraFiles
 import com.lazycollect.lazycollect.client.decodeExample
 import com.lazycollect.lazycollect.client.exampleRef
 import com.lazycollect.lazycollect.client.parseExample
@@ -34,7 +35,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class AppViewModel(app: Application, saved: SavedStateHandle) : AndroidViewModel(app) {
+class AppViewModel(app: Application, private val saved: SavedStateHandle) : AndroidViewModel(app) {
     private val graph = (app as CollectApp).graph
 
     val session = graph.session
@@ -46,6 +47,8 @@ class AppViewModel(app: Application, saved: SavedStateHandle) : AndroidViewModel
     val client = ClientModel(viewModelScope, graph.clientApi, graph.clientSession, graph.attester, graph.uploads, graph.online.state) { startUploads(app) }
 
     init {
+        val keep = saved.get<String>(CAMERA_URI)?.let { Uri.parse(it).lastPathSegment }
+        viewModelScope.launch(Dispatchers.IO) { clearCameraFiles(File(app.cacheDir, "camera"), keep) }
         // whatever was loaded belongs to the account that was signed in
         viewModelScope.launch {
             session.token.collect {
@@ -56,14 +59,16 @@ class AppViewModel(app: Application, saved: SavedStateHandle) : AndroidViewModel
     }
 
     /** Reads what the person chose, makes it ready (photos scaled, several merged into one PDF) and queues it. */
-    fun pick(item: ClientItem, uris: List<Uri>) {
+    fun pick(item: ClientItem, uris: List<Uri>) = pick(item.id, item.label, uris)
+
+    private fun pick(itemId: String, label: String, uris: List<Uri>) {
         val resolver = getApplication<Application>().contentResolver
         viewModelScope.launch(Dispatchers.IO) {
             val named = uris.map { uri ->
                 val shown = if (uri.authority?.endsWith(CAMERA_SUFFIX) == true) null else resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null }
-                uri to (shown ?: item.label)
+                uri to (shown ?: label)
             }
-            client.add(item.id, graph.prepare.all(named, item.label))
+            client.add(itemId, graph.prepare.all(named, label))
         }
     }
 
@@ -103,11 +108,27 @@ class AppViewModel(app: Application, saved: SavedStateHandle) : AndroidViewModel
         }
     }
 
-    fun cameraUri(): Uri {
+    /** A file for the camera to write. It is kept in the saved state, so a shot still gets queued if the process dies while the camera is open. */
+    fun cameraUri(item: ClientItem): Uri {
         val app = getApplication<Application>()
         val dir = File(app.cacheDir, "camera").apply { mkdirs() }
-        return FileProvider.getUriForFile(app, app.packageName + CAMERA_SUFFIX, File(dir, UUID.randomUUID().toString() + ".jpg"))
+        val uri = FileProvider.getUriForFile(app, app.packageName + CAMERA_SUFFIX, File(dir, UUID.randomUUID().toString() + ".jpg"))
+        saved[CAMERA_URI] = uri.toString()
+        saved[CAMERA_ITEM] = item.id
+        saved[CAMERA_LABEL] = item.label
+        return uri
+    }
+
+    fun cameraDone(taken: Boolean) {
+        val uri = saved.remove<String>(CAMERA_URI)?.let(Uri::parse) ?: return
+        val item = saved.remove<String>(CAMERA_ITEM)
+        val label = saved.remove<String>(CAMERA_LABEL)
+        if (taken && item != null && label != null) pick(item, label, listOf(uri))
+        else getApplication<Application>().contentResolver.delete(uri, null, null)
     }
 }
 
 private const val CAMERA_SUFFIX = ".files"
+private const val CAMERA_URI = "camera_uri"
+private const val CAMERA_ITEM = "camera_item"
+private const val CAMERA_LABEL = "camera_label"
