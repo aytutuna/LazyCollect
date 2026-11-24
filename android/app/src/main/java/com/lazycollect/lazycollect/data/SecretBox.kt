@@ -1,10 +1,12 @@
 package com.lazycollect.lazycollect.data
 
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.security.GeneralSecurityException
 import java.security.KeyStore
+import java.security.ProviderException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -33,7 +35,9 @@ class SecretBox {
     fun seal(plain: String): String {
         val cipher = try {
             encryptor()
-        } catch (e: GeneralSecurityException) {
+        } catch (e: Exception) {
+            // key generation failures (a missing StrongBox, say) come as ProviderException
+            if (e !is GeneralSecurityException && e !is ProviderException) throw e
             forgetKey()
             encryptor()
         }
@@ -41,12 +45,12 @@ class SecretBox {
         return Base64.encodeToString(sealed, Base64.NO_WRAP)
     }
 
-    // a lost key loses the token it sealed, which is the same as being signed out
+    // a damaged file or a passing keystore error leaves the key alone; only a key that can never work again is dropped
     fun open(sealed: String): String? = try {
         val bytes = Base64.decode(sealed, Base64.NO_WRAP)
         val cipher = Cipher.getInstance(TRANSFORM).apply { init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes, 0, IV_BYTES)) }
         String(cipher.doFinal(bytes, IV_BYTES, bytes.size - IV_BYTES))
-    } catch (e: GeneralSecurityException) {
+    } catch (e: KeyPermanentlyInvalidatedException) {
         forgetKey()
         null
     } catch (e: Exception) {
