@@ -7,8 +7,11 @@ const CHALLENGE_TTL = 5 * MINUTE;
 
 export type Attestation = { challenge?: unknown; token?: unknown; key_id?: unknown; assertion?: unknown };
 
+// a typo in APP_ATTEST_ENV must not leave the iPhone check half on
+const attestOn = (env: Env) => ["production", "development", "any"].includes(env.APP_ATTEST_ENV ?? "");
+
 // whether the server checks this platform; the app skips asking its OS for a proof when it does not
-export const checked = (env: Env, platform: App) => !skipped(env, platform) && (platform === "android" ? Boolean(env.PLAY_INTEGRITY_SA) : Boolean(env.APP_ATTEST_ENV));
+export const checked = (env: Env, platform: App) => !skipped(env, platform) && (platform === "android" ? Boolean(env.PLAY_INTEGRITY_SA) : attestOn(env));
 
 // APP_ATTEST_OFF exists so local development can run without Play Integrity or App Attest. It goes in .dev.vars only,
 // never in wrangler.toml, and is ignored unless APP_URL is local, so a leaked secret can't switch the checks off on the
@@ -50,7 +53,7 @@ export async function attested(env: Env, platform: App, att: unknown, data: stri
 
 // An iPhone attests its key once; the challenge is bound with the fixed data "attest".
 export async function attestKey(env: Env, keyId: string, challenge: string, attestation: string): Promise<boolean> {
-  if (!env.APP_ATTEST_ENV || !(await takeChallenge(env, challenge))) return false;
+  if (!attestOn(env) || !(await takeChallenge(env, challenge))) return false;
   const key = await verifyAttestation(env, keyId, attestation, await bindingHash(challenge, "attest"));
   return key !== null && saveKey(env, keyId, key);
 }

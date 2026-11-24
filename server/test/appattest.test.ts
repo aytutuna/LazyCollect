@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
-import { attestKey, attested, bindingHash, issueChallenge } from "../src/attest";
+import { attestKey, attested, bindingHash, issueChallenge, usable } from "../src/attest";
 import "reflect-metadata";
 import { X509Certificate } from "@peculiar/x509";
 import { APPLE_ROOT, verifyAttestation } from "../src/appattest";
@@ -161,5 +161,14 @@ describe("App Attest assertions", () => {
     const off = Object.create(unset, { APP_ATTEST_OFF: { value: "ios" }, APP_URL: { value: "http://127.0.0.1:8787" } });
     expect(await attested(off, "ios", undefined, "x")).toBe(true);
     expect(await attestKey(off, "a2V5", await issueChallenge(env), "AA==")).toBe(false);
+  });
+
+  it("treats an APP_ATTEST_ENV it does not know like an unset one", async () => {
+    const typo = Object.create(env, { APP_ATTEST_ENV: { value: "prod" } });
+    expect(usable(typo, "ios")).toBe(false);
+    expect(await attested(typo, "ios", undefined, "x")).toBe(false);
+    const device = await Device.create();
+    const { challenge, attestation } = await attestWith(device);
+    expect(await attestKey(typo, device.keyId, challenge, attestation)).toBe(false);
   });
 });
