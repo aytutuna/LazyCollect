@@ -1,10 +1,10 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { need, normalizeEmail, rateLimited, sendCode, verifyCode } from "./auth";
 import { attestKey, attested, checked, issueChallenge } from "./attest";
 import { findLink } from "./client";
 import { bearerOf, createClientSession, isApp, type AppEnv } from "./session";
 import { sha256 } from "./util";
-import { invalid, notFound, readBody } from "./validate";
+import { invalid, notFound, readBody, text } from "./validate";
 
 // What the phone apps use in place of the browser's cookies and Turnstile.
 export const native = new Hono<AppEnv>();
@@ -57,3 +57,31 @@ native.post("/app/client/logout", async (c) => {
   if (token) await c.env.CONTROL.prepare("DELETE FROM client_sessions WHERE token_hash = ?").bind(await sha256(token)).run();
   return c.json({ ok: true });
 });
+
+// Where this app session can be sent a push. Sending is not built; the token lives and dies with the session.
+async function setPush(c: Context<AppEnv>, push: string | null) {
+  const token = bearerOf(c);
+  if (!token) return c.json({ error: "unauthorized" }, 401);
+  const hash = await sha256(token);
+  const now = Date.now();
+  const [staff, client] = await c.env.CONTROL.batch([
+    c.env.CONTROL.prepare("UPDATE sessions SET push_token = ? WHERE token_hash = ? AND app IS NOT NULL AND expires_at > ?").bind(push, hash, now),
+    c.env.CONTROL.prepare("UPDATE client_sessions SET push_token = ? WHERE token_hash = ? AND expires_at > ?").bind(push, hash, now),
+  ]);
+  if (staff.meta.changes + client.meta.changes === 0) return c.json({ error: "unauthorized" }, 401);
+  // a device that signs in as someone else keeps its token, so the old session must stop receiving it
+  if (push) {
+    await c.env.CONTROL.batch([
+      c.env.CONTROL.prepare("UPDATE sessions SET push_token = NULL WHERE push_token = ? AND token_hash != ?").bind(push, hash),
+      c.env.CONTROL.prepare("UPDATE client_sessions SET push_token = NULL WHERE push_token = ? AND token_hash != ?").bind(push, hash),
+    ]);
+  }
+  return c.json({ ok: true });
+}
+
+native.put("/app/push", async (c) => {
+  const push = text((await readBody(c))?.token, 4096);
+  return push ? setPush(c, push) : invalid(c);
+});
+
+native.delete("/app/push", (c) => setPush(c, null));
