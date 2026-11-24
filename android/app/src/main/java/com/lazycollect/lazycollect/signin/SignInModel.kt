@@ -5,14 +5,14 @@ import androidx.lifecycle.SavedStateHandle
 import com.lazycollect.lazycollect.net.Api
 import com.lazycollect.lazycollect.net.ApiError
 import com.lazycollect.lazycollect.net.Attestation
-import java.io.IOException
-import java.security.GeneralSecurityException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class Step { Email, Code, Passkey, Enrol }
 
@@ -46,6 +46,9 @@ class SignInModel(
     private var pending: String? = null
     private var autoPasskey = false
 
+    // every try gets a number; going back or starting another try makes the earlier ones stale
+    @Volatile private var attempt = 0
+
     val state: StateFlow<SignInState> get() = flow
 
     init {
@@ -57,21 +60,22 @@ class SignInModel(
         }
     }
 
-    private fun run(block: suspend () -> Unit) {
-        val held = pending
+    private fun run(block: suspend (current: () -> Boolean) -> Unit) {
+        val mine = ++attempt
+        val current = { attempt == mine }
         flow.update { it.copy(busy = true, error = null) }
         scope.launch {
             try {
-                block()
+                block(current)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiError) {
-                // a ceremony that outlived its pending login must not touch what the person has moved on to
-                if (pending == held) fail(e.code)
+                // a try that outlived its screen must not touch what the person has moved on to
+                if (current()) fail(e.code)
             } catch (e: PasskeyFailed) {
-                if (pending == held) fail("passkey_${e.reason}")
+                if (current()) fail("passkey_${e.reason}")
             } finally {
-                flow.update { it.copy(busy = false) }
+                if (current()) flow.update { it.copy(busy = false) }
             }
         }
     }
@@ -92,12 +96,12 @@ class SignInModel(
             return
         }
         flow.update { it.copy(email = email) }
-        run {
+        run { current ->
             // a challenge works once, so every attempt gets its own
             val challenge = api.challenge()
             val attestation = if (challenge.required) Attestation(challenge.challenge, attest(requestHash(challenge.challenge, email))) else null
             api.start(email, attestation)
-            flow.update { it.copy(step = Step.Code) }
+            if (current()) flow.update { it.copy(step = Step.Code) }
         }
     }
 
@@ -111,16 +115,26 @@ class SignInModel(
         }
 
     fun verify(code: String) {
-        run {
-            val result = api.verify(flow.value.email, code.trim())
+        val email = flow.value.email
+        run { current ->
+            val result = api.verify(email, code.trim())
             val token = result.token
             val held = result.pending
+            if (!current()) {
+                token?.let { end(it) }
+                held?.let { endPending(it) }
+                return@run
+            }
             if (token != null) {
                 done(token)
             } else if (held != null && (result.step == "passkey" || result.step == "enrol")) {
+                val role = runCatching { api.pending(held).role }.getOrNull()
+                if (!current()) {
+                    endPending(held)
+                    return@run
+                }
                 pending = held
                 autoPasskey = result.step == "passkey"
-                val role = runCatching { api.pending(held).role }.getOrNull()
                 flow.update { it.copy(step = if (result.step == "enrol") Step.Enrol else Step.Passkey, owner = role == "owner") }
             } else {
                 throw ApiError.Other(200, "server_error")
@@ -138,36 +152,42 @@ class SignInModel(
     fun usePasskey(host: Context, name: String) {
         val held = pending ?: return
         if (flow.value.busy) return
-        run {
+        run { current ->
             val options = api.passkeyOptions(held)
+            if (!current()) return@run
             val response = if (options.kind == "register") passkeys.create(host, options.options) else passkeys.get(host, options.options)
             val token = api.passkeyVerify(held, response, name.trim())
-            if (pending == held) done(token)
+            if (current()) done(token) else end(token)
         }
     }
 
     fun back() {
-        pending?.let { held -> scope.launch { runCatching { api.endPending(held) } } }
+        attempt++
+        pending?.let { held -> scope.launch { endPending(held) } }
         pending = null
         autoPasskey = false
-        flow.update { it.copy(step = Step.Email, error = null) }
+        flow.update { it.copy(step = Step.Email, busy = false, error = null) }
     }
 
     private suspend fun done(token: String) {
         try {
             signedIn(token)
-        } catch (e: GeneralSecurityException) {
-            unsaved(token)
-        } catch (e: IOException) {
-            unsaved(token)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // the server has made the session already; without a place to keep the token it would only linger under Devices
+            end(token)
+            throw ApiError.Other(0, "storage")
         }
         pending = null
         flow.value = SignInState()
     }
 
-    // the server has made the session already; without a place to keep the token it would only linger under Devices
-    private suspend fun unsaved(token: String): Nothing {
-        runCatching { api.logout(token) }
-        throw ApiError.Other(0, "storage")
+    private suspend fun end(token: String) {
+        withContext(NonCancellable) { runCatching { api.logout(token) } }
+    }
+
+    private suspend fun endPending(held: String) {
+        withContext(NonCancellable) { runCatching { api.endPending(held) } }
     }
 }

@@ -9,7 +9,9 @@ import com.lazycollect.lazycollect.net.FakeServer
 import com.lazycollect.lazycollect.net.json
 import com.lazycollect.lazycollect.net.ok
 import java.security.GeneralSecurityException
+import java.security.ProviderException
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -67,9 +69,9 @@ class SignInModelTest {
     }
 
     private val api = Api(server.url, token = { null }, onSignedOut = {}, onPlanEnded = {})
-    private var saveFails = false
+    private var saveFails: Exception? = null
     private val model = SignInModel(scope, api, attester, passkeys) {
-        if (saveFails) throw GeneralSecurityException("key lost")
+        saveFails?.let { throw it }
         tokens += it
     }
 
@@ -305,13 +307,86 @@ class SignInModelTest {
         toCodeStep()
         server.on("POST /api/app/auth/verify", ok("""{"ok":true,"token":"session-1"}"""))
         server.on("POST /api/auth/logout", ok())
-        saveFails = true
+        saveFails = GeneralSecurityException("key lost")
         model.verify("123456")
         val state = settled { it.error != null }
         assertEquals("storage", state.error)
         assertEquals(Step.Email, state.step)
         assertTrue(tokens.isEmpty())
         assertEquals("Bearer session-1", server.calls("POST /api/auth/logout").single().headers["Authorization"])
+    }
+
+    @Test
+    fun aKeystoreProviderErrorIsTheSameStorageError() = runBlocking {
+        toCodeStep()
+        server.on("POST /api/app/auth/verify", ok("""{"ok":true,"token":"session-1"}"""))
+        server.on("POST /api/auth/logout", ok())
+        saveFails = ProviderException("StrongBox unavailable")
+        model.verify("123456")
+        assertEquals("storage", settled { it.error != null }.error)
+        assertTrue(tokens.isEmpty())
+        assertEquals("Bearer session-1", server.calls("POST /api/auth/logout").single().headers["Authorization"])
+    }
+
+    private fun slow(response: mockwebserver3.MockResponse) = response.newBuilder().headersDelay(400, TimeUnit.MILLISECONDS).build()
+
+    private suspend fun awaitCalls(route: String, count: Int = 1) = withTimeout(10_000) { while (server.calls(route).size < count) delay(10) }
+
+    @Test
+    fun aCodeAnsweredAfterGoingBackDoesNotSignIn() = runBlocking {
+        toCodeStep()
+        server.on("POST /api/app/auth/verify", slow(ok("""{"ok":true,"token":"session-1"}""")))
+        server.on("POST /api/auth/logout", ok())
+        model.verify("123456")
+        awaitCalls("POST /api/app/auth/verify")
+        model.back()
+        awaitCalls("POST /api/auth/logout")
+        assertTrue(tokens.isEmpty())
+        assertEquals("Bearer session-1", server.calls("POST /api/auth/logout").single().headers["Authorization"])
+        assertEquals(Step.Email, model.state.value.step)
+    }
+
+    @Test
+    fun aCodeAnsweredAfterANewAttemptDoesNotOpenThePasskeyStep() = runBlocking {
+        toCodeStep()
+        server.on("POST /api/app/auth/verify", slow(ok("""{"ok":true,"step":"passkey","pending":"held-1"}""")))
+        server.on("DELETE /api/auth/pending", ok())
+        model.verify("123456")
+        awaitCalls("POST /api/app/auth/verify")
+        challenges(false)
+        model.sendCode("someone@example.com")
+        settled { it.step == Step.Code }
+        awaitCalls("DELETE /api/auth/pending")
+        assertEquals("Pending held-1", server.calls("DELETE /api/auth/pending").single().headers["Authorization"])
+        assertEquals(Step.Code, model.state.value.step)
+    }
+
+    @Test
+    fun noPasskeyPromptOpensForAPendingLoginThatWasLeft() = runBlocking {
+        toPasskeyStep()
+        server.on("POST /api/auth/pending/options", slow(ok("""{"kind":"authenticate","options":{}}""")))
+        server.on("DELETE /api/auth/pending", ok())
+        model.usePasskey(host, "")
+        awaitCalls("POST /api/auth/pending/options")
+        model.back()
+        delay(800)
+        assertTrue(passkeys.used.isEmpty())
+        assertTrue(server.calls("POST /api/auth/pending/verify").isEmpty())
+    }
+
+    @Test
+    fun aSessionFromAPasskeyThatWasLeftIsEnded() = runBlocking {
+        toPasskeyStep()
+        server.on("DELETE /api/auth/pending", ok())
+        server.on("POST /api/auth/logout", ok())
+        passkeyGate = CompletableDeferred()
+        model.usePasskey(host, "")
+        awaitCalls("POST /api/auth/pending/options")
+        model.back()
+        passkeyGate!!.complete(Unit)
+        awaitCalls("POST /api/auth/logout")
+        assertTrue(tokens.isEmpty())
+        assertEquals("Bearer session-2", server.calls("POST /api/auth/logout").single().headers["Authorization"])
     }
 
     private suspend fun toPasskeyStep() {
