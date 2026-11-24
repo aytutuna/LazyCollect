@@ -2,7 +2,9 @@ package com.lazycollect.lazycollect.client
 
 import com.lazycollect.lazycollect.net.ClientItem
 import com.lazycollect.lazycollect.net.Person
+import com.lazycollect.lazycollect.ui.dayToMillis
 import com.lazycollect.lazycollect.ui.groupByPerson
+import com.lazycollect.lazycollect.ui.millisToDay
 import com.lazycollect.lazycollect.ui.numberAnswer
 import com.lazycollect.lazycollect.ui.validDay
 import org.junit.Assert.assertEquals
@@ -62,6 +64,19 @@ class HelpersTest {
         assertFalse(validDay("1899-12-31"))
         assertFalse(validDay("2101-01-01"))
         assertFalse(validDay("27-03-31"))
+    }
+
+    @Test
+    fun theCalendarAndTheSavedDayConvertBothWays() {
+        val millis = dayToMillis("2027-03-31")
+        assertEquals(1_806_451_200_000L, millis)
+        assertEquals("2027-03-31", millisToDay(millis!!))
+        assertEquals("1900-01-01", millisToDay(dayToMillis("1900-01-01")!!))
+        assertEquals("2100-12-31", millisToDay(dayToMillis("2100-12-31")!!))
+        assertNull(dayToMillis("2027-02-30"))
+        assertNull(dayToMillis(""))
+        assertNull(millisToDay(dayToMillis("2100-12-31")!! + 86_400_000L))
+        assertNull(millisToDay(-2_500_000_000_000L))
     }
 
     private fun item(id: String, pos: Int?) = ClientItem(id = id, label = id, status = "empty", personPos = pos)

@@ -359,30 +359,12 @@ private fun Dates(item: ClientItem, busy: Boolean, actions: ClientActions) {
     val rule = item.expiryRule ?: return
     val expiry = rule == "expiry"
     val saved = (if (expiry) item.expiresOn else item.issuedOn).orEmpty()
-    var text by rememberSaveable(item.id, saved) { mutableStateOf(saved) }
-    var bad by rememberSaveable(item.id) { mutableStateOf(false) }
-    OutlinedTextField(
-        value = text,
-        onValueChange = { text = it.take(10); bad = false },
+    DateField(
+        label = stringResource(if (expiry) R.string.client_expires_on else R.string.client_issued_on),
+        day = saved,
         enabled = !busy,
-        singleLine = true,
-        label = { Text(stringResource(if (expiry) R.string.client_expires_on else R.string.client_issued_on)) },
-        isError = bad,
-        supportingText = {
-            Text(
-                when {
-                    bad -> stringResource(R.string.client_date_invalid)
-                    !expiry && item.validMonths != null -> stringResource(R.string.client_valid_months, item.validMonths) + " " + stringResource(R.string.client_date_hint)
-                    else -> stringResource(R.string.client_date_hint)
-                },
-            )
-        },
-        modifier = Modifier.fillMaxWidth().onFocusChanged {
-            if (!it.isFocused && text != saved) {
-                if (text.isEmpty() || validDay(text)) actions.dates(item.id, text.ifEmpty { null }, text.ifEmpty { null }, expiry, !expiry) else bad = true
-            }
-        },
-    )
+        supporting = if (!expiry && item.validMonths != null) stringResource(R.string.client_valid_months, item.validMonths) else null,
+    ) { actions.dates(item.id, it, it, expiry, !expiry) }
 }
 
 private val NUMBER = Regex("^-?\\d{1,15}(\\.\\d{1,6}|,\\d{1,2})?$")
@@ -439,6 +421,10 @@ private fun TypedAnswer(item: ClientItem, locked: Boolean, actions: ClientAction
         Text(saved)
         return
     }
+    if (item.kind == "date") {
+        DateField(stringResource(R.string.client_answer_text), saved, !locked, null) { actions.answer(item.id, it?.let(::JsonPrimitive)) }
+        return
+    }
     OutlinedTextField(
         value = text,
         onValueChange = { text = it.take(if (item.kind == "longtext") 5000 else 500); bad = false },
@@ -448,9 +434,7 @@ private fun TypedAnswer(item: ClientItem, locked: Boolean, actions: ClientAction
         isError = bad,
         supportingText = {
             when {
-                bad && item.kind == "number" -> Text(stringResource(R.string.client_number_invalid))
-                bad -> Text(stringResource(R.string.client_date_invalid))
-                item.kind == "date" -> Text(stringResource(R.string.client_date_hint))
+                bad -> Text(stringResource(R.string.client_number_invalid))
             }
         },
         modifier = Modifier.fillMaxWidth().onFocusChanged {
@@ -459,7 +443,6 @@ private fun TypedAnswer(item: ClientItem, locked: Boolean, actions: ClientAction
             when {
                 value.isEmpty() -> actions.answer(item.id, null)
                 item.kind == "number" -> numberAnswer(value)?.let { n -> actions.answer(item.id, JsonPrimitive(n)) } ?: run { bad = true }
-                item.kind == "date" -> if (validDay(value)) actions.answer(item.id, JsonPrimitive(value)) else bad = true
                 else -> actions.answer(item.id, JsonPrimitive(value))
             }
         },
