@@ -118,6 +118,12 @@ describe("App Attest assertions", () => {
     expect(await attested(env, "ios", await assertion(device, "x", { counter: 6 }), "x")).toBe(true);
   });
 
+  it("refuses a signature over the data hashed once", async () => {
+    const device = await attestedDevice();
+    expect(await attested(env, "ios", await assertion(device, "x", { singleHash: true }), "x")).toBe(false);
+    expect(await attested(env, "ios", await assertion(device, "x"), "x")).toBe(true);
+  });
+
   it("refuses a replayed challenge", async () => {
     const device = await attestedDevice();
     const first = await assertion(device, "x");
