@@ -7,6 +7,7 @@ import com.lazycollect.lazycollect.net.Api
 import com.lazycollect.lazycollect.net.FakeServer
 import com.lazycollect.lazycollect.net.json
 import com.lazycollect.lazycollect.net.ok
+import java.security.GeneralSecurityException
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,7 +62,11 @@ class SignInModelTest {
     }
 
     private val api = Api(server.url, token = { null }, onSignedOut = {}, onPlanEnded = {})
-    private val model = SignInModel(scope, api, attester, passkeys) { tokens += it }
+    private var saveFails = false
+    private val model = SignInModel(scope, api, attester, passkeys) {
+        if (saveFails) throw GeneralSecurityException("key lost")
+        tokens += it
+    }
 
     @After
     fun stop() {
@@ -265,5 +270,19 @@ class SignInModelTest {
         withTimeout(10_000) { while (server.calls("DELETE /api/auth/pending").isEmpty()) kotlinx.coroutines.delay(10) }
         assertEquals("Pending held-1", server.calls("DELETE /api/auth/pending").single().headers["Authorization"])
         assertEquals(Step.Email, model.state.value.step)
+    }
+
+    @Test
+    fun aTokenThatCannotBeSavedIsAnErrorAndTheNewSessionIsEnded() = runBlocking {
+        toCodeStep()
+        server.on("POST /api/app/auth/verify", ok("""{"ok":true,"token":"session-1"}"""))
+        server.on("POST /api/auth/logout", ok())
+        saveFails = true
+        model.verify("123456")
+        val state = settled { it.error != null }
+        assertEquals("storage", state.error)
+        assertEquals(Step.Email, state.step)
+        assertTrue(tokens.isEmpty())
+        assertEquals("Bearer session-1", server.calls("POST /api/auth/logout").single().headers["Authorization"])
     }
 }

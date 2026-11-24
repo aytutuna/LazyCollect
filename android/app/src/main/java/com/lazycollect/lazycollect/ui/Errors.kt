@@ -41,6 +41,7 @@ fun errorText(code: String, owner: Boolean = true, pastDue: Boolean = false): In
     "current_session" -> R.string.error_current_session
     "cannot_target_self" -> R.string.error_cannot_target_self
     "attestation" -> R.string.error_attestation
+    "storage" -> R.string.error_storage
     "unavailable" -> R.string.error_unavailable
     else -> R.string.error_server_error
 }

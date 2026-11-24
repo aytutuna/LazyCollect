@@ -128,5 +128,6 @@
     <string name="error_current_session">That is the device you are using. Use Sign out under Account.</string>
     <string name="error_cannot_target_self">You cannot do that to your own sign-in here.</string>
     <string name="error_attestation">This phone could not be checked. Sign in on a phone with Google Play and try again.</string>
+    <string name="error_storage">The sign-in could not be saved on this phone. Try again.</string>
     <string name="error_unavailable">Signing in from the app is not available yet. Try again later.</string>
 </resources>

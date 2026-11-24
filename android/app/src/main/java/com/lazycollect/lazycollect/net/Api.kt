@@ -44,8 +44,8 @@ class Api(
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    private suspend fun send(method: String, path: String, body: String?, pending: String?): String = withContext(io) {
-        val bearer = if (pending == null) token() else null
+    private suspend fun send(method: String, path: String, body: String?, pending: String?, asToken: String? = null): String = withContext(io) {
+        val bearer = if (pending == null) asToken ?: token() else null
         val request = Request.Builder().url(base.resolve("/api$path")!!)
         when {
             pending != null -> request.header("Authorization", "Pending $pending")
@@ -127,7 +127,8 @@ class Api(
         send("POST", "/sessions/end-others", null, null)
     }
 
-    suspend fun logout() {
-        send("POST", "/auth/logout", null, null)
+    /** Ends the session of [asToken] when it is not the one the app holds yet. */
+    suspend fun logout(asToken: String? = null) {
+        send("POST", "/auth/logout", null, null, asToken)
     }
 }

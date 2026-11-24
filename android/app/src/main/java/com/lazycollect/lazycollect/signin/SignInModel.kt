@@ -4,6 +4,8 @@ import android.content.Context
 import com.lazycollect.lazycollect.net.Api
 import com.lazycollect.lazycollect.net.ApiError
 import com.lazycollect.lazycollect.net.Attestation
+import java.io.IOException
+import java.security.GeneralSecurityException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,7 +57,7 @@ class SignInModel(
 
     private fun fail(code: String) {
         // a sign-in that timed out or was refused is over; the next try starts from the email again
-        if (code == "pending_expired" || code == "passkey_counter") {
+        if (code == "pending_expired" || code == "passkey_counter" || code == "storage") {
             pending = null
             flow.update { it.copy(step = Step.Email) }
         }
@@ -119,9 +121,21 @@ class SignInModel(
         flow.update { it.copy(step = Step.Email, error = null) }
     }
 
-    private fun done(token: String) {
+    private suspend fun done(token: String) {
+        try {
+            signedIn(token)
+        } catch (e: GeneralSecurityException) {
+            unsaved(token)
+        } catch (e: IOException) {
+            unsaved(token)
+        }
         pending = null
-        signedIn(token)
         flow.value = SignInState()
+    }
+
+    // the server has made the session already; without a place to keep the token it would only linger under Devices
+    private suspend fun unsaved(token: String): Nothing {
+        runCatching { api.logout(token) }
+        throw ApiError.Other(0, "storage")
     }
 }
