@@ -60,7 +60,7 @@ describe("invite and join", () => {
     await invite(cookie);
     const sent = mockOutbound();
     await start(NEWBIE);
-    const t = sent[0].text.match(/link\?t=(\S+)/)![1];
+    const t = sent[0].text.match(/link\?lang=[\w-]+&t=(\S+)/)![1];
     const res = await api("/api/auth/link", { method: "POST", body: { t } });
     expect(res.status).toBe(200);
     expect((await me(cookieFrom(res))).user.role).toBe("member");
@@ -464,7 +464,7 @@ describe("parallel sign-ins", () => {
     const sent = mockOutbound();
     await start("fresh@mail.test");
     const code = codeFrom(sent[0]);
-    const t = sent[0].text.match(/link\?t=(\S+)/)![1];
+    const t = sent[0].text.match(/link\?lang=[\w-]+&t=(\S+)/)![1];
     const [a, b] = await Promise.all([
       api("/api/auth/verify", { method: "POST", body: { email: "fresh@mail.test", code } }),
       api("/api/auth/link", { method: "POST", body: { t } }),
