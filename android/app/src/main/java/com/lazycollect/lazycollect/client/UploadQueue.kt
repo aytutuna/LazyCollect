@@ -8,6 +8,8 @@ import java.io.InputStream
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.getAndUpdate
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -74,31 +76,33 @@ class UploadQueue(private val dir: File, private val api: Api, private val now: 
     /** Copies [input] into the queue. Throws [ApiError.Other] with too_big when it is over what the server takes. */
     fun add(itemId: String, name: String, input: InputStream): Job {
         val id = UUID.randomUUID().toString()
-        var size = 0L
-        data(id).outputStream().use { out ->
-            val buffer = ByteArray(64 * 1024)
-            while (true) {
-                val n = input.read(buffer)
-                if (n < 0) break
-                size += n
-                if (size > MAX_UPLOAD) {
-                    data(id).delete()
-                    throw ApiError.Other(413, "too_big")
+        try {
+            var size = 0L
+            data(id).outputStream().use { out ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    size += n
+                    if (size > MAX_UPLOAD) throw ApiError.Other(413, "too_big")
+                    out.write(buffer, 0, n)
                 }
-                out.write(buffer, 0, n)
             }
+            val job = Job(id, itemId, name, size, UUID.randomUUID().toString(), now())
+            save(job)
+            flow.update { it + job }
+            return job
+        } catch (e: Throwable) {
+            drop(id)
+            throw e
         }
-        val job = Job(id, itemId, name, size, UUID.randomUUID().toString(), now())
-        save(job)
-        flow.value = flow.value + job
-        return job
     }
 
     fun retry(id: String) = change(id) { it.copy(failed = null, tries = 0) }
 
     fun remove(id: String) {
         drop(id)
-        flow.value = flow.value.filter { it.id != id }
+        flow.update { jobs -> jobs.filter { it.id != id } }
     }
 
     /** Drops what belongs to items the professional has taken off the list. Returns how many went. */
@@ -110,13 +114,11 @@ class UploadQueue(private val dir: File, private val api: Api, private val now: 
 
     /** Everything goes: the link is gone, or the person left. */
     fun forget() {
-        flow.value.forEach { drop(it.id) }
-        flow.value = emptyList()
+        flow.getAndUpdate { emptyList() }.forEach { drop(it.id) }
     }
 
     private fun change(id: String, update: (Job) -> Job) {
-        val next = flow.value.map { if (it.id == id) update(it).also(::save) else it }
-        flow.value = next
+        flow.update { jobs -> jobs.map { if (it.id == id) update(it).also(::save) else it } }
     }
 
     /** Sends what is waiting, once each, including files added while it runs. [Pass.Later] means a try failed for a reason that may pass. */

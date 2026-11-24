@@ -58,6 +58,23 @@ class UploadQueueTest {
     }
 
     @Test
+    fun aCopyThatFailsLeavesNoFileBehind() {
+        val q = queue()
+        val broken = object : InputStream() {
+            var left = 100_000
+            override fun read(): Int = if (left-- > 0) 1 else throw java.io.IOException("gone")
+        }
+        try {
+            q.add("i1", "a.jpg", broken)
+            org.junit.Assert.fail()
+        } catch (e: java.io.IOException) {
+            assertEquals("gone", e.message)
+        }
+        assertTrue(q.jobs.value.isEmpty())
+        assertTrue(dir.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
     fun aFileAddedDuringAPassGoesInTheSamePass() = runBlocking {
         val slow = MockResponse.Builder().code(201).addHeader("Content-Type", "application/json").body("""{"id":"f1","name":"a.jpg","size":3,"uploaded_at":1}""")
             .headersDelay(400, TimeUnit.MILLISECONDS).build()
