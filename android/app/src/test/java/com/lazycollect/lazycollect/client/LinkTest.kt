@@ -38,8 +38,9 @@ class LinkTest {
     }
 
     @Test
-    fun onlyAViewIntentCarriesALink() {
+    fun anIntentHandedBackFromRecentsIsIgnored() {
         assertEquals(token, view("https://collect.alazy.app/c/$token").collectToken(bases))
+        assertNull(view("https://collect.alazy.app/c/$token", Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY).collectToken(bases))
         assertNull(Intent(Intent.ACTION_MAIN, Uri.parse("https://collect.alazy.app/c/$token")).collectToken(bases))
     }
 }

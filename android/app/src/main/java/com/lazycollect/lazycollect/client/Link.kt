@@ -22,8 +22,11 @@ fun appLinkToken(url: String, bases: List<String>): String? {
     return linkToken(parts[1])
 }
 
-/** The token a VIEW intent carries. */
+/**
+ * The token a VIEW intent carries. Not for an intent the system hands back when the app is opened from the recent apps list,
+ * which would bring back a checklist that was closed.
+ */
 fun Intent.collectToken(bases: List<String>): String? {
-    if (action != Intent.ACTION_VIEW) return null
+    if (action != Intent.ACTION_VIEW || flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return null
     return data?.toString()?.let { appLinkToken(it, bases) }
 }
