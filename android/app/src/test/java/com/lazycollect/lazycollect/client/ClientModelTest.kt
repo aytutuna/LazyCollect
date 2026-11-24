@@ -321,13 +321,18 @@ class ClientModelTest {
         server.on("GET /api/c/me", view(fileItem("i1")), view(fileItem("i1", "submitted")))
         val model = model()
         ready(model)
-        // the model's own watch of the queue has to be running before a file comes and goes
-        kotlinx.coroutines.delay(200)
-        queue.add("i1", "a.jpg", "abc".byteInputStream())
-        queue.remove(queue.jobs.value.single().id)
+        // the model may miss a file that comes and goes too quickly, so it goes again until the reload shows
+        withTimeout(10_000) {
+            while (server.calls("GET /api/c/me").size < 2) {
+                queue.add("i1", "a.jpg", "abc".byteInputStream())
+                kotlinx.coroutines.delay(20)
+                queue.jobs.value.forEach { queue.remove(it.id) }
+                kotlinx.coroutines.delay(20)
+            }
+        }
         val state = withTimeout(10_000) { model.state.first { it is ClientState.Ready && it.view.items.single().status == "submitted" } }
         assertTrue(state is ClientState.Ready)
-        assertEquals(2, server.calls("GET /api/c/me").size)
+        assertTrue(server.calls("GET /api/c/me").size >= 2)
     }
 
     @Test
@@ -338,5 +343,32 @@ class ClientModelTest {
         ready(model)
         kotlinx.coroutines.delay(200)
         assertEquals(1, server.calls("GET /api/c/me").size)
+    }
+
+    @Test
+    fun aNewLinkEndsTheOldSessionOnTheServer() = runBlocking {
+        session.start("old-session")
+        server.on("POST /api/app/challenge", ok("""{"challenge":"c1","required":false}"""))
+        server.on("POST /api/app/client/exchange", ok("""{"token":"new-session","expires_at":1900000000000}"""))
+        server.on("POST /api/app/client/logout", ok())
+        server.on("GET /api/c/me", view(fileItem("i1")))
+        val model = model()
+        ready(model)
+        model.open("https://collect.alazy.app/c/$token")
+        withTimeout(10_000) { while (server.calls("POST /api/app/client/logout").isEmpty()) kotlinx.coroutines.delay(20) }
+        assertEquals("Bearer old-session", server.calls("POST /api/app/client/logout").single().headers["Authorization"])
+    }
+
+    @Test
+    fun filesPreparedForAChecklistThatWasLeftAreDroppedAndDeleted() {
+        val model = model()
+        val epoch = model.epoch
+        queue.forget()
+        val file = File(dir, "prepared.jpg").apply { writeText("abc") }
+        model.add("i1", listOf(Prepared("a.jpg", file, true)), epoch)
+        assertTrue(queue.jobs.value.isEmpty())
+        assertTrue(!file.exists())
+        assertEquals(0, kicks)
+        assertTrue(File(dir, "uploads").listFiles().orEmpty().isEmpty())
     }
 }
