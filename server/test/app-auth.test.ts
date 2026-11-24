@@ -181,6 +181,19 @@ describe("app passkey step", () => {
     expect((await done.json<any>()).token).toBeTruthy();
   });
 
+  it("names an unnamed passkey after the app, during sign-in and from a signed-in session", async () => {
+    await login();
+    await env.CONTROL.prepare("UPDATE firms SET require_passkeys = 1").run();
+    const body = await (await appSignIn()).json<any>();
+    const { options } = await (await post("/api/auth/pending/options", {}, pendingHeader(body.pending))).json<any>();
+    const done = await post("/api/auth/pending/verify", { response: await (await Authenticator.create()).register(options) }, pendingHeader(body.pending));
+    const { token } = await done.json<any>();
+    const reg = await (await post("/api/passkeys/options", {}, bearer(token))).json<any>();
+    expect((await post("/api/passkeys", { response: await (await Authenticator.create()).register(reg) }, bearer(token))).status).toBe(201);
+    const names = (await env.CONTROL.prepare("SELECT name FROM passkeys").all<{ name: string }>()).results.map((r) => r.name);
+    expect(names).toEqual(["Lazy Collect for Android", "Lazy Collect for Android"]);
+  });
+
   it("does not read a pending token sent as a bearer", async () => {
     const { body } = await atPasskeyStep();
     expect(await (await api("/api/auth/pending", { headers: bearer(body.pending) })).json()).toEqual({ step: null });

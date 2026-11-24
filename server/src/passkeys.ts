@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { audit } from "./audit";
 import { isOwner } from "./firm";
-import { deviceLabel, type AppEnv } from "./session";
+import { sessionLabel, type AppEnv } from "./session";
 import { invalid, notFound, readBody, text } from "./validate";
 import { registrationOptions, savePasskey, verifyRegistration, type Passkey } from "./webauthn";
 
@@ -27,7 +27,7 @@ passkeys.post("/passkeys/options", async (c) => {
 passkeys.post("/passkeys", async (c) => {
   const body = await readBody(c);
   if (!body || typeof body.response !== "object" || body.response === null) return invalid(c);
-  const name = body.name === undefined || body.name === "" ? deviceLabel(c.req.header("User-Agent")) : text(body.name, 60);
+  const name = body.name === undefined || body.name === "" ? sessionLabel(c, c.get("session")!.app) : text(body.name, 60);
   if (!name) return invalid(c);
   const userId = c.get("session")!.userId;
   const verified = await verifyRegistration(c.env, userId, body.response as never);

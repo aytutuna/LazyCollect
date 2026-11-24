@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { auditLogin } from "./audit";
 import { rateLimited } from "./auth";
-import { PENDING_TRIES, createSession, deviceLabel, endPending, loadPending, type AppEnv, type Pending } from "./session";
+import { PENDING_TRIES, createSession, sessionLabel, endPending, loadPending, type AppEnv, type Pending } from "./session";
 import { invalid, readBody, text } from "./validate";
 import { authenticationOptions, registrationOptions, savePasskey, verifyAssertion, verifyRegistration, type Passkey } from "./webauthn";
 
@@ -66,7 +66,7 @@ pending.post("/auth/pending/verify", async (c) => {
       return c.json({ error: "passkey_failed" }, 400);
     }
   } else {
-    const name = body.name === undefined || body.name === "" ? deviceLabel(c.req.header("User-Agent")) : text(body.name, 60);
+    const name = body.name === undefined || body.name === "" ? sessionLabel(c, p.app) : text(body.name, 60);
     if (!name) return invalid(c);
     const verified = await verifyRegistration(c.env, p.userId, body.response as never);
     if (!verified) return c.json({ error: "passkey_failed" }, 400);

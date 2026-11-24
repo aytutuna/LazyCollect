@@ -6,7 +6,7 @@ export type App = "android" | "ios";
 export const isApp = (v: unknown): v is App => v === "android" || v === "ios";
 const APP_LABELS: Record<App, string> = { android: "Lazy Collect for Android", ios: "Lazy Collect for iPhone" };
 
-export type Session = { id: string | null; tokenHash: string; userId: string; firmId: string };
+export type Session = { id: string | null; tokenHash: string; userId: string; firmId: string; app: App | null };
 export type Firm = {
   id: string;
   name: string | null;
@@ -49,6 +49,8 @@ export function deviceLabel(ua: string | undefined): string {
   return browser && os ? `${browser} on ${os}` : (browser ?? os ?? "Unknown device");
 }
 
+export const sessionLabel = (c: Context, app: App | null) => (app ? APP_LABELS[app] : deviceLabel(c.req.header("User-Agent")));
+
 export function bearerOf(c: Context, scheme = "Bearer"): string | undefined {
   const h = c.req.header("Authorization");
   return h?.startsWith(`${scheme} `) ? h.slice(scheme.length + 1).trim() || undefined : undefined;
@@ -61,7 +63,7 @@ export async function createSession(c: Context<AppEnv>, userId: string, firmId: 
   await c.env.CONTROL.prepare(
     "INSERT INTO sessions (id, token_hash, user_id, firm_id, label, app, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   )
-    .bind(randomId(), await sha256(token), userId, firmId, app ? APP_LABELS[app] : deviceLabel(c.req.header("User-Agent")), app, now, now, now + LIFETIME)
+    .bind(randomId(), await sha256(token), userId, firmId, sessionLabel(c, app), app, now, now, now + LIFETIME)
     .run();
   if (!app) setSessionCookie(c, token);
   return token;
@@ -111,18 +113,18 @@ export const loadSession: MiddlewareHandler<AppEnv> = async (c, next) => {
     const tokenHash = await sha256(token);
     const now = Date.now();
     const row = await c.env.CONTROL.prepare(
-      `SELECT s.id, s.user_id, s.firm_id, s.last_seen_at FROM sessions s JOIN users u ON u.id = s.user_id
+      `SELECT s.id, s.user_id, s.firm_id, s.app, s.last_seen_at FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled_at IS NULL AND u.firm_id = s.firm_id`,
     )
       .bind(tokenHash, now)
-      .first<{ id: string | null; user_id: string; firm_id: string; last_seen_at: number }>();
+      .first<{ id: string | null; user_id: string; firm_id: string; app: App | null; last_seen_at: number }>();
     if (row) {
       // a session made before the id column existed gets one now, so it can be ended on its own
       if (row.id === null) {
         row.id = randomId();
         await c.env.CONTROL.prepare("UPDATE sessions SET id = ? WHERE token_hash = ? AND id IS NULL").bind(row.id, tokenHash).run();
       }
-      c.set("session", { id: row.id, tokenHash, userId: row.user_id, firmId: row.firm_id });
+      c.set("session", { id: row.id, tokenHash, userId: row.user_id, firmId: row.firm_id, app: row.app });
       if (now - row.last_seen_at > HOUR) {
         await c.env.CONTROL.prepare("UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?")
           .bind(now, now + LIFETIME, tokenHash)
