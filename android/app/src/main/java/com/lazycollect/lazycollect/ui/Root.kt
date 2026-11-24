@@ -1,5 +1,8 @@
 package com.lazycollect.lazycollect.ui
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +17,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -25,10 +32,24 @@ import com.lazycollect.lazycollect.shell.MeState
 
 @Composable
 fun Root(vm: AppViewModel) {
+    val clientToken by vm.clientSession.token.collectAsStateWithLifecycle()
+    if (clientToken != null) {
+        ClientHost(vm)
+        return
+    }
     val token by vm.session.token.collectAsStateWithLifecycle()
     if (token == null) {
+        var entering by rememberSaveable { mutableStateOf(false) }
+        val opening by vm.client.action.collectAsStateWithLifecycle()
+        if (entering || opening.busy || opening.error != null) {
+            LinkScreen(opening, vm.client::open) {
+                entering = false
+                vm.client.clearError()
+            }
+            return
+        }
         val state by vm.signIn.state.collectAsStateWithLifecycle()
-        SignInScreen(state, SignInActions(vm.signIn::sendCode, vm.signIn::verify, vm.signIn::usePasskey, vm.signIn::autoPasskey, vm.signIn::back))
+        SignInScreen(state, SignInActions(vm.signIn::sendCode, vm.signIn::verify, vm.signIn::usePasskey, vm.signIn::autoPasskey, vm.signIn::back) { entering = true })
         return
     }
     val me by vm.account.me.collectAsStateWithLifecycle()
@@ -59,4 +80,40 @@ fun Root(vm: AppViewModel) {
             }
         }
     }
+}
+
+@Composable
+private fun ClientHost(vm: AppViewModel) {
+    val state by vm.client.state.collectAsStateWithLifecycle()
+    val action by vm.client.action.collectAsStateWithLifecycle()
+    val jobs by vm.client.jobs.collectAsStateWithLifecycle()
+    val dropped by vm.client.dropped.collectAsStateWithLifecycle()
+    var waiting by remember { mutableStateOf<Pair<Uri, (Uri?) -> Unit>?>(null) }
+    val take = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        waiting?.let { (uri, done) -> done(if (ok) uri else null) }
+        waiting = null
+    }
+    val client = vm.client
+    val actions = remember {
+        ClientActions(
+            reload = client::reload,
+            leave = client::leave,
+            answer = client::answer,
+            dates = client::dates,
+            unavailable = client::unavailable,
+            found = client::found,
+            sendNote = client::send,
+            removeFile = client::removeFile,
+            pick = vm::pick,
+            camera = { _, done ->
+                val uri = vm.cameraUri()
+                waiting = uri to done
+                take.launch(uri)
+            },
+            retryJob = client::retry,
+            dropJob = client::drop,
+        )
+    }
+    LaunchedEffect(dropped) { if (dropped > 0) vm.client.acknowledgeDropped() }
+    ClientRoot(state, action, jobs, dropped, actions)
 }

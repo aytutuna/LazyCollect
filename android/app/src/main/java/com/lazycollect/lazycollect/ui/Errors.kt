@@ -43,6 +43,15 @@ fun errorText(code: String, owner: Boolean = true, pastDue: Boolean = false): In
     "attestation" -> R.string.error_attestation
     "storage" -> R.string.error_storage
     "unavailable" -> R.string.error_unavailable
+    "invalid_link" -> R.string.error_invalid_link
+    "too_big" -> R.string.error_too_big
+    "unsupported_type" -> R.string.error_unsupported_type
+    "limit" -> R.string.error_limit
+    "approved" -> R.string.error_approved
+    "not_allowed" -> R.string.error_not_allowed
+    "legal_hold" -> R.string.error_legal_hold
+    "too_many_notes" -> R.string.error_too_many_notes
+    "missing_file" -> R.string.error_missing_file
     else -> R.string.error_server_error
 }
 

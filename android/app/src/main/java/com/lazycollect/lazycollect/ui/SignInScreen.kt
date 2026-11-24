@@ -43,6 +43,7 @@ class SignInActions(
     val passkey: (Context, String) -> Unit = { _, _ -> },
     val autoPasskey: (Context) -> Unit = {},
     val back: () -> Unit = {},
+    val link: () -> Unit = {},
 )
 
 private const val LEGAL = "https://alazy.app/collect/"
@@ -88,6 +89,7 @@ private fun EmailStep(state: SignInState, actions: SignInActions) {
         TextButton(onClick = { links.openUri("${LEGAL}terms.html") }) { Text(stringResource(R.string.legal_terms)) }
         TextButton(onClick = { links.openUri("${LEGAL}privacy.html") }) { Text(stringResource(R.string.legal_privacy)) }
     }
+    TextButton(onClick = actions.link) { Text(stringResource(R.string.link_open)) }
 }
 
 @Composable
