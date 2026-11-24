@@ -1,16 +1,24 @@
 package com.lazycollect.lazycollect.net
 
+import java.io.File
 import java.io.IOException
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.coroutines.executeAsync
 
@@ -44,7 +52,15 @@ class Api(
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    private suspend fun send(method: String, path: String, body: String?, pending: String?, asToken: String? = null): String = withContext(io) {
+    private suspend fun send(
+        method: String,
+        path: String,
+        body: String?,
+        pending: String?,
+        asToken: String? = null,
+        raw: RequestBody? = null,
+        headers: Map<String, String> = emptyMap(),
+    ): String = withContext(io) {
         val bearer = if (pending == null) asToken ?: token() else null
         val request = Request.Builder().url(base.resolve("/api$path")!!)
         when {
@@ -52,7 +68,8 @@ class Api(
             bearer != null -> request.header("Authorization", "Bearer $bearer")
         }
         if (method != "GET") request.header("X-Collect", "1")
-        request.method(method, if (method == "GET") null else (body ?: "").toRequestBody(JSON_TYPE))
+        headers.forEach { (name, value) -> request.header(name, value) }
+        request.method(method, if (method == "GET") null else raw ?: (body ?: "").toRequestBody(JSON_TYPE))
         try {
             http.newCall(request.build()).executeAsync().use { response ->
                 val text = response.body.string()
@@ -130,5 +147,49 @@ class Api(
     /** Ends the session of [asToken] when it is not the one the app holds yet. */
     suspend fun logout(asToken: String? = null) {
         send("POST", "/auth/logout", null, null, asToken)
+    }
+
+    /** Trades the link a client was sent for a session of the app's own. */
+    suspend fun exchange(link: String, attestation: Attestation?): Exchange =
+        call("POST", "/app/client/exchange", ApiJson.encodeToString(ExchangeRequest(link, attestation)))
+
+    suspend fun clientLogout(asToken: String? = null) {
+        send("POST", "/app/client/logout", null, null, asToken)
+    }
+
+    suspend fun view(): ClientView = call("GET", "/c/me")
+
+    suspend fun answer(item: String, answer: JsonElement): List<ClientItem> =
+        call<ItemsReply>("PUT", "/c/me/items/$item/answer", buildJsonObject { put("answer", answer) }.toString()).items
+
+    suspend fun dates(item: String, expiresOn: String?, issuedOn: String?, setExpires: Boolean, setIssued: Boolean): List<ClientItem> {
+        val body = buildJsonObject {
+            if (setExpires) put("expires_on", expiresOn)
+            if (setIssued) put("issued_on", issuedOn)
+        }
+        return call<ItemsReply>("PUT", "/c/me/items/$item/dates", body.toString()).items
+    }
+
+    suspend fun unavailable(item: String, note: String) {
+        send("POST", "/c/me/items/$item/unavailable", ApiJson.encodeToString(UnavailableBody(note)), null)
+    }
+
+    suspend fun found(item: String) {
+        send("DELETE", "/c/me/items/$item/unavailable", null, null)
+    }
+
+    suspend fun note(body: String) {
+        send("POST", "/c/me/notes", ApiJson.encodeToString(NoteBody(body)), null)
+    }
+
+    suspend fun deleteFile(id: String) {
+        send("DELETE", "/c/me/files/$id", null, null)
+    }
+
+    /** One file as the raw body, with its length, so the server can refuse a big one before it reads it. [uploadId] makes a repeat harmless. */
+    suspend fun upload(item: String, name: String, uploadId: String, file: File) {
+        val body = file.asRequestBody("application/octet-stream".toMediaType())
+        val headers = mapOf("Upload-Id" to uploadId, "X-File-Name" to URLEncoder.encode(name, "UTF-8").replace("+", "%20"))
+        send("PUT", "/c/me/items/$item/files", null, null, raw = body, headers = headers)
     }
 }

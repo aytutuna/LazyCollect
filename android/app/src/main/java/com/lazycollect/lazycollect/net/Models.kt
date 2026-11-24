@@ -3,7 +3,11 @@ package com.lazycollect.lazycollect.net
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 
 val ApiJson = Json {
     ignoreUnknownKeys = true
@@ -96,3 +100,83 @@ data class Device(
 
 @Serializable
 internal data class ErrorBody(val error: String? = null)
+
+@Serializable
+data class Exchange(val token: String, @SerialName("expires_at") val expiresAt: Long)
+
+@Serializable
+data class ExchangeRequest(val token: String, val attestation: Attestation? = null, val platform: String = PLATFORM)
+
+@Serializable
+data class FileRow(
+    val id: String,
+    val name: String,
+    val size: Long,
+    @SerialName("uploaded_at") val uploadedAt: Long,
+    @SerialName("sent_back_at") val sentBackAt: Long? = null,
+)
+
+@Serializable
+data class ClientItem(
+    val id: String,
+    val label: String,
+    val help: String? = null,
+    val required: Boolean = false,
+    val status: String,
+    @SerialName("reject_note") val rejectNote: String? = null,
+    @SerialName("reject_reasons") val rejectReasons: List<String> = emptyList(),
+    @SerialName("unavailable_note") val unavailableNote: String? = null,
+    val kind: String = "file",
+    val example: String? = null,
+    val options: List<String>? = null,
+    // a string, or an array of strings for a multi-choice question
+    val answer: JsonElement? = null,
+    @SerialName("person_pos") val personPos: Int? = null,
+    @SerialName("expiry_rule") val expiryRule: String? = null,
+    @SerialName("valid_months") val validMonths: Int? = null,
+    @SerialName("expires_on") val expiresOn: String? = null,
+    @SerialName("issued_on") val issuedOn: String? = null,
+    val files: List<FileRow> = emptyList(),
+) {
+    val received get() = status == "submitted" || status == "approved" || status == "waived"
+    val approved get() = status == "approved"
+
+    val answerText: String get() = (answer as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
+    val answerList: List<String> get() = (answer as? JsonArray)?.map { it.jsonPrimitive.content }.orEmpty()
+}
+
+@Serializable
+data class Note(val id: String, val author: String, val body: String, @SerialName("created_at") val createdAt: Long)
+
+@Serializable
+data class Person(val position: Int, val role: String, val name: String)
+
+@Serializable
+data class Contact(val name: String? = null, val email: String? = null, val phone: String? = null, val address: String? = null)
+
+@Serializable
+data class ClientView(
+    @SerialName("firm_name") val firmName: String,
+    val tz: String = "America/Toronto",
+    val title: String,
+    val note: String? = null,
+    val deadline: Long,
+    val status: String,
+    @SerialName("expires_at") val expiresAt: Long,
+    val contact: Contact? = null,
+    val notes: List<Note> = emptyList(),
+    val people: List<Person> = emptyList(),
+    val items: List<ClientItem> = emptyList(),
+)
+
+@Serializable
+data class Uploaded(val id: String, val name: String, val size: Long)
+
+@Serializable
+data class ItemsReply(val items: List<ClientItem>)
+
+@Serializable
+data class NoteBody(val body: String)
+
+@Serializable
+data class UnavailableBody(val note: String)
