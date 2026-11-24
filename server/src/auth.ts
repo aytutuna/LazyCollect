@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { createSession, endSession, holdLogin, type App, type AppEnv } from "./session";
 import { sendLoginEmail } from "./email";
+import { langOf } from "./lang";
 import { untouchedRegion, untouchedSql, usable } from "./firm";
 import { htmlHeaders } from "./headers";
 import { isRegion, regionOf, type Region } from "./regions";
@@ -80,7 +81,8 @@ export async function sendCode(c: Context<AppEnv>, email: string, app: App | nul
   ]);
   if (inserted.meta.changes === 0) return c.json({ ok: true });
   try {
-    await sendLoginEmail(c.env, email, code, `${c.env.APP_URL}/api/auth/link?t=${linkToken}`);
+    const lang = langOf(c);
+    await sendLoginEmail(c.env, email, code, `${c.env.APP_URL}/api/auth/link?t=${linkToken}`, lang);
   } catch (e) {
     console.error(e instanceof Error ? e.message : "login email failed");
     await db.prepare("DELETE FROM login_codes WHERE id = ?").bind(id).run();
@@ -252,6 +254,23 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+const LINK_PAGE = {
+  en: {
+    invalid: "This link is invalid or has expired.",
+    ask: (email: string) => `Sign in to Lazy Collect as <b>${email}</b>?`,
+    button: "Sign in",
+    offline: "Could not reach the server. Check your connection and try again.",
+    limited: "Too many tries. Wait a minute and try again.",
+  },
+  "fr-CA": {
+    invalid: "Ce lien n'est pas valide ou a expiré.",
+    ask: (email: string) => `Se connecter à Lazy Collect en tant que <b>${email}</b>?`,
+    button: "Se connecter",
+    offline: "Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.",
+    limited: "Trop de tentatives. Attendez une minute et réessayez.",
+  },
+} as const;
+
 // Mail scanners fetch links with GET or HEAD, so this only looks the token up;
 // signing in happens on the POST below.
 auth.get("/auth/link", async (c) => {
@@ -261,14 +280,16 @@ auth.get("/auth/link", async (c) => {
         .bind(await sha256(t), Date.now())
         .first<{ email: string }>()
     : null;
+  const lang = langOf(c);
+  const w = LINK_PAGE[lang];
   const page = (body: string) =>
-    c.html(`<!doctype html><html lang="en"><meta name="viewport" content="width=device-width"><title>Lazy Collect</title><link rel="stylesheet" href="/link.css"><body>${body}</body>`, row ? 200 : 400, {
+    c.html(`<!doctype html><html lang="${lang}"><meta name="viewport" content="width=device-width"><title>Lazy Collect</title><link rel="stylesheet" href="/link.css"><body>${body}</body>`, row ? 200 : 400, {
       ...htmlHeaders,
       "Cache-Control": "no-store",
     });
-  if (!row) return page("<p>This link is invalid or has expired.</p>");
-  return page(`<p>Sign in to Lazy Collect as <b>${escapeHtml(row.email)}</b>?</p>
-<button id="go">Sign in</button>
+  if (!row) return page(`<p>${w.invalid}</p>`);
+  return page(`<p>${w.ask(escapeHtml(row.email))}</p>
+<button id="go" data-offline="${w.offline}" data-limited="${w.limited}" data-invalid="${w.invalid}">${w.button}</button>
 <p id="note" role="alert"></p>
 <script src="/link.js"></script>`);
 });

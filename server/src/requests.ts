@@ -15,23 +15,24 @@ import { missingItems, senderName, sendersOf } from "./reminders";
 import { endNow, syncStatus } from "./status";
 import { nextReminder } from "./tz";
 import type { AppEnv } from "./session";
-import { builtinTemplates, parseItem, parseItems, type Item } from "./templates";
+import { asLang, isLang } from "./lang";
+import { builtinsFor, parseItem, parseItems, type Item } from "./templates";
 import { DAY, hmac, randomId, randomToken } from "./util";
 import { exampleGone, invalid, maybe, notFound, readBody, setClause, text } from "./validate";
 
 export const requests = new Hono<AppEnv>();
 
-const COLS = "id, client_id, title, note, deadline, firm_name, status, sent_at, closed_at, created_at, first_opened_at, reminders_on, next_reminder_at, ended_at, keep_until, hold_at";
+const COLS = "id, client_id, locale, title, note, deadline, firm_name, status, sent_at, closed_at, created_at, first_opened_at, reminders_on, next_reminder_at, ended_at, keep_until, hold_at";
 const MAX_PER_DAY = 300;
 // requests made by a batch have a cap of their own
 export const SINGLE_TODAY = `(SELECT COUNT(*) FROM requests WHERE firm_id = ? AND created_at > ? AND id NOT IN (SELECT request_id FROM batch_items WHERE firm_id = ?)) < ${MAX_PER_DAY}`;
 const MAX_AHEAD = 2 * 365 * DAY;
 
-type Req = { id: string; client_id: string; title: string; status: string; deadline: number; reminders_on: number; hold_at: number | null };
+type Req = { id: string; client_id: string; locale: string; title: string; status: string; deadline: number; reminders_on: number; hold_at: number | null };
 
 export const findRequest = (c: Context<AppEnv>) =>
   c.get("db")
-    .prepare("SELECT id, client_id, title, status, deadline, reminders_on, hold_at FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
+    .prepare("SELECT id, client_id, locale, title, status, deadline, reminders_on, hold_at FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
     .bind(c.get("firm").id, c.req.param("id"))
     .first<Req>();
 
@@ -55,15 +56,18 @@ requests.post("/requests", async (c) => {
   const firmId = c.get("firm").id;
 
   const client = await db
-    .prepare("SELECT id FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
+    .prepare("SELECT id, locale FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
     .bind(firmId, body.client_id)
-    .first();
+    .first<{ locale: string }>();
   if (!client) return notFound(c);
+  // the request is in the language asked for, else the client's
+  if (body.locale !== undefined && !isLang(body.locale)) return invalid(c);
+  const lang = isLang(body.locale) ? body.locale : asLang(client.locale);
 
   let items: Item[] = [];
   if (body.template_id !== undefined) {
     if (typeof body.template_id !== "string") return invalid(c);
-    const built = builtinTemplates.find((t) => t.id === body.template_id);
+    const built = builtinsFor(lang).find((t) => t.id === body.template_id);
     if (built) {
       items = built.items;
     } else {
@@ -83,16 +87,16 @@ requests.post("/requests", async (c) => {
 
   const id = randomId();
   const now = Date.now();
-  const { rows, perPerson } = expandItems(items, people, today(now, c.get("firm").tz).today);
+  const { rows, perPerson } = expandItems(items, people, today(now, c.get("firm").tz).today, lang);
   if (rows.length > MAX_ITEMS) return c.json({ error: "too_many_items" }, 409);
   const made = { sql: "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ?)", binds: [firmId, id] };
   const [res] = await db.batch([
     db
       .prepare(
-        `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, created_by, created_at, per_person_json, valid_until) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, created_by, created_at, per_person_json, valid_until, locale) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
          WHERE ${SINGLE_TODAY}`,
       )
-      .bind(id, firmId, body.client_id, title, note, due, c.get("session")!.userId, now, perPerson.length ? JSON.stringify(perPerson) : null, validUntil, firmId, now - DAY, firmId),
+      .bind(id, firmId, body.client_id, title, note, due, c.get("session")!.userId, now, perPerson.length ? JSON.stringify(perPerson) : null, validUntil, lang, firmId, now - DAY, firmId),
     db
       .prepare(
         `INSERT INTO people (id, firm_id, request_id, position, role, name, dob, created_at)
@@ -241,9 +245,9 @@ async function addTagged(c: Context<AppEnv>, req: Req, item: Item) {
   const rows: Row[] = [];
   const key = randomId();
   if (item.per_person) {
-    for (const p of people) if (matches(item.per_person, p, now)) rows.push(...rowsFor(item, p, state!.base + rows.length, null, key));
+    for (const p of people) if (matches(item.per_person, p, now)) rows.push(...rowsFor(item, p, state!.base + rows.length, null, key, asLang(req.locale)));
   } else {
-    rows.push(...rowsFor(item, null, state!.base, null));
+    rows.push(...rowsFor(item, null, state!.base, null, null, asLang(req.locale)));
   }
   if (state!.count + rows.length > MAX_ITEMS) return c.json({ error: "too_many_items" }, 409);
   const live = { sql: LIVE, binds: [firmId, req.id] };
@@ -638,6 +642,7 @@ requests.post("/requests/:id/link", async (c) => {
       { db, firmId: firm.id, requestId: req.id, clientId: req.client_id, kind: "invite", seq: null },
       {
         kind: "invite",
+        lang: asLang(req.locale),
         sender: senderName(sender),
         address: firm.address!,
         phone: firm.phone,

@@ -1,3 +1,5 @@
+import type { Lang } from "./lang";
+
 // The codes are what is stored; the client-facing wording lives in the web app's dictionary. These labels are for the plain-text
 // places: the email, the zip's checklist and the activity list.
 export const REASONS = {
@@ -13,6 +15,20 @@ export const REASONS = {
   locked_pdf: "password-protected PDF",
   other: "other",
 } as const;
+
+const REASONS_FR: Record<keyof typeof REASONS, string> = {
+  blurry: "flou ou difficile à lire",
+  cut_off: "page coupée ou incomplète",
+  glare: "reflet ou ombre",
+  dark: "trop sombre",
+  wrong_document: "mauvais document",
+  wrong_period: "mauvaise année ou période",
+  expired: "expiré",
+  wrong_person: "mauvaise personne",
+  pages_missing: "pages manquantes",
+  locked_pdf: "PDF protégé par un mot de passe",
+  other: "autre",
+};
 
 export type Reason = keyof typeof REASONS;
 
@@ -31,10 +47,10 @@ export function parseReasons(v: unknown, kind: string): Reason[] | undefined {
 }
 
 // the stored column as a list of words; "other" has no wording of its own, the note says it
-export function reasonLabels(stored: string | null): string[] {
+export function reasonLabels(stored: string | null, lang: Lang = "en"): string[] {
   if (!stored) return [];
-  return (JSON.parse(stored) as Reason[]).filter((r) => r !== "other").map((r) => REASONS[r]);
+  return (JSON.parse(stored) as Reason[]).filter((r) => r !== "other").map((r) => (lang === "en" ? REASONS : REASONS_FR)[r]);
 }
 
 // the reasons and the note as one line
-export const sentBackText = (stored: string | null, note: string | null) => [...reasonLabels(stored), ...(note ? [note] : [])].join("; ");
+export const sentBackText = (stored: string | null, note: string | null, lang: Lang = "en") => [...reasonLabels(stored, lang), ...(note ? [note] : [])].join("; ");

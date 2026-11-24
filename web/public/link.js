@@ -7,12 +7,12 @@ button.onclick = async () => {
     res = await fetch("/api/auth/link", { method: "POST", headers: { "X-Collect": "1", "content-type": "application/json" }, body: JSON.stringify({ t }) });
   } catch {
     button.disabled = false;
-    document.getElementById("note").textContent = "Could not reach the server. Check your connection and try again.";
+    document.getElementById("note").textContent = button.dataset.offline;
     return;
   }
   if (res.ok) location = "/";
   else if (res.status === 429) {
     button.disabled = false;
-    document.getElementById("note").textContent = "Too many tries. Wait a minute and try again.";
-  } else document.body.textContent = "This link is invalid or has expired.";
+    document.getElementById("note").textContent = button.dataset.limited;
+  } else document.body.textContent = button.dataset.invalid;
 };

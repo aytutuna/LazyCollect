@@ -13,7 +13,9 @@ import gstHst from "../templates/gst-hst-return";
 import t1Personal from "../templates/t1-personal";
 import t1SelfEmployed from "../templates/t1-self-employed.json";
 import t2YearEnd from "../templates/t2-year-end";
+import { builtinTemplatesFr } from "../templates/fr";
 import { audit } from "./audit";
+import { isLang, langOf, type Lang } from "./lang";
 import type { AppEnv } from "./session";
 import { ownsExamples, parseExample } from "./examples";
 import { parseKind, parseTags, checkConditions, type Item } from "./questions";
@@ -41,6 +43,9 @@ export const builtinTemplates: Template[] = [
   ircVisitor,
   ircCitizenship,
 ];
+
+// the built-in templates in the language of the request they will start
+export const builtinsFor = (lang: Lang) => (lang === "fr-CA" ? builtinTemplatesFr : builtinTemplates);
 
 const MAX_ITEMS = 100;
 const COLS = "id, name, locale, items_json, created_at, updated_at";
@@ -75,7 +80,9 @@ templates.get("/templates", async (c) => {
     .prepare(`SELECT ${COLS} FROM templates WHERE firm_id = ? ORDER BY name COLLATE NOCASE`)
     .bind(c.get("firm").id)
     .all<Row>();
-  return c.json([...builtinTemplates.map((t) => ({ ...t, locale: "en", builtin: true })), ...results.map(present)]);
+  const q = c.req.query("locale");
+  const lang = isLang(q) ? q : langOf(c);
+  return c.json([...builtinsFor(lang).map((t) => ({ ...t, locale: lang, builtin: true })), ...results.map(present)]);
 });
 
 templates.post("/templates", async (c) => {

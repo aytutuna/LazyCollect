@@ -1,3 +1,4 @@
+import { asLang } from "./lang";
 import { Hono } from "hono";
 import { audit } from "./audit";
 import { liveToken } from "./links";
@@ -63,6 +64,7 @@ remind.post("/requests/:id/remind", async (c) => {
     { db, firmId: firm.id, requestId: req.id, clientId: req.client_id, kind, seq: last!.seq + 1 },
     {
       kind,
+      lang: asLang(req.locale),
       sender: senderName(sender),
       address: sender.address,
       phone: sender.phone,

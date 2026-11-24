@@ -23,11 +23,11 @@ repeat.post("/requests/:id/repeat", async (c) => {
   const [res] = await db.batch([
     db
       .prepare(
-        `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, reminders_on, created_by, created_at, per_person_json, valid_until)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT per_person_json FROM requests WHERE firm_id = ? AND id = ?), (SELECT date(valid_until, '+1 year') FROM requests WHERE firm_id = ? AND id = ?)
+        `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, reminders_on, created_by, created_at, per_person_json, valid_until, locale)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT per_person_json FROM requests WHERE firm_id = ? AND id = ?), (SELECT date(valid_until, '+1 year') FROM requests WHERE firm_id = ? AND id = ?), ?
          WHERE ${alive} AND ${SINGLE_TODAY}`,
       )
-      .bind(id, firm.id, src.client_id, nextYearTitle(src.title).slice(0, 200), row!.note, plusYear(src.deadline, firm.tz), src.reminders_on, c.get("session")!.userId, now, firm.id, src.id, firm.id, src.id, firm.id, src.client_id, firm.id, now - DAY, firm.id),
+      .bind(id, firm.id, src.client_id, nextYearTitle(src.title).slice(0, 200), row!.note, plusYear(src.deadline, firm.tz), src.reminders_on, c.get("session")!.userId, now, firm.id, src.id, firm.id, src.id, src.locale, firm.id, src.client_id, firm.id, now - DAY, firm.id),
     peopleFromRequests(db, firm.id, [{ id, src: src.id }], now),
     itemsFromRequests(db, firm.id, await itemColumns(db), [{ id, src: src.id }], true),
     audit(c, "request.repeat", "request", id, { from: src.id }, { sql: "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ?)", binds: [firm.id, id] }),

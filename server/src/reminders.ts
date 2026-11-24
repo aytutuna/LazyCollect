@@ -1,3 +1,4 @@
+import { asLang } from "./lang";
 import { sendMail } from "./email";
 import { asked } from "./expand";
 import { usable } from "./firm";
@@ -60,6 +61,7 @@ export async function missingItems(db: D1Database, firmId: string, requestId: st
 
 type Row = {
   id: string;
+  locale: string;
   firm_id: string;
   client_id: string;
   title: string;
@@ -74,7 +76,7 @@ type Row = {
   stopped?: boolean;
 };
 
-const ROW = `r.id, r.firm_id, r.client_id, r.title, r.deadline, c.name AS client_name, c.email, c.email_ok_at, c.email_stop_at, c.deleted_at AS client_deleted`;
+const ROW = `r.id, r.firm_id, r.locale, r.client_id, r.title, r.deadline, c.name AS client_name, c.email, c.email_ok_at, c.email_stop_at, c.deleted_at AS client_deleted`;
 const JOIN = `FROM requests r JOIN clients c ON c.firm_id = r.firm_id AND c.id = r.client_id`;
 
 const reachable = (r: Row) => Boolean(r.email && r.email_ok_at && !r.email_stop_at && !r.stopped && !r.client_deleted);
@@ -187,6 +189,7 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
       slot,
       {
         kind,
+        lang: asLang(r.locale),
         sender: senderName(sender),
         address: sender.address,
         phone: sender.phone,
@@ -244,6 +247,7 @@ async function rejectedPass(env: Env, region: Region, db: D1Database, now: numbe
       { db, firmId: r.firm_id, requestId: r.id, clientId: r.client_id, kind: "rejected", seq: r.seq + 1 },
       {
         kind: "rejected",
+        lang: asLang(r.locale),
         sender: senderName(sender),
         address: sender.address,
         phone: sender.phone,

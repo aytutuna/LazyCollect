@@ -1,3 +1,4 @@
+import { asLang, isLang, type Lang } from "./lang";
 import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { insertRows, itemColumns, itemsFromRequests, nextYearTitle, peopleFromRequests } from "./copy";
@@ -12,7 +13,7 @@ import { deadline } from "./requests";
 import type { AppEnv } from "./session";
 import { PAGE, offsetOf } from "./search";
 import { visible } from "./questions";
-import { builtinTemplates, type Item } from "./templates";
+import { builtinsFor, type Item } from "./templates";
 import { addDays, atHour, dayOf, inHours, nextOpening, nextReminder, plusYear } from "./tz";
 import { DAY, HOUR, MINUTE, randomId } from "./util";
 import { invalid, notFound, readBody, text } from "./validate";
@@ -41,7 +42,7 @@ function localTime(v: string, tz: string): number | null {
   return atHour({ y, m: mo, d }, h, tz) + min * MINUTE;
 }
 
-type Plan = { id: string; client_id: string; title: string; note: string | null; deadline: number; reminders_on: number; src: string | null; again?: 1; position: number; state: string; reason: string | null };
+type Plan = { id: string; client_id: string; locale: Lang; title: string; note: string | null; deadline: number; reminders_on: number; src: string | null; again?: 1; position: number; state: string; reason: string | null };
 
 const hexIds = (v: unknown): string[] | undefined =>
   Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string" && /^[0-9a-f]{32}$/.test(x)) ? [...new Set(v as string[])] : undefined;
@@ -93,6 +94,8 @@ batches.post("/batches", async (c) => {
   let kind: "template" | "request" | "repeat" = "template";
   let sourceName: string | null = null;
   let due: number | null = null;
+  // the checklists of a batch come in the language asked for; a copy of a request keeps that request's
+  let lang: Lang = isLang(body.locale) ? body.locale : "en";
   let items: Item[] = [];
   let sourceId: string | null = null;
   const plans: Omit<Plan, "position" | "state" | "reason">[] = [];
@@ -112,11 +115,11 @@ batches.post("/batches", async (c) => {
     kind = "repeat";
     const { results } = await db
       .prepare(
-        `SELECT r.id, r.client_id, r.title, r.note, r.deadline, r.reminders_on FROM requests r JOIN clients cl ON cl.firm_id = r.firm_id AND cl.id = r.client_id AND cl.deleted_at IS NULL
+        `SELECT r.id, r.client_id, r.locale, r.title, r.note, r.deadline, r.reminders_on FROM requests r JOIN clients cl ON cl.firm_id = r.firm_id AND cl.id = r.client_id AND cl.deleted_at IS NULL
          WHERE r.firm_id = ? AND r.deleted_at IS NULL AND r.id IN (SELECT value FROM json_each(?)) ORDER BY cl.name COLLATE NOCASE, r.id`,
       )
       .bind(firm.id, JSON.stringify(ids))
-      .all<{ id: string; client_id: string; title: string; note: string | null; deadline: number; reminders_on: number }>();
+      .all<{ id: string; client_id: string; locale: string; title: string; note: string | null; deadline: number; reminders_on: number }>();
     if (results.length !== ids.length) return notFound(c);
     await loadClients([...new Set(results.map((r) => r.client_id))]);
     for (const r of results) {
@@ -124,7 +127,7 @@ batches.post("/batches", async (c) => {
       if (next <= now) return c.json({ error: "repeat_deadline_passed" }, 400);
       if (next <= sendAt) return c.json({ error: "deadline_before_send" }, 400);
       if (deadline(next) === undefined) return invalid(c);
-      plans.push({ id: randomId(), client_id: r.client_id, title: nextYearTitle(r.title).slice(0, 200), note: r.note, deadline: next, reminders_on: body.reminders_on ? 1 : 0, src: r.id, again: 1 });
+      plans.push({ id: randomId(), client_id: r.client_id, locale: asLang(r.locale), title: nextYearTitle(r.title).slice(0, 200), note: r.note, deadline: next, reminders_on: body.reminders_on ? 1 : 0, src: r.id, again: 1 });
     }
   } else {
     due = deadline(body.deadline) ?? null;
@@ -135,7 +138,7 @@ batches.post("/batches", async (c) => {
     let sourceNote: string | null = null;
     if (body.template_id !== undefined) {
       if (typeof body.template_id !== "string") return invalid(c);
-      const built = builtinTemplates.find((t) => t.id === body.template_id);
+      const built = builtinsFor(lang).find((t) => t.id === body.template_id);
       if (built) {
         items = built.items;
         sourceName = built.name;
@@ -148,9 +151,10 @@ batches.post("/batches", async (c) => {
     } else {
       kind = "request";
       if (typeof body.request_id !== "string") return invalid(c);
-      const src = await db.prepare("SELECT id, title, note FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NULL").bind(firm.id, body.request_id).first<{ id: string; title: string; note: string | null }>();
+      const src = await db.prepare("SELECT id, locale, title, note FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NULL").bind(firm.id, body.request_id).first<{ id: string; locale: string; title: string; note: string | null }>();
       if (!src) return notFound(c);
       sourceId = src.id;
+      lang = asLang(src.locale);
       sourceName = src.title;
       sourceNote = src.note;
     }
@@ -159,6 +163,7 @@ batches.post("/batches", async (c) => {
       plans.push({
         id: randomId(),
         client_id: cl.id,
+        locale: lang,
         title: title.replaceAll("{year}", year).replaceAll("{client}", cl.name).slice(0, 200),
         note: note ?? (kind === "request" ? sourceNote : null),
         deadline: due,
@@ -175,7 +180,7 @@ batches.post("/batches", async (c) => {
 
   const columns = kind === "template" ? [] : await itemColumns(db);
   // a template's items for each person wait for people the new requests do not have yet
-  const expanded = expandItems(items, [], today(now, firm.tz).today);
+  const expanded = expandItems(items, [], today(now, firm.tz).today, lang);
   if (expanded.rows.length > MAX_ITEMS) return invalid(c);
   const rows: Plan[] = plans.map((p, position) => {
     const ok = mailable.get(p.client_id);
@@ -195,8 +200,8 @@ batches.post("/batches", async (c) => {
     stmts.push(
       db
         .prepare(
-          `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, reminders_on, created_by, created_at, per_person_json, valid_until)
-           SELECT json_extract(value, '$.id'), ?1, json_extract(value, '$.client_id'), json_extract(value, '$.title'), json_extract(value, '$.note'), json_extract(value, '$.deadline'),
+          `INSERT INTO requests (id, firm_id, client_id, locale, title, note, deadline, reminders_on, created_by, created_at, per_person_json, valid_until)
+           SELECT json_extract(value, '$.id'), ?1, json_extract(value, '$.client_id'), json_extract(value, '$.locale'), json_extract(value, '$.title'), json_extract(value, '$.note'), json_extract(value, '$.deadline'),
              json_extract(value, '$.reminders_on'), ?2, ?3,
              CASE WHEN json_extract(value, '$.src') IS NULL THEN ?6 ELSE (SELECT per_person_json FROM requests WHERE firm_id = ?1 AND id = json_extract(value, '$.src')) END,
              CASE WHEN json_extract(value, '$.again') = 1 THEN (SELECT date(valid_until, '+1 year') FROM requests WHERE firm_id = ?1 AND id = json_extract(value, '$.src')) END
@@ -321,6 +326,7 @@ type Row = {
   deadline: number;
   status: string;
   deleted_at: number | null;
+  locale: string;
   client_name: string;
   email: string | null;
   email_ok_at: number | null;
@@ -378,7 +384,7 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
   if (!claim.meta.changes) return { used: 0, full: false, busy: false };
   const { results } = await db
     .prepare(
-      `SELECT i.request_id, i.client_id, i.tries, i.linked_at, r.title, r.deadline, r.status, r.deleted_at, cl.name AS client_name, cl.email, cl.email_ok_at, cl.email_stop_at, cl.deleted_at AS client_deleted
+      `SELECT i.request_id, i.client_id, i.tries, i.linked_at, r.locale, r.title, r.deadline, r.status, r.deleted_at, cl.name AS client_name, cl.email, cl.email_ok_at, cl.email_stop_at, cl.deleted_at AS client_deleted
        FROM batch_items i JOIN requests r ON r.firm_id = i.firm_id AND r.id = i.request_id JOIN clients cl ON cl.firm_id = i.firm_id AND cl.id = i.client_id
        WHERE i.firm_id = ? AND i.batch_id = ? AND i.state = 'pending' ORDER BY i.position LIMIT ?`,
     )
@@ -442,6 +448,7 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
           { db, firmId: b.firm_id, requestId: r.request_id, clientId: r.client_id, kind: "invite", seq: INVITE_SEQ },
           {
             kind: "invite",
+            lang: asLang(r.locale),
             sender: senderName(sender),
             address: sender.address,
             phone: sender.phone,
