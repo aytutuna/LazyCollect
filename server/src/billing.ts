@@ -233,7 +233,7 @@ async function sync(env: Env, event: Event) {
   }
   const end = sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
   await env.CONTROL.prepare(
-    `UPDATE firms SET stripe_customer_id = ?, stripe_subscription_id = ?, plan_status = ?, current_period_end = ?, cancel_at_period_end = ?,
+    `UPDATE firms SET plan_source = 'stripe', stripe_customer_id = ?, stripe_subscription_id = ?, plan_status = ?, current_period_end = ?, cancel_at_period_end = ?,
        past_due_since = CASE WHEN ? = 'past_due' THEN COALESCE(past_due_since, ?) ELSE NULL END,
        trial_ends_at = CASE WHEN ? = 'trialing' AND ? IS NOT NULL THEN ? ELSE trial_ends_at END WHERE id = ?`,
   )

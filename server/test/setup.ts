@@ -1,6 +1,7 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, vi } from "vitest";
+import { appleFake } from "./apple-fake";
 import { playFake } from "./play-fake";
 import { stripeFake } from "./stripe-fake";
 
@@ -11,6 +12,7 @@ beforeEach(async () => {
   vi.restoreAllMocks();
   stripeFake.reset();
   playFake.reset();
+  appleFake.reset();
   await env.CONTROL.batch(
     ["sessions", "client_sessions", "passkeys", "passkey_challenges", "pending_logins", "login_codes", "app_challenges", "app_keys", "invites", "users", "firms", "stripe_events"].map((t) => env.CONTROL.prepare(`DELETE FROM ${t}`)),
   );
