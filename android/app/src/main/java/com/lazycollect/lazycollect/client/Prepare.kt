@@ -117,6 +117,7 @@ class Prepare(private val context: Context) {
     /** One page per picture. Null when the result is too big for the server, so the pictures go on their own. */
     fun combine(parts: List<Prepared>, name: String): Prepared? {
         val doc = PdfDocument()
+        val out = File(dir, UUID.randomUUID().toString())
         try {
             parts.forEachIndexed { index, part ->
                 val bitmap = BitmapFactory.decodeFile(part.file.path) ?: return null
@@ -126,13 +127,15 @@ class Prepare(private val context: Context) {
                 doc.finishPage(page)
                 bitmap.recycle()
             }
-            val out = File(dir, UUID.randomUUID().toString())
             FileOutputStream(out).use { doc.writeTo(it) }
             if (out.length() > MAX_UPLOAD) {
                 out.delete()
                 return null
             }
             return Prepared(withExtension(name, "pdf"), out, false)
+        } catch (e: Exception) {
+            out.delete()
+            throw e
         } finally {
             doc.close()
         }
@@ -166,7 +169,12 @@ class Prepare(private val context: Context) {
             throw e
         }
         if (!shouldCombine(read.map { it.file.length() })) return read
-        val pdf = combine(read, label) ?: return read
+        val pdf = try {
+            combine(read, label) ?: return read
+        } catch (e: Exception) {
+            read.forEach { it.file.delete() }
+            throw e
+        }
         read.forEach { it.file.delete() }
         return listOf(Prepared("$label.pdf", pdf.file, false))
     }
@@ -182,7 +190,12 @@ class Prepare(private val context: Context) {
         }
         val jpegs = read.filter { it.jpeg }
         if (!shouldCombine(jpegs.map { it.file.length() })) return read
-        val pdf = combine(jpegs, label) ?: return read
+        val pdf = try {
+            combine(jpegs, label) ?: return read
+        } catch (e: Exception) {
+            read.forEach { it.file.delete() }
+            throw e
+        }
         jpegs.forEach { it.file.delete() }
         return read.filter { !it.jpeg } + pdf
     }
