@@ -49,8 +49,9 @@ describe("people on a new request", () => {
   });
 
   it("works out an age on the birthday", async () => {
-    const d = new Date();
-    const day = (y: number) => `${y}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+    // the firm's day, not UTC's: they differ for hours every evening
+    const monthDay = new Date().toLocaleDateString("en-CA", { timeZone: "America/Toronto" }).slice(4);
+    const day = (y: number) => `${y}${monthDay}`;
     const items = [{ label: "Passport", per_person: "adults", required: true }];
     const { req } = await family({ items, people: [{ role: "child", name: "Turned", dob: day(year - 18) }, { role: "child", name: "Not yet", dob: day(year - 18 + 1) }] });
     expect(labels(req)).toEqual(["Passport — Turned"]);
