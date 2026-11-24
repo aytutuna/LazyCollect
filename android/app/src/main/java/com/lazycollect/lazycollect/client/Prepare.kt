@@ -40,7 +40,13 @@ fun pageSize(width: Int, height: Int): Pair<Int, Int> {
 /** Several pictures go as one PDF when it will fit in what the server takes. */
 fun shouldCombine(sizes: List<Long>): Boolean = sizes.size > 1 && sizes.sumOf { it + 2048 } <= MAX_UPLOAD
 
-fun withExtension(name: String, ext: String): String = name.substringBeforeLast('.', name).ifBlank { "file" } + ".$ext"
+private val PICTURE_OR_PDF = setOf("jpg", "jpeg", "png", "webp", "heic", "heif", "pdf")
+
+// a label such as "Pay stub no. 1" has a dot that is not an extension
+fun withExtension(name: String, ext: String): String {
+    val base = if (name.substringAfterLast('.', "").lowercase() in PICTURE_OR_PDF) name.substringBeforeLast('.') else name
+    return base.ifBlank { "file" } + ".$ext"
+}
 
 class Prepare(private val context: Context) {
     private val dir = File(context.cacheDir, "prepared").apply { mkdirs() }

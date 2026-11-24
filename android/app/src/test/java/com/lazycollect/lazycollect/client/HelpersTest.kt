@@ -44,6 +44,9 @@ class HelpersTest {
     fun theExtensionFollowsTheFormat() {
         assertEquals("Passport.jpg", withExtension("Passport", "jpg"))
         assertEquals("IMG_1.pdf", withExtension("IMG_1.heic", "pdf"))
+        assertEquals("Pay stub no. 1.jpg", withExtension("Pay stub no. 1", "jpg"))
+        assertEquals("scan.v2.pdf", withExtension("scan.v2.JPG", "pdf"))
+        assertEquals("file.jpg", withExtension(".png", "jpg"))
     }
 
     @Test
