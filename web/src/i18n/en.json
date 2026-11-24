@@ -1069,5 +1069,16 @@
   "activity.action.person.add": "Added a person to a request",
   "activity.action.person.edit": "Changed a person on a request",
   "activity.action.person.remove": "Removed a person from a request",
-  "activity.action.item.dates": "Client gave the date of a document"
+  "activity.action.item.dates": "Client gave the date of a document",
+
+  "lang.label": "Language",
+  "lang.en": "English",
+  "lang.fr-CA": "Français",
+  "clients.language": "Language for emails and the client page",
+  "size.b": "B",
+  "size.kb": "kB",
+  "size.mb": "MB",
+  "new.language": "Language of this request",
+  "new.language_hint": "The checklist, the client's page and the emails use this language.",
+  "batch.language": "Language of these requests"
 }
