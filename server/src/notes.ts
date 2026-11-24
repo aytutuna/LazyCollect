@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { audit, auditClient } from "./audit";
 import { rateLimited } from "./auth";
-import { findLink, type LiveLink } from "./client";
+import { linkOf, type LiveLink } from "./client";
 import { liveToken } from "./links";
 import { addressStopped, deliver, unsubUrl } from "./mail";
 import type { Region } from "./regions";
@@ -25,7 +25,7 @@ const live = (link: LiveLink) => link.req.status === "open" || link.req.status =
 notes.post("/c/:token/notes", async (c) => {
   const ip = c.req.header("CF-Connecting-IP");
   if (await rateLimited(c.env, c.env.CLIENT, ip)) return c.json({ error: "rate_limited" }, 429);
-  const link = await findLink(c.env, c.req.param("token"));
+  const link = await linkOf(c);
   if (!link || !live(link)) return notFound(c);
   if (await keyLimited(c.env.NOTE, link.hash)) return c.json({ error: "rate_limited" }, 429);
   const body = text((await readBody(c))?.body, MAX_LENGTH);
@@ -54,7 +54,7 @@ notes.post("/c/:token/notes", async (c) => {
       .bind(now, req.firm_id, req.id, req.firm_id, id),
   ]);
   if (!added.meta.changes) {
-    const again = await findLink(c.env, c.req.param("token"));
+    const again = await linkOf(c);
     return again && live(again) ? c.json({ error: "too_many_notes" }, 429) : notFound(c);
   }
   return c.json({ id, author: "client", body, created_at: now }, 201);

@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { audit, auditClient } from "./audit";
 import { rateLimited } from "./auth";
-import { findLink } from "./client";
+import { linkOf } from "./client";
 import { presentItem, ITEM_COLS } from "./questions";
 import { findRequest } from "./requests";
 import type { AppEnv } from "./session";
@@ -18,7 +18,7 @@ const OPEN = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND st
 async function clientSide(c: Context<AppEnv>, mark: boolean) {
   const ip = c.req.header("CF-Connecting-IP");
   if (await rateLimited(c.env, c.env.CLIENT, ip)) return c.json({ error: "rate_limited" }, 429);
-  const link = await findLink(c.env, c.req.param("token") ?? "");
+  const link = await linkOf(c);
   if (!link || (link.req.status !== "open" && link.req.status !== "complete")) return notFound(c);
   if (await keyLimited(c.env.UPLOAD, link.hash)) return c.json({ error: "rate_limited" }, 429);
   let note: string | null = null;

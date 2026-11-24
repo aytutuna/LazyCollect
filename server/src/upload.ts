@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { rateLimited } from "./auth";
 import { auditClient } from "./audit";
-import { findLink } from "./client";
+import { linkOf } from "./client";
 import { ByteSource, CHUNK, cipherLength, encryptStream, fileKey } from "./crypt";
 import { firmDek } from "./keys";
 import { regionOf } from "./regions";
@@ -75,7 +75,7 @@ type FileRow = { id: string; name: string; size: number; uploaded_at: number };
 uploads.put("/c/:token/items/:itemId/files", async (c) => {
   const ip = c.req.header("CF-Connecting-IP");
   if (await rateLimited(c.env, c.env.CLIENT, ip)) return c.json({ error: "rate_limited" }, 429);
-  const link = await findLink(c.env, c.req.param("token"));
+  const link = await linkOf(c);
   if (!link || (link.req.status !== "open" && link.req.status !== "complete")) return notFound(c);
   if (await keyLimited(c.env.UPLOAD, link.hash)) return c.json({ error: "rate_limited" }, 429);
   const { db, region, req } = link;
@@ -168,7 +168,7 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
   const refusal = async () => {
     const again = await replay();
     if (again) return again;
-    const open = await findLink(c.env, c.req.param("token"));
+    const open = await linkOf(c);
     if (!open || (open.req.status !== "open" && open.req.status !== "complete")) return notFound(c);
     const state = await db
       .prepare("SELECT status FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
@@ -237,7 +237,7 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
 
 uploads.delete("/c/:token/files/:fileId", async (c) => {
   if (await rateLimited(c.env, c.env.CLIENT, c.req.header("CF-Connecting-IP"))) return c.json({ error: "rate_limited" }, 429);
-  const link = await findLink(c.env, c.req.param("token"));
+  const link = await linkOf(c);
   if (!link || (link.req.status !== "open" && link.req.status !== "complete")) return notFound(c);
   const { db, region, req } = link;
   const fileId = c.req.param("fileId");

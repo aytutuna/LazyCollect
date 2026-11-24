@@ -125,6 +125,8 @@ export default {
       env.CONTROL.batch([
         env.CONTROL.prepare("DELETE FROM login_codes WHERE created_at < ?").bind(now - DAY),
         env.CONTROL.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
+        env.CONTROL.prepare("DELETE FROM client_sessions WHERE expires_at < ?").bind(now),
+        env.CONTROL.prepare("DELETE FROM app_challenges WHERE expires_at < ?").bind(now),
         env.CONTROL.prepare("DELETE FROM pending_logins WHERE expires_at < ?").bind(now),
         env.CONTROL.prepare("DELETE FROM passkey_challenges WHERE expires_at < ?").bind(now),
         env.CONTROL.prepare("DELETE FROM stripe_events WHERE received_at < ?").bind(now - 30 * DAY),

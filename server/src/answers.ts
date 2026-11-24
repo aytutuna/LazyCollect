@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { auditClient } from "./audit";
 import { rateLimited } from "./auth";
-import { clientItems, findLink } from "./client";
+import { clientItems, linkOf } from "./client";
 import { parseAnswer, visible, type Kind } from "./questions";
 import type { AppEnv } from "./session";
 import { syncStatus } from "./status";
@@ -15,7 +15,7 @@ export const answers = new Hono<AppEnv>();
 answers.put("/c/:token/items/:itemId/answer", async (c) => {
   const ip = c.req.header("CF-Connecting-IP");
   if (await rateLimited(c.env, c.env.CLIENT, ip)) return c.json({ error: "rate_limited" }, 429);
-  const link = await findLink(c.env, c.req.param("token") ?? "");
+  const link = await linkOf(c);
   if (!link || (link.req.status !== "open" && link.req.status !== "complete")) return notFound(c);
   if (await keyLimited(c.env.UPLOAD, link.hash)) return c.json({ error: "rate_limited" }, 429);
   const body = await readBody(c);

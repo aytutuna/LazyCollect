@@ -1,10 +1,10 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { rateLimited } from "./auth";
 import { isRegion, regionOf, type Region } from "./regions";
 import { NEWEST } from "./notes";
 import { presentItem, visible } from "./questions";
 import { canSend, sendersOf } from "./reminders";
-import type { AppEnv } from "./session";
+import { loadClientSession, type AppEnv } from "./session";
 import { HOUR, hmac, ipPrefix, randomId } from "./util";
 import { notFound } from "./validate";
 
@@ -19,12 +19,8 @@ export type LiveLink = {
   req: { id: string; firm_id: string; firm_name: string; tz: string | null; title: string; note: string | null; deadline: number; status: string; expires_at: number; first_opened_at: number | null };
 };
 
-export async function findLink(env: Env, token: string): Promise<LiveLink | null> {
-  const match = TOKEN_RE.exec(token);
-  if (!match || !isRegion(match[1])) return null;
-  const region = match[1];
+async function linkByHash(env: Env, region: Region, hash: string): Promise<LiveLink | null> {
   const db = regionOf(env, region).db;
-  const hash = await hmac(env.HASH_KEY, match[2]);
   const req = await db
     .prepare(
       `SELECT r.id, r.firm_id, r.firm_name, r.tz, r.title, r.note, r.deadline, r.status, r.first_opened_at, l.expires_at
@@ -37,6 +33,21 @@ export async function findLink(env: Env, token: string): Promise<LiveLink | null
     .bind(hash, Date.now())
     .first<LiveLink["req"]>();
   return req ? { region, db, hash, req } : null;
+}
+
+export async function findLink(env: Env, token: string): Promise<LiveLink | null> {
+  const match = TOKEN_RE.exec(token);
+  if (!match || !isRegion(match[1])) return null;
+  return linkByHash(env, match[1], await hmac(env.HASH_KEY, match[2]));
+}
+
+// The link of the request's :token: the token itself, or "me" for an app that holds a client session. The session
+// keeps only the link's hash, so a revoked or expired link ends it too.
+export async function linkOf(c: Context<AppEnv>): Promise<LiveLink | null> {
+  const token = c.req.param("token") ?? "";
+  if (token !== "me") return findLink(c.env, token);
+  const session = await loadClientSession(c);
+  return session && isRegion(session.region) ? linkByHash(c.env, session.region, session.linkHash) : null;
 }
 
 // what the client sees: the items that apply to them, with their files and the answers they gave
@@ -58,7 +69,7 @@ export async function clientItems(db: D1Database, firmId: string, requestId: str
 client.get("/c/:token", async (c) => {
   const ip = c.req.header("CF-Connecting-IP");
   if (await rateLimited(c.env, c.env.CLIENT, ip)) return c.json({ error: "rate_limited" }, 429);
-  const link = await findLink(c.env, c.req.param("token"));
+  const link = await linkOf(c);
   if (!link) return notFound(c);
   const { db, hash, req } = link;
   const now = Date.now();

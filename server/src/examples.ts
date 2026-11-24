@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { audit } from "./audit";
 import { rateLimited } from "./auth";
-import { findLink } from "./client";
+import { linkOf } from "./client";
 import { ByteSource, CHUNK, cipherLength, decryptStream, encryptStream, fileKey } from "./crypt";
 import { firmDek } from "./keys";
 import { visible } from "./questions";
@@ -135,7 +135,7 @@ examples.get("/examples/:id", async (c) => {
 // scoped to the link: only the example of an item that is on this request and shown to the client
 examples.get("/c/:token/items/:itemId/example", async (c) => {
   if (await rateLimited(c.env, c.env.CLIENT, c.req.header("CF-Connecting-IP"))) return c.json({ error: "rate_limited" }, 429);
-  const link = await findLink(c.env, c.req.param("token"));
+  const link = await linkOf(c);
   if (!link) return notFound(c);
   const { db, region, req } = link;
   const row = await db

@@ -73,6 +73,33 @@ export async function endSession(c: Context<AppEnv>) {
   deleteCookie(c, COOKIE, { path: "/", secure: true });
 }
 
+export type ClientSession = { tokenHash: string; region: string; linkHash: string };
+
+export async function createClientSession(c: Context<AppEnv>, region: string, linkHash: string, app: App): Promise<string> {
+  const token = randomToken();
+  const now = Date.now();
+  await c.env.CONTROL.prepare("INSERT INTO client_sessions (token_hash, id, region, link_hash, app, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(await sha256(token), randomId(), region, linkHash, app, now, now, now + LIFETIME)
+    .run();
+  return token;
+}
+
+// An app's session for a client. Whether the link behind it still works is checked by whoever uses it.
+export async function loadClientSession(c: Context<AppEnv>): Promise<ClientSession | null> {
+  const token = bearerOf(c);
+  if (!token) return null;
+  const tokenHash = await sha256(token);
+  const now = Date.now();
+  const row = await c.env.CONTROL.prepare("SELECT region, link_hash, last_seen_at FROM client_sessions WHERE token_hash = ? AND expires_at > ?")
+    .bind(tokenHash, now)
+    .first<{ region: string; link_hash: string; last_seen_at: number }>();
+  if (!row) return null;
+  if (now - row.last_seen_at > HOUR) {
+    await c.env.CONTROL.prepare("UPDATE client_sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?").bind(now, now + LIFETIME, tokenHash).run();
+  }
+  return { tokenHash, region: row.region, linkHash: row.link_hash };
+}
+
 export const loadSession: MiddlewareHandler<AppEnv> = async (c, next) => {
   c.set("session", null);
   const bearer = bearerOf(c);

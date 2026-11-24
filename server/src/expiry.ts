@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { auditClient } from "./audit";
 import { rateLimited } from "./auth";
-import { clientItems, findLink } from "./client";
+import { clientItems, linkOf } from "./client";
 import { validTo, visible, parseDay } from "./questions";
 import type { AppEnv } from "./session";
 import { addDays, dayOf, isoDay, offsetAt } from "./tz";
@@ -44,7 +44,7 @@ export const dates = new Hono<AppEnv>();
 dates.put("/c/:token/items/:itemId/dates", async (c) => {
   const ip = c.req.header("CF-Connecting-IP");
   if (await rateLimited(c.env, c.env.CLIENT, ip)) return c.json({ error: "rate_limited" }, 429);
-  const link = await findLink(c.env, c.req.param("token") ?? "");
+  const link = await linkOf(c);
   if (!link || (link.req.status !== "open" && link.req.status !== "complete")) return notFound(c);
   if (await keyLimited(c.env.UPLOAD, link.hash)) return c.json({ error: "rate_limited" }, 429);
   const body = await readBody(c);

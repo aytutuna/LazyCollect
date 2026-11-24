@@ -1,25 +1,11 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { bindingHash } from "../src/attest";
 import { Authenticator } from "./authenticator";
 import { addPasskey } from "./passkey-flow";
 import { api, codeFrom, login, mockOutbound } from "./helpers";
-import { goodVerdict, playFake } from "./play-fake";
+import { bearer, pendingHeader, post, proof } from "./app";
 
 const EMAIL = "owner@firm.test";
-const b64url = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-
-const post = (path: string, body: unknown, headers: Record<string, string> = {}, ip?: string) => api(path, { method: "POST", body, headers, ip });
-const pendingHeader = (token: string) => ({ Authorization: `Pending ${token}` });
-const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
-
-// a challenge and the Play Integrity token an honest app would send with it for request data (data)
-async function proof(data: string, platform = "android") {
-  const { challenge } = await (await post("/api/app/challenge", { platform })).json<any>();
-  const token = `tok-${challenge}`;
-  playFake.tokens[token] = goodVerdict(b64url(await bindingHash(challenge, data)));
-  return { challenge, token };
-}
 
 async function startCode(email = EMAIL) {
   const sent = mockOutbound();

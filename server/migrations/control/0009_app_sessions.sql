@@ -20,3 +20,18 @@ CREATE TABLE app_keys (
   env TEXT NOT NULL CHECK (env IN ('production', 'development')),
   created_at INTEGER NOT NULL
 );
+
+-- what an app holds for a client: tied to one link, which is looked up again on every request
+CREATE TABLE client_sessions (
+  token_hash TEXT PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  region TEXT NOT NULL,
+  link_hash TEXT NOT NULL,
+  app TEXT NOT NULL CHECK (app IN ('android', 'ios')),
+  push_token TEXT,
+  created_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX idx_client_sessions_link ON client_sessions (region, link_hash);
+CREATE INDEX idx_client_sessions_push ON client_sessions (push_token) WHERE push_token IS NOT NULL;
