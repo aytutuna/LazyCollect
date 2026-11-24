@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
 import androidx.core.app.NotificationCompat
-import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
@@ -25,9 +24,10 @@ private const val NOTIFICATION = 7
 
 /** Sends the queued files in the background, so a file still goes when the app is closed or the phone had no signal. */
 class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
-    override suspend fun doWork(): Result = when ((applicationContext as CollectApp).graph.uploads.run()) {
-        Pass.Later -> Result.retry()
-        else -> Result.success()
+    override suspend fun doWork(): Result {
+        val queue = (applicationContext as CollectApp).graph.uploads
+        if (queue.run() == Pass.Later) queue.nextAttempt()?.let { scheduleLater(applicationContext, it - System.currentTimeMillis()) }
+        return Result.success()
     }
 
     // Before Android 12 expedited work runs as a foreground service, which needs this notice; later it only shows if the work runs long.
@@ -44,15 +44,39 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     }
 }
 
+private val online = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+
+/**
+ * Starts a pass unless one is queued or running; the running one notices what was added and goes round again, so a kick never
+ * cancels an upload and there is never more than one waiting.
+ */
 fun startUploads(context: Context) {
     val work = OneTimeWorkRequestBuilder<UploadWorker>()
-        .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+        .setConstraints(online)
         .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
         .build()
-    WorkManager.getInstance(context).enqueueUniqueWork("uploads", ExistingWorkPolicy.APPEND_OR_REPLACE, work)
+    WorkManager.getInstance(context).enqueueUniqueWork("uploads", ExistingWorkPolicy.KEEP, work)
+}
+
+// Only a wake-up for the file that waits longest: it kicks the pass above, so replacing it can never cancel an upload.
+private fun scheduleLater(context: Context, delayMs: Long) {
+    val work = OneTimeWorkRequestBuilder<LaterWorker>()
+        .setConstraints(online)
+        .setInitialDelay(delayMs.coerceAtLeast(1000), TimeUnit.MILLISECONDS)
+        .build()
+    WorkManager.getInstance(context).enqueueUniqueWork("uploads-later", ExistingWorkPolicy.REPLACE, work)
+}
+
+class LaterWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        (applicationContext as CollectApp).graph.uploads.touch()
+        startUploads(applicationContext)
+        return Result.success()
+    }
 }
 
 fun stopUploads(context: Context) {
-    WorkManager.getInstance(context).cancelUniqueWork("uploads")
+    val manager = WorkManager.getInstance(context)
+    manager.cancelUniqueWork("uploads")
+    manager.cancelUniqueWork("uploads-later")
 }

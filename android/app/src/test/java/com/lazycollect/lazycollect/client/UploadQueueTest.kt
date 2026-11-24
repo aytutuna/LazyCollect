@@ -97,6 +97,7 @@ class UploadQueueTest {
         val job = q.add("i1", "a.jpg", bytes("abc"))
         assertEquals(Pass.Later, q.run())
         assertEquals(1, q.jobs.value.single().tries)
+        clock += backoff(1)
         assertEquals(Pass.Done, q.run())
         val ids = server.calls("PUT /api/c/me/items/i1/files").map { it.headers["Upload-Id"] }
         assertEquals(listOf(job.uploadId, job.uploadId), ids)
@@ -130,7 +131,10 @@ class UploadQueueTest {
         server.on("PUT /api/c/me/items/i1/files", json(500, """{"error":"server_error"}"""))
         val q = queue()
         q.add("i1", "a.jpg", bytes("abc"))
-        repeat(6) { assertEquals(Pass.Later, q.run()) }
+        repeat(6) {
+            assertEquals(Pass.Later, q.run())
+            clock += 400_000
+        }
         assertEquals(Pass.Done, q.run())
         assertEquals("server_error", q.jobs.value.single().failed)
     }
@@ -207,5 +211,125 @@ class UploadQueueTest {
         q.run()
         assertEquals("missing_file", q.jobs.value.single().failed)
         assertFalse(server.requests.any { it.method == "PUT" })
+    }
+
+    @Test
+    fun aFileInBackoffDoesNotHoldANewOneBack() = runBlocking {
+        server.on("PUT /api/c/me/items/i1/files", json(429, """{"error":"rate_limited"}"""))
+        server.on("PUT /api/c/me/items/i2/files", created)
+        val q = queue()
+        q.add("i1", "a.jpg", bytes("abc"))
+        assertEquals(Pass.Later, q.run())
+        q.add("i2", "b.jpg", bytes("def"))
+        assertEquals(Pass.Later, q.run())
+        assertEquals(1, server.calls("PUT /api/c/me/items/i1/files").size)
+        assertEquals(1, server.calls("PUT /api/c/me/items/i2/files").size)
+        assertEquals(listOf("i1"), q.jobs.value.map { it.itemId })
+    }
+
+    @Test
+    fun retryMakesAFileDueAtOnce() = runBlocking {
+        server.on("PUT /api/c/me/items/i1/files", json(503, """{"error":"server_error"}"""), created)
+        val q = queue()
+        val job = q.add("i1", "a.jpg", bytes("abc"))
+        q.run()
+        assertEquals(clock + backoff(1), q.nextAttempt())
+        q.retry(job.id)
+        assertEquals(Pass.Done, q.run())
+        assertTrue(q.jobs.value.isEmpty())
+    }
+
+    @Test
+    fun theNextAttemptIsTheEarliestOfTheWaitingFiles() = runBlocking {
+        server.on("PUT /api/c/me/items/i1/files", json(503, """{"error":"server_error"}"""))
+        server.on("PUT /api/c/me/items/i2/files", json(503, """{"error":"server_error"}"""))
+        val q = queue()
+        assertNull(q.nextAttempt())
+        q.add("i1", "a.jpg", bytes("a"))
+        q.run()
+        clock += 5_000
+        q.add("i2", "b.jpg", bytes("b"))
+        q.run()
+        assertEquals(1_000_000_000L + backoff(1), q.nextAttempt())
+        clock += backoff(1)
+        q.run()
+        assertEquals(clock + backoff(2), q.jobs.value.first { it.itemId == "i1" }.next)
+    }
+
+    @Test
+    fun theBackoffDoublesToAnEnd() {
+        assertEquals(listOf(10_000L, 20_000L, 40_000L, 80_000L, 160_000L, 320_000L, 320_000L), (1..7).map(::backoff))
+    }
+
+    @Test
+    fun theWaitSurvivesARestart() = runBlocking {
+        server.on("PUT /api/c/me/items/i1/files", json(503, """{"error":"server_error"}"""))
+        val q = queue()
+        q.add("i1", "a.jpg", bytes("a"))
+        q.run()
+        assertEquals(clock + backoff(1), queue().nextAttempt())
+    }
+
+    @Test
+    fun aFileAddedWhileTheLastRoundEndsStartsAnotherRound() = runBlocking {
+        val slow = MockResponse.Builder().code(201).addHeader("Content-Type", "application/json").body("""{"id":"f1","name":"a.jpg","size":3,"uploaded_at":1}""")
+            .headersDelay(300, TimeUnit.MILLISECONDS).build()
+        server.on("PUT /api/c/me/items/i1/files", slow)
+        server.on("PUT /api/c/me/items/i2/files", created)
+        val q = queue()
+        val job = q.add("i1", "a.jpg", bytes("abc"))
+        val pass = async(Dispatchers.Default) { q.run() }
+        withTimeout(5_000) { while (server.calls("PUT /api/c/me/items/i1/files").isEmpty()) delay(10) }
+        q.touch()
+        q.add("i2", "b.jpg", bytes("def"))
+        assertEquals(Pass.Done, pass.await())
+        assertEquals(1, server.calls("PUT /api/c/me/items/i1/files").size)
+        assertEquals(1, server.calls("PUT /api/c/me/items/i2/files").size)
+        assertNull(q.jobs.value.firstOrNull { it.id == job.id })
+    }
+
+    @Test
+    fun nothingIsQueuedForAChecklistThatWasLeft() {
+        val q = queue()
+        val epoch = q.epoch
+        q.forget()
+        try {
+            q.add("i1", "a.jpg", bytes("abc"), epoch)
+            throw AssertionError("expected SessionEnded")
+        } catch (e: SessionEnded) {
+        }
+        assertTrue(q.jobs.value.isEmpty())
+        assertTrue(dir.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun aFileBeingCopiedWhenTheChecklistIsLeftLeavesNothing() {
+        val q = queue()
+        val epoch = q.epoch
+        val leaving = object : InputStream() {
+            var step = 0
+            override fun read(): Int = -1
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                if (step++ == 0) {
+                    q.forget()
+                    return 10
+                }
+                return -1
+            }
+        }
+        try {
+            q.add("i1", "a.jpg", leaving, epoch)
+            throw AssertionError("expected SessionEnded")
+        } catch (e: SessionEnded) {
+        }
+        assertTrue(q.jobs.value.isEmpty())
+        assertTrue(dir.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun aCopyLeftWithoutItsDescriptionIsRemovedAtStart() {
+        File(dir, "orphan.bin").writeText("x")
+        queue()
+        assertTrue(dir.listFiles().orEmpty().isEmpty())
     }
 }
