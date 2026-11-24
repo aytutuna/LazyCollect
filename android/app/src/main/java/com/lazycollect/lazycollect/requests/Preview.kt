@@ -151,7 +151,12 @@ internal class DrawGate(private val release: () -> Unit) {
 /** A PDF drawn a page at a time. The renderer holds one page open at once, so the pages are drawn one after another. */
 class PdfPages(file: File) : AutoCloseable {
     private val descriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-    private val renderer = PdfRenderer(descriptor)
+    private val renderer = try {
+        PdfRenderer(descriptor)
+    } catch (e: Exception) {
+        descriptor.close()
+        throw e
+    }
     private val gate = DrawGate {
         renderer.close()
         descriptor.close()
