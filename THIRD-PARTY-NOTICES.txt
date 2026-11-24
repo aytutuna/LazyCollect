@@ -25,7 +25,9 @@ Lazy Collect ships the libraries below. Each is used under the licence shown.
   OkHttp 5.5.0 and Okio 3.18.1  Apache-2.0
   Kotlin standard library 2.4.21, kotlinx.coroutines 1.11.0, kotlinx.serialization 1.12.0, JetBrains annotations 23.0.0  Apache-2.0
   JSpecify 1.0.0 and Guava ListenableFuture 1.0  Apache-2.0
-  Google Play services (Auth, FIDO, Base, Basement, Tasks), Play Integrity 1.6.0, Play core-common 2.0.4 and Google ID 1.1.0  Android Software Development Kit License
+  Google Play services (Auth, Auth Base, Auth API Phone, Auth Blockstore, FIDO, Identity Credentials, Base, Basement, Tasks) and Google ID 1.1.0  Android Software Development Kit License
+  Play Integrity 1.6.0  Play Integrity API Terms of Service
+  Play core-common 2.0.4  Play Core Software Development Kit Terms of Service
 
 ------------------------------------------------------------------------
 hono 4.13.19 (MIT)
@@ -412,10 +414,10 @@ Guava ListenableFuture: Copyright (C) The Guava Authors.
 Both are licensed under the Apache License 2.0 reproduced at the end of this file.
 
 ------------------------------------------------------------------------
-Android app: Google Play services, Play Integrity and Google ID
+Android app: Google Play services, Play Integrity, Play core-common and Google ID
 ------------------------------------------------------------------------
 
-These libraries are Google's and are used under the Android Software Development Kit License (https://developer.android.com/studio/terms) and the Google Play services terms (https://developers.google.com/android/guides/terms). They are not covered by the Apache License below.
+Google Play services and Google ID are used under the Android Software Development Kit License (https://developer.android.com/studio/terms) and the Google Play services terms (https://developers.google.com/android/guides/terms). Play Integrity is used under the Play Integrity API Terms of Service (https://developer.android.com/google/play/integrity/overview#tos) and Play core-common under the Play Core Software Development Kit Terms of Service (https://developer.android.com/guide/playcore/license). None of them is covered by the Apache License below.
 
 ------------------------------------------------------------------------
 Apache License 2.0
