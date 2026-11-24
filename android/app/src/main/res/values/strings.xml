@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lazy Collect</string>
+    <string name="loading">Loading...</string>
+    <string name="retry">Try again</string>
+    <string name="saved">Saved.</string>
+    <string name="coming_soon">This part of the app is not here yet.</string>
+
+    <string name="nav_requests">Requests</string>
+    <string name="nav_clients">Clients</string>
+    <string name="nav_templates">Templates</string>
+    <string name="nav_settings">Settings</string>
+    <string name="nav_signout">Sign out</string>
+
+    <string name="plan_past_due_member">The last payment did not go through. Ask the account owner to update the payment details by %1$s to keep sending links.</string>
+    <string name="plan_past_due_ended">Your payment did not go through and the grace period has ended. New links and deadline changes are paused. Update your payment details in Settings.</string>
+    <string name="plan_past_due_ended_member">The payment did not go through and the grace period has ended, so new links and deadline changes are paused. Ask the account owner to update the payment details.</string>
+    <string name="plan_ended_member">The plan has ended, so new links and deadline changes are paused. Ask the account owner to subscribe.</string>
+    <string name="plan_ended">Your plan has ended. New links and deadline changes are paused. Subscribe in Settings to turn them back on.</string>
+    <string name="plan_past_due">Your last payment did not go through. Update your payment details in Settings by %1$s to keep sending links.</string>
+
+    <string name="signin_title">Sign in</string>
+    <string name="signin_intro">Enter your email and we will send you a sign-in code. New here? The same step creates your account.</string>
+    <string name="signin_email">Email</string>
+    <string name="signin_send">Send code</string>
+    <string name="signin_agree">By continuing you agree to the %1$s and the %2$s.</string>
+    <string name="signin_code_title">Check your email</string>
+    <string name="signin_code_intro">We sent a 6-digit code to %1$s. If it is not there in a minute, look in your junk or spam folder.</string>
+    <string name="signin_newest">Only the newest email works. If you asked for more than one, use the last one.</string>
+    <string name="signin_code">Code</string>
+    <string name="signin_verify">Sign in</string>
+    <string name="signin_other">Use a different email</string>
+    <string name="signin_passkey_title">Use your passkey</string>
+    <string name="signin_passkey_intro">Your phone will ask for your passkey. Use your fingerprint, face or screen lock.</string>
+    <string name="signin_passkey_go">Use passkey</string>
+    <string name="signin_passkey_retry">Try again</string>
+    <string name="signin_enrol_title">Add a passkey</string>
+    <string name="signin_enrol_intro">This account requires a passkey. Add one now and you will be signed in. It takes a few seconds.</string>
+    <string name="signin_enrol_go">Add a passkey</string>
+    <string name="signin_lost_owner">Lost your passkey? Email support@alazy.app</string>
+    <string name="signin_lost_member">Lost your passkey? Ask the owner of the account to reset it, or email support@alazy.app</string>
+    <string name="passkey_name">Name</string>
+    <string name="passkey_name_hint">Optional, for example Work laptop or Phone. If you leave it empty, the name of the device is used.</string>
+
+    <string name="legal_terms">Terms of use</string>
+    <string name="legal_privacy">Privacy policy</string>
+
+    <string name="setup_title">Set up your account</string>
+    <string name="setup_intro">Add the name clients will recognize. You can change this later in Settings.</string>
+    <string name="firm_name">Your name or business name</string>
+    <string name="firm_name_hint">Clients see this on every request.</string>
+    <string name="firm_business">Business details (optional)</string>
+    <string name="firm_legal">Legal name</string>
+    <string name="firm_legal_hint">If it differs from the name above.</string>
+    <string name="firm_address">Mailing address</string>
+    <string name="firm_phone">Phone</string>
+    <string name="firm_province">Province or territory</string>
+    <string name="firm_province_none">Not set</string>
+    <string name="firm_save">Save</string>
+    <string name="firm_tz">Time zone</string>
+    <string name="firm_tz_hint">Reminders go out between 9:00 and 19:00 in this time zone.</string>
+    <string name="firm_owner_only">Only the owner of the account can change these details.</string>
+
+    <string name="tz_st_johns">Newfoundland (St. John\'s)</string>
+    <string name="tz_halifax">Atlantic (Halifax)</string>
+    <string name="tz_toronto">Eastern (Toronto)</string>
+    <string name="tz_winnipeg">Central (Winnipeg)</string>
+    <string name="tz_regina">Saskatchewan (Regina)</string>
+    <string name="tz_edmonton">Mountain (Edmonton)</string>
+    <string name="tz_vancouver">Pacific (Vancouver)</string>
+
+    <string name="province_ab">Alberta</string>
+    <string name="province_bc">British Columbia</string>
+    <string name="province_mb">Manitoba</string>
+    <string name="province_nb">New Brunswick</string>
+    <string name="province_nl">Newfoundland and Labrador</string>
+    <string name="province_ns">Nova Scotia</string>
+    <string name="province_nt">Northwest Territories</string>
+    <string name="province_nu">Nunavut</string>
+    <string name="province_on">Ontario</string>
+    <string name="province_pe">Prince Edward Island</string>
+    <string name="province_qc">Quebec</string>
+    <string name="province_sk">Saskatchewan</string>
+    <string name="province_yt">Yukon</string>
+
+    <string name="closed_title">This account is closed</string>
+    <string name="closed_body">Its records are deleted on %1$s. Until then you can reopen it. The subscription ended when the account was closed, so you will need to subscribe again.</string>
+    <string name="closed_body_held">Its records were deleted on %1$s, except those on legal hold. Because some are still held, you can still reopen the account. The subscription ended when it was closed, so you will need to subscribe again.</string>
+    <string name="closed_body_purging">This account is being deleted and can no longer be reopened.</string>
+    <string name="closed_reopen">Reopen account</string>
+    <string name="closed_member">Ask the owner of the account to reopen it.</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="settings_account">Account</string>
+    <string name="settings_signed_in">Signed in as %1$s.</string>
+    <string name="security_devices">Where you are signed in</string>
+    <string name="security_this_device">this device</string>
+    <string name="security_device_unknown">Unknown device</string>
+    <string name="security_device_times">signed in %1$s, last active %2$s</string>
+    <string name="security_signout">Sign out</string>
+    <string name="security_signout_others">Sign out everywhere else</string>
+
+    <string name="error_network">Could not reach the server. Check your connection and try again.</string>
+    <string name="error_server_error">Something went wrong on our side. Try again in a moment.</string>
+    <string name="error_rate_limited">Too many tries. Wait a minute and try again.</string>
+    <string name="error_too_many">Too many wrong codes today. Try again tomorrow.</string>
+    <string name="error_invalid">That did not work. Check what you entered. For a sign-in code, use the one in the newest email.</string>
+    <string name="error_invalid_email">Enter a valid email address.</string>
+    <string name="error_email">We could not send the email. Try again in a moment.</string>
+    <string name="error_disabled">This account has been turned off.</string>
+    <string name="error_forbidden">You do not have permission to do that.</string>
+    <string name="error_not_found">That could not be found. It may have been deleted.</string>
+    <string name="error_unauthorized">Please sign in again.</string>
+    <string name="error_closed">This account is closed.</string>
+    <string name="error_expired">This account was closed more than 30 days ago and can no longer be reopened.</string>
+    <string name="error_plan_member">The plan has ended. Ask the account owner to subscribe.</string>
+    <string name="error_plan_past_due">Your payment did not go through and the grace period has ended. Use Update payment in Settings to send new links or change deadlines.</string>
+    <string name="error_plan_past_due_member">The payment did not go through and the grace period has ended. Ask the account owner to update the payment details.</string>
+    <string name="error_plan">Your plan has ended. Subscribe in Settings to send new links or change deadlines.</string>
+    <string name="error_pending_expired">That sign-in timed out. Enter your email to start again.</string>
+    <string name="error_passkey_failed">That passkey was not accepted. Try again.</string>
+    <string name="error_passkey_counter">This passkey was refused because it looks like a copy, and the sign-in was stopped. Email support@alazy.app if this is a mistake.</string>
+    <string name="error_passkey_exists">That passkey is already registered, or you have reached the limit of 10.</string>
+    <string name="error_passkey_cancelled">The passkey prompt was closed or timed out. Try again.</string>
+    <string name="error_passkey_unusable">The passkey could not be used. Try again, or use a different passkey.</string>
+    <string name="error_passkey_already">This device already has a passkey for your account.</string>
+    <string name="error_passkey_none">This phone has no passkey for your account. Use the phone or computer that has it, or ask for it to be reset.</string>
+    <string name="error_current_session">That is the device you are using. Use Sign out under Account.</string>
+    <string name="error_cannot_target_self">You cannot do that to your own sign-in here.</string>
+    <string name="error_attestation">This phone could not be checked. Sign in on a phone with Google Play and try again.</string>
+    <string name="error_unavailable">Signing in from the app is not available yet. Try again later.</string>
+</resources>

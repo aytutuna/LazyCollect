@@ -5,3 +5,14 @@ server/test/dev.vars
 .dev.vars
 web/public/models/**/*.onnx
 web/.cache
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.iml
+google-services.json
+*.jks
+*.keystore
