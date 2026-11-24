@@ -1,0 +1,89 @@
+# The iPhone app's Xcode project, for XcodeGen. `xcodegen generate --spec ios/project.yml` writes
+# ios/LazyCollectiOS.xcodeproj, which is not checked in. The app target holds no logic: it starts CollectRoot
+# from the package in this folder (Sources/CollectApp).
+name: LazyCollectiOS
+
+options:
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+
+packages:
+  LazyCollect:
+    path: .
+
+targets:
+  LazyCollectiOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: LazyCollectiOS
+        excludes:
+          - Info.plist
+          - LazyCollect.entitlements
+          - PrivacyInfo.xcprivacy
+      - path: LazyCollectiOS/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    dependencies:
+      - package: LazyCollect
+        product: CollectApp
+    settings:
+      base:
+        PRODUCT_NAME: LazyCollect
+        PRODUCT_MODULE_NAME: LazyCollectiOS
+        PRODUCT_BUNDLE_IDENTIFIER: com.lazycollect.lazycollect
+        INFOPLIST_FILE: LazyCollectiOS/Info.plist
+        CODE_SIGN_ENTITLEMENTS: LazyCollectiOS/LazyCollect.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+      configs:
+        Debug:
+          APP_ATTEST_ENVIRONMENT: development
+        Release:
+          APP_ATTEST_ENVIRONMENT: production
+
+  LazyCollectiOSUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: LazyCollectiOSUnitTests
+    dependencies:
+      - target: LazyCollectiOS
+      - package: LazyCollect
+        product: CollectApp
+      - package: LazyCollect
+        product: CollectKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lazycollect.lazycollect.unittests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LazyCollect.app/LazyCollect"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+schemes:
+  LazyCollectiOS:
+    build:
+      targets:
+        LazyCollectiOS: all
+        LazyCollectiOSUnitTests: [test]
+    test:
+      targets:
+        - LazyCollectiOSUnitTests
+      gatherCoverageData: false

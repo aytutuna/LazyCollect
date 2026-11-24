@@ -111,8 +111,8 @@ extension APIClient {
         try await get("/templates")
     }
 
-    public func addClient(name: String, email: String?, phone: String?) async throws -> Client {
-        var body: [String: JSON] = ["name": .string(name), "contact_ok": true]
+    public func addClient(name: String, email: String?, phone: String?, contactOK: Bool) async throws -> Client {
+        var body: [String: JSON] = ["name": .string(name), "contact_ok": .bool(contactOK)]
         if let email, !email.isEmpty { body["email"] = .string(email) }
         if let phone, !phone.isEmpty { body["phone"] = .string(phone) }
         return try await post("/clients", .object(body))

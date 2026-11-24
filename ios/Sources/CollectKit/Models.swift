@@ -229,25 +229,36 @@ public struct LinkReply: Decodable, Sendable {
 }
 
 /// The reasons a document can be sent back for, with the words each is shown in.
+public struct Reason: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let text: String
+    public var code: String { id }
+
+    init(_ id: String, _ text: String) {
+        self.id = id
+        self.text = text
+    }
+}
+
 public enum Reasons {
-    public static let files: [(code: String, text: String)] = [
-        ("blurry", "Blurry or hard to read"),
-        ("cut_off", "Cut off or part of the page missing"),
-        ("glare", "Glare or shadow"),
-        ("dark", "Too dark"),
-        ("wrong_document", "Wrong document"),
-        ("wrong_period", "Wrong year or period"),
-        ("expired", "Expired"),
-        ("wrong_person", "Wrong person"),
-        ("pages_missing", "Pages missing"),
-        ("locked_pdf", "Password-protected PDF"),
-        ("other", "Other"),
+    public static let files: [Reason] = [
+        Reason("blurry", "Blurry or hard to read"),
+        Reason("cut_off", "Cut off or part of the page missing"),
+        Reason("glare", "Glare or shadow"),
+        Reason("dark", "Too dark"),
+        Reason("wrong_document", "Wrong document"),
+        Reason("wrong_period", "Wrong year or period"),
+        Reason("expired", "Expired"),
+        Reason("wrong_person", "Wrong person"),
+        Reason("pages_missing", "Pages missing"),
+        Reason("locked_pdf", "Password-protected PDF"),
+        Reason("other", "Other"),
     ]
 
-    public static let questions: [(code: String, text: String)] = files.filter { ["wrong_period", "wrong_person", "other"].contains($0.code) }
+    public static let questions: [Reason] = files.filter { ["wrong_period", "wrong_person", "other"].contains($0.id) }
 
     public static func text(_ code: String) -> String {
-        files.first { $0.code == code }?.text ?? code
+        files.first { $0.id == code }?.text ?? code
     }
 
     /// What a client does about a reason.
