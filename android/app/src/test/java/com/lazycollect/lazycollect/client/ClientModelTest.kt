@@ -1,0 +1,186 @@
+package com.lazycollect.lazycollect.client
+
+import android.app.Application
+import androidx.test.core.app.ApplicationProvider
+import com.lazycollect.lazycollect.data.Session
+import com.lazycollect.lazycollect.data.TokenStore
+import com.lazycollect.lazycollect.net.Api
+import com.lazycollect.lazycollect.net.FakeServer
+import com.lazycollect.lazycollect.net.json
+import com.lazycollect.lazycollect.net.ok
+import com.lazycollect.lazycollect.signin.Attester
+import java.io.File
+import kotlin.io.path.createTempDirectory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonPrimitive
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36], application = Application::class)
+class ClientModelTest {
+    private val server = FakeServer()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val dir = createTempDirectory("client").toFile()
+    private val store = TokenStore(File(ApplicationProvider.getApplicationContext<Application>().noBackupFilesDir, "client.bin"), { "s:$it" }, { it.removePrefix("s:") })
+    private val session = Session(store)
+    private val api = Api(server.url, token = { session.token.value }, onSignedOut = session::end, onPlanEnded = {})
+    private val queue = UploadQueue(File(dir, "uploads"), api)
+    private var kicks = 0
+    private var proofFor: String? = null
+    private val attester = Attester { hash -> proofFor = hash; "integrity-token" }
+
+    @After
+    fun stop() {
+        scope.cancel()
+        server.close()
+        dir.deleteRecursively()
+    }
+
+    private fun model() = ClientModel(scope, api, session, attester, queue) { kicks++ }
+
+    private fun view(vararg items: String) = ok(
+        """{"firm_name":"Firm","tz":"America/Toronto","title":"Study permit","note":null,"deadline":1800000000000,"status":"open","expires_at":1900000000000,
+        "contact":null,"notes":[],"people":[],"items":[${items.joinToString(",")}]}""",
+    )
+
+    private fun fileItem(id: String, status: String = "empty") = """{"id":"$id","label":"Passport","required":true,"status":"$status","kind":"file","files":[]}"""
+
+    private suspend fun ready(model: ClientModel) = withTimeout(10_000) { model.state.first { it !is ClientState.Loading } }
+
+    private val token = "ca_" + "a".repeat(43)
+
+    @Test
+    fun aLinkIsTradedForASessionAndTheChecklistLoads() = runBlocking {
+        server.on("POST /api/app/challenge", ok("""{"challenge":"c1","required":true}"""))
+        server.on("POST /api/app/client/exchange", ok("""{"token":"client-session","expires_at":1900000000000}"""))
+        server.on("GET /api/c/me", view(fileItem("i1")))
+        val model = model()
+        model.open("https://collect.alazy.app/c/$token")
+        val state = withTimeout(10_000) { model.state.first { it is ClientState.Ready } } as ClientState.Ready
+        assertEquals("Study permit", state.view.title)
+        val sent = server.calls("POST /api/app/client/exchange").single().body!!.utf8()
+        assertTrue(sent.contains("\"token\":\"$token\""))
+        assertTrue(sent.contains("integrity-token"))
+        assertEquals("client-session", session.token.value)
+        assertEquals("Bearer client-session", server.calls("GET /api/c/me").single().headers["Authorization"])
+        assertTrue(proofFor != null)
+    }
+
+    @Test
+    fun somethingThatIsNotALinkIsRefusedBeforeAnyRequest() {
+        val model = model()
+        model.open("hello")
+        assertEquals("invalid_link", model.action.value.error)
+        assertTrue(server.requests.isEmpty())
+    }
+
+    @Test
+    fun aLinkThatIsGoneShowsGoneAndDropsWaitingFiles() = runBlocking {
+        session.start("client-session")
+        queue.add("i1", "a.jpg", "abc".byteInputStream())
+        server.on("GET /api/c/me", json(404, """{"error":"not_found"}"""))
+        val model = model()
+        assertEquals(ClientState.Gone, ready(model))
+        assertTrue(queue.jobs.value.isEmpty())
+    }
+
+    @Test
+    fun anAnswerReplacesTheWholeList() = runBlocking {
+        session.start("client-session")
+        server.on("GET /api/c/me", view("""{"id":"q1","label":"Married?","required":true,"status":"empty","kind":"yesno","files":[]}"""))
+        server.on(
+            "PUT /api/c/me/items/q1/answer",
+            ok("""{"items":[{"id":"q1","label":"Married?","required":true,"status":"submitted","kind":"yesno","answer":"yes","files":[]},{"id":"q2","label":"Spouse name","required":true,"status":"empty","kind":"text","files":[]}]}"""),
+        )
+        val model = model()
+        ready(model)
+        model.answer("q1", JsonPrimitive("yes"))
+        val state = withTimeout(10_000) { model.state.first { it is ClientState.Ready && it.view.items.size == 2 } } as ClientState.Ready
+        assertEquals("yes", state.view.items[0].answerText)
+        assertEquals("""{"answer":"yes"}""", server.calls("PUT /api/c/me/items/q1/answer").single().body!!.utf8())
+    }
+
+    @Test
+    fun clearingAnAnswerSendsNull() = runBlocking {
+        session.start("client-session")
+        server.on("GET /api/c/me", view("""{"id":"q1","label":"Name","required":true,"status":"submitted","kind":"text","answer":"x","files":[]}"""))
+        server.on("PUT /api/c/me/items/q1/answer", ok("""{"items":[]}"""))
+        val model = model()
+        ready(model)
+        model.answer("q1", null)
+        withTimeout(10_000) { model.state.first { it is ClientState.Ready && it.view.items.isEmpty() } }
+        assertEquals("""{"answer":null}""", server.calls("PUT /api/c/me/items/q1/answer").single().body!!.utf8())
+    }
+
+    @Test
+    fun aDateIsSentAloneWhenOnlyOneIsSet() = runBlocking {
+        session.start("client-session")
+        server.on("GET /api/c/me", view(fileItem("i1")))
+        server.on("PUT /api/c/me/items/i1/dates", ok("""{"items":[]}"""))
+        val model = model()
+        ready(model)
+        model.dates("i1", "2027-03-31", "2027-03-31", setExpires = true, setIssued = false)
+        withTimeout(10_000) { model.state.first { it is ClientState.Ready && it.view.items.isEmpty() } }
+        assertEquals("""{"expires_on":"2027-03-31"}""", server.calls("PUT /api/c/me/items/i1/dates").single().body!!.utf8())
+    }
+
+    @Test
+    fun aFailedRefreshKeepsWhatWasShown() = runBlocking {
+        session.start("client-session")
+        server.on("GET /api/c/me", view(fileItem("i1")), json(500, """{"error":"server_error"}"""))
+        val model = model()
+        ready(model)
+        model.reload()
+        val state = withTimeout(10_000) { model.state.first { it is ClientState.Ready && it.stale } } as ClientState.Ready
+        assertEquals(1, state.view.items.size)
+    }
+
+    @Test
+    fun filesQueuedForAnItemThatWentAreDroppedOnLoad() = runBlocking {
+        session.start("client-session")
+        queue.add("gone", "a.jpg", "abc".byteInputStream())
+        server.on("GET /api/c/me", view(fileItem("i1")))
+        val model = model()
+        ready(model)
+        assertTrue(queue.jobs.value.isEmpty())
+        assertEquals(1, model.dropped.value)
+    }
+
+    @Test
+    fun addingFilesStartsTheUploads() {
+        val prepared = File(dir, "p.jpg").apply { writeText("abc") }
+        val model = model()
+        model.add("i1", listOf(Prepared("a.jpg", prepared, true)))
+        assertEquals(1, queue.jobs.value.size)
+        assertTrue(kicks >= 1)
+        assertTrue(!prepared.exists())
+    }
+
+    @Test
+    fun leavingEndsTheSessionAndForgetsTheFiles() = runBlocking {
+        session.start("client-session")
+        queue.add("i1", "a.jpg", "abc".byteInputStream())
+        server.on("GET /api/c/me", view(fileItem("i1")))
+        server.on("POST /api/app/client/logout", ok())
+        val model = model()
+        ready(model)
+        model.leave()
+        withTimeout(10_000) { session.token.first { it == null } }
+        withTimeout(10_000) { while (queue.jobs.value.isNotEmpty()) kotlinx.coroutines.delay(20) }
+        assertNull(store.load())
+        assertEquals(1, server.calls("POST /api/app/client/logout").size)
+    }
+}
