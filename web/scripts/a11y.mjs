@@ -28,6 +28,7 @@ for (const scheme of ["light", "dark"]) {
       const context = await browser.newContext({ viewport: { width, height: 800 }, colorScheme: scheme, hasTouch: width === 390, isMobile: width === 390 });
       const page = await context.newPage();
       const net = await mock(page, state);
+      if (state.ui) await context.addInitScript((l) => localStorage.setItem("lazycollect.lang", l), state.ui);
       await page.goto(link(server.url));
       await page.locator("h1").waitFor();
       if (state.run) await state.run(page, context, net);
@@ -41,7 +42,11 @@ for (const scheme of ["light", "dark"]) {
       const label = `${state.name} ${scheme} ${width}px`;
       const problems = violations.map((v) => `${v.id}: ${v.help} (${v.nodes.length}) ${v.nodes.slice(0, 2).map((n) => n.target.join(" ")).join(", ")}`);
       if (!lang) problems.push("html has no lang");
-      else if (lang !== (state.view.locale ?? "en")) problems.push(`html lang is ${lang}, expected ${state.view.locale ?? "en"}`);
+      else if (lang !== (state.ui ?? state.view.locale ?? "en")) problems.push(`html lang is ${lang}, expected ${state.ui ?? state.view.locale ?? "en"}`);
+      if (state.ui) {
+        const own = await page.evaluate(() => [...document.querySelectorAll("h1 [lang], li.item strong [lang]")].map((e) => e.getAttribute("lang")));
+        if (!own.length || own.some((l) => l !== state.view.locale)) problems.push(`request text is not marked ${state.view.locale}: ${own.join(",")}`);
+      }
       if (width === 320 && overflow > 0) problems.push(`page scrolls sideways by ${overflow}px`);
       failures += problems.length;
       console.log(`${problems.length ? "FAIL" : "ok  "} ${label}`);

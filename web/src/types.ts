@@ -124,6 +124,7 @@ export type ItemWithFiles = Item & { files: FileRow[] };
 
 export type RequestDetail = {
   id: string;
+  locale: string;
   client_id: string;
   title: string;
   note: string | null;

@@ -1,5 +1,5 @@
-import type { ComponentChildren } from "preact";
-import { useEffect, useRef } from "preact/hooks";
+import { createContext, type ComponentChildren } from "preact";
+import { useContext, useEffect, useRef } from "preact/hooks";
 import { ApiError } from "./api";
 import { LOCALES, locale, setLocale, t, type Locale } from "./i18n";
 
@@ -118,4 +118,12 @@ export function LanguagePicker() {
       </select>
     </label>
   );
+}
+
+// the language of the request being shown, which can differ from the one the page is in
+export const RequestLang = createContext<string | undefined>(undefined);
+
+// text the account or the client wrote for a request is marked with that request's language
+export function Own({ children }: { children: ComponentChildren }) {
+  return <span lang={useContext(RequestLang)}>{children}</span>;
 }

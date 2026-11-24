@@ -7,7 +7,7 @@ import { UploadQueue, sendJob, type Job } from "./queue";
 import { Example, FixList, exampleSrc } from "./reasons";
 import type { ClientItem, ClientView, Note } from "./types";
 import { groupByPerson, roleName } from "./people";
-import { Badge, Field, LanguagePicker, LegalLink, Loading, errorText } from "./ui";
+import { Badge, Field, LanguagePicker, LegalLink, Loading, Own, RequestLang, errorText } from "./ui";
 import { MAX_SIZE, combineToPdf, prepareImage, type Prepared } from "./upload";
 import "./styles.css";
 
@@ -291,13 +291,19 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
     <li class="item" aria-labelledby={`label-${item.id}`}>
       <div class="main">
         <div class="line">
-          <strong id={`label-${item.id}`}>{item.label}</strong>
+          <strong id={`label-${item.id}`}>
+            <Own>{item.label}</Own>
+          </strong>
           <Badge tone={TONES[item.status]}>
             <span aria-hidden="true">{MARKS[item.status]} </span>
             {t(`client.${item.status}`)}
           </Badge>
         </div>
-        {item.help && <div class="muted">{item.help}</div>}
+        {item.help && (
+          <div class="muted">
+            <Own>{item.help}</Own>
+          </div>
+        )}
         <Example item={item} src={exampleSrc(item.example ?? "", `/api${base}/items/${item.id}/example`)} />
         <p class="item-status" id={`status-${item.id}`} tabIndex={-1}>
           {statusText(item, firm)}
@@ -495,10 +501,14 @@ function Question({ item, firm, save }: { item: ClientItem; firm: string; save: 
       <div class="main">
         <div class="line">
           {grouped ? (
-            <strong id={`label-${item.id}`}>{item.label}</strong>
+            <strong id={`label-${item.id}`}>
+              <Own>{item.label}</Own>
+            </strong>
           ) : (
             <label id={`label-${item.id}`} for={field}>
-              <strong>{item.label}</strong>
+              <strong>
+                <Own>{item.label}</Own>
+              </strong>
             </label>
           )}
           <Badge tone={TONES[item.status]}>
@@ -508,7 +518,7 @@ function Question({ item, firm, save }: { item: ClientItem; firm: string; save: 
         </div>
         {item.help && (
           <div class="muted" id={`help-${item.id}`}>
-            {item.help}
+            <Own>{item.help}</Own>
           </div>
         )}
         <Example item={item} src={exampleSrc(item.example ?? "", `/api${base}/items/${item.id}/example`)} />
@@ -759,12 +769,19 @@ function Page() {
   const firm = data.firm_name;
   const contact = data.contact && (data.contact.email || data.contact.phone || data.contact.address) ? data.contact : null;
   return (
+    <RequestLang.Provider value={data.locale}>
     <main class="client-page">
       <div id="live" class="sr-only" role="status" aria-live="polite" />
       <LanguagePicker />
       <p class="firm">{firm}</p>
-      <h1>{data.title}</h1>
-      {data.note && <p class="request-note">{data.note}</p>}
+      <h1>
+        <Own>{data.title}</Own>
+      </h1>
+      {data.note && (
+        <p class="request-note">
+          <Own>{data.note}</Own>
+        </p>
+      )}
       <p>
         {t("client.due")}: <strong class={isLate(data.deadline) ? "late" : ""}>{fmtDate(data.deadline)}</strong> ({relative(data.deadline)})
       </p>
@@ -856,6 +873,7 @@ function Page() {
         </p>
       </section>
     </main>
+    </RequestLang.Provider>
   );
 }
 
