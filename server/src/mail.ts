@@ -1,5 +1,5 @@
 import { Transient, escapeHtml, sendMail } from "./email";
-import { intlTag, type Lang } from "./lang";
+import { longDate, type Lang } from "./lang";
 import { reasonLabels } from "./reasons";
 import { isRegion, type Region } from "./regions";
 import { DAY, MINUTE, hmac, randomId, sha256 } from "./util";
@@ -140,7 +140,7 @@ function lists(l: Letter, w: Words) {
 
 export function render(l: Letter) {
   const w = WORDS[l.lang];
-  const date = new Intl.DateTimeFormat(intlTag(l.lang), { dateStyle: "long", timeZone: l.tz }).format(l.deadline);
+  const date = longDate(l.deadline, l.lang, l.tz);
   const subject = oneLine(w.subject[l.kind](l, date));
   const reach = w.reach(l);
   const why = w.why(l);
