@@ -223,10 +223,10 @@ class ClientModel(
 
     /** Ends the session on this phone and the server's copy, and drops what had not been sent. */
     fun leave() {
-        scope.launch {
-            runCatching { api.clientLogout() }
-            session.end()
-        }
+        val old = session.token.value
+        session.end()
+        queue.forget()
+        if (old != null) scope.launch { runCatching { api.clientLogout(old) } }
     }
 
     /** A 404 from a call on the checklist can be one item or file that went; [load] tells whether the link did. */

@@ -52,3 +52,7 @@ fun startUploads(context: Context) {
         .build()
     WorkManager.getInstance(context).enqueueUniqueWork("uploads", ExistingWorkPolicy.APPEND_OR_REPLACE, work)
 }
+
+fun stopUploads(context: Context) {
+    WorkManager.getInstance(context).cancelUniqueWork("uploads")
+}

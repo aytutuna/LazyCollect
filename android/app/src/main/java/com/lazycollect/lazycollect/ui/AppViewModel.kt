@@ -20,6 +20,7 @@ import com.lazycollect.lazycollect.client.exampleRef
 import com.lazycollect.lazycollect.client.parseExample
 import com.lazycollect.lazycollect.client.renderExample
 import com.lazycollect.lazycollect.client.startUploads
+import com.lazycollect.lazycollect.client.stopUploads
 import com.lazycollect.lazycollect.R
 import com.lazycollect.lazycollect.net.ClientItem
 import com.lazycollect.lazycollect.requests.PreviewModel
@@ -116,6 +117,7 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
     private fun wipeClientFiles() {
         closeScan()
         val app = getApplication<Application>()
+        stopUploads(app)
         viewModelScope.launch(Dispatchers.IO) {
             File(app.noBackupFilesDir, "scan").deleteRecursively()
             File(app.cacheDir, "prepared").listFiles().orEmpty().forEach { it.delete() }

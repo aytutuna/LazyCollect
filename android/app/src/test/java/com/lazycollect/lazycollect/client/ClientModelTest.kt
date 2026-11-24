@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonPrimitive
+import java.util.concurrent.TimeUnit
+import mockwebserver3.MockResponse
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -267,6 +269,20 @@ class ClientModelTest {
         withTimeout(10_000) { while (queue.jobs.value.isNotEmpty()) kotlinx.coroutines.delay(20) }
         assertNull(store.load())
         assertEquals(1, server.calls("POST /api/app/client/logout").size)
+        assertEquals("Bearer client-session", server.calls("POST /api/app/client/logout").single().headers["Authorization"])
+    }
+
+    @Test
+    fun leavingDoesNotWaitForTheServer() = runBlocking {
+        session.start("client-session")
+        queue.add("i1", "a.jpg", "abc".byteInputStream())
+        server.on("GET /api/c/me", view(fileItem("i1")))
+        server.on("POST /api/app/client/logout", MockResponse.Builder().code(200).body("{}").headersDelay(2, TimeUnit.SECONDS).build())
+        val model = model()
+        ready(model)
+        model.leave()
+        assertNull(session.token.value)
+        assertTrue(queue.jobs.value.isEmpty())
     }
 
     @Test
