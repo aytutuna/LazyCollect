@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 import { Link, useLocation } from "wouter-preact";
 import { del, patch, post, useAction } from "../api";
-import { t } from "../i18n";
+import { LOCALES, isLocale, locale, t, type Locale } from "../i18n";
 import { usePaged, useSearchBox, useUrlParams } from "../paged";
 import { MAX_SELECT, carried, collect, useSelection } from "../selection";
 import type { Client, ClientRow } from "../types";
@@ -13,13 +13,14 @@ export function ClientForm({ client, onSaved, onCancel }: { client?: Client; onS
   const [email, setEmail] = useState(client?.email ?? "");
   const [phone, setPhone] = useState(client?.phone ?? "");
   const [reference, setReference] = useState(client?.reference ?? "");
+  const [lang, setLang] = useState<Locale>(isLocale(client?.locale) ? client.locale : locale());
   const [ok, setOk] = useState(initialOk);
   const { busy, error, run } = useAction();
 
   async function submit(e: Event) {
     e.preventDefault();
     await run(async () => {
-      const body: Record<string, unknown> = { name, email, phone, reference };
+      const body: Record<string, unknown> = { name, email, phone, reference, ...(!client || lang !== client.locale ? { locale: lang } : {}) };
       if (!client) {
         body.contact_ok = ok;
         onSaved(await post<Client>("/clients", body));
@@ -46,6 +47,15 @@ export function ClientForm({ client, onSaved, onCancel }: { client?: Client; onS
       </Field>
       <Field label={t("clients.reference")}>
         <input maxLength={100} autoComplete="off" value={reference} onInput={(e) => setReference(e.currentTarget.value)} />
+      </Field>
+      <Field label={t("clients.language")}>
+        <select value={lang} onChange={(e) => setLang(e.currentTarget.value as Locale)}>
+          {LOCALES.map((l) => (
+            <option value={l} lang={l}>
+              {t(`lang.${l}`)}
+            </option>
+          ))}
+        </select>
       </Field>
       <Check label={t("clients.permission")} checked={ok} required={!client} onChange={setOk} />
       <ErrorNote error={error} />

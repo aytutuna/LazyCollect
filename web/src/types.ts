@@ -37,6 +37,7 @@ export type Client = {
   email_ok_at: number | null;
   email_stop_at: number | null;
   sms_ok_at: number | null;
+  locale?: string;
 };
 
 export type Kind = "file" | "yesno" | "text" | "longtext" | "number" | "date" | "choice" | "multi";
@@ -180,6 +181,7 @@ export type Thread = { notes: Note[]; unanswered: number };
 
 export type ClientView = {
   firm_name: string;
+  locale: "en" | "fr-CA";
   tz: string;
   title: string;
   note: string | null;

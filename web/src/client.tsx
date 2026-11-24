@@ -2,12 +2,12 @@ import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ApiError, del, get, post, put, useAction, useLoad } from "./api";
 import { fmtDate, fmtDateTime, fmtSize, isLate, relative, setZone } from "./format";
-import { t } from "./i18n";
+import { chosen, setLocale, t, useLocale } from "./i18n";
 import { UploadQueue, sendJob, type Job } from "./queue";
 import { Example, FixList, exampleSrc } from "./reasons";
 import type { ClientItem, ClientView, Note } from "./types";
 import { groupByPerson, roleName } from "./people";
-import { Badge, Field, LegalLink, Loading, errorText } from "./ui";
+import { Badge, Field, LanguagePicker, LegalLink, Loading, errorText } from "./ui";
 import { MAX_SIZE, combineToPdf, prepareImage, type Prepared } from "./upload";
 import "./styles.css";
 
@@ -642,6 +642,7 @@ function Thread({ firm, notes, onChange }: { firm: string; notes: Note[]; onChan
 }
 
 function Page() {
+  useLocale();
   const { data, error, reload } = useLoad(() => get<ClientView>(base));
   const jobs = useQueue();
   const [online, setOnline] = useState(navigator.onLine);
@@ -721,6 +722,11 @@ function Page() {
     }
   });
 
+  // the request has a language; a language the person picked themselves wins over it
+  useEffect(() => {
+    if (data && !chosen()) setLocale(data.locale, false);
+  }, [data?.locale]);
+
   useEffect(() => {
     if (data) document.title = `${data.title} - ${data.firm_name}`;
   }, [data?.title, data?.firm_name]);
@@ -755,6 +761,7 @@ function Page() {
   return (
     <main class="client-page">
       <div id="live" class="sr-only" role="status" aria-live="polite" />
+      <LanguagePicker />
       <p class="firm">{firm}</p>
       <h1>{data.title}</h1>
       {data.note && <p class="request-note">{data.note}</p>}

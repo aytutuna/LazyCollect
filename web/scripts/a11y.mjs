@@ -41,6 +41,7 @@ for (const scheme of ["light", "dark"]) {
       const label = `${state.name} ${scheme} ${width}px`;
       const problems = violations.map((v) => `${v.id}: ${v.help} (${v.nodes.length}) ${v.nodes.slice(0, 2).map((n) => n.target.join(" ")).join(", ")}`);
       if (!lang) problems.push("html has no lang");
+      else if (lang !== (state.view.locale ?? "en")) problems.push(`html lang is ${lang}, expected ${state.view.locale ?? "en"}`);
       if (width === 320 && overflow > 0) problems.push(`page scrolls sideways by ${overflow}px`);
       failures += problems.length;
       console.log(`${problems.length ? "FAIL" : "ok  "} ${label}`);
