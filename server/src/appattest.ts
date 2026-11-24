@@ -87,8 +87,8 @@ function rawSignature(der: Uint8Array): Uint8Array {
 // the key's counter has to go up with every assertion, so a copied one is caught
 export async function verifyAssertion(env: Env, keyId: string, assertion: string, clientDataHash: Uint8Array): Promise<boolean> {
   try {
-    const row = await env.CONTROL.prepare("SELECT public_key, counter FROM app_keys WHERE key_id = ?").bind(keyId).first<{ public_key: string; counter: number }>();
-    if (!row) return false;
+    const row = await env.CONTROL.prepare("SELECT public_key, counter, env FROM app_keys WHERE key_id = ?").bind(keyId).first<{ public_key: string; counter: number; env: string }>();
+    if (!row || (env.APP_ATTEST_ENV !== "any" && env.APP_ATTEST_ENV !== row.env)) return false;
     const obj = isoCBOR.decodeFirst(unb64(assertion)) as Map<string, Uint8Array>;
     const authData = obj.get("authenticatorData")!;
     const counter = new DataView(authData.buffer, authData.byteOffset).getUint32(33);

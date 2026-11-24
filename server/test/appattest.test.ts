@@ -140,6 +140,15 @@ describe("App Attest assertions", () => {
     expect(APP_ID).toBe("8XT2U634Z4.com.lazycollect.lazycollect");
   });
 
+  it("refuses a key attested under another environment than the configured one", async () => {
+    const device = await Device.create();
+    const { challenge, attestation } = await attestWith(device, { aaguid: DEVELOPMENT });
+    expect(await attestKey(env, device.keyId, challenge, attestation)).toBe(true);
+    expect(await attested(env, "ios", await assertion(device, "x"), "x")).toBe(true);
+    const production = Object.create(env, { APP_ATTEST_ENV: { value: "production" } });
+    expect(await attested(production, "ios", await assertion(device, "x"), "x")).toBe(false);
+  });
+
   it("refuses a missing or malformed proof", async () => {
     expect(await attested(env, "ios", undefined, "x")).toBe(false);
     expect(await attested(env, "ios", { challenge: await issueChallenge(env) }, "x")).toBe(false);
