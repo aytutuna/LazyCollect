@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { purgeExpired } from "../src/purge";
 import { RESTORE_WINDOW, randomId } from "../src/util";
-import { FAMILY, ITEMS, born, family, year } from "./family";
+import { FAMILY, ITEMS, born, family } from "./family";
 import { api, inDays, pdf, setup, upload } from "./helpers";
 
 const labels = (req: any) => req.items.map((i: any) => i.label);
