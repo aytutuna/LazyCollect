@@ -12,6 +12,7 @@ import android.net.Uri
 import androidx.exifinterface.media.ExifInterface
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.util.UUID
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -48,6 +49,13 @@ fun withExtension(name: String, ext: String): String {
     return base.ifBlank { "file" } + ".$ext"
 }
 
+// A picture too big for the memory left is a file that cannot be prepared, not a crash; callers already treat IOException that way.
+private inline fun <T> fitting(block: () -> T): T = try {
+    block()
+} catch (e: OutOfMemoryError) {
+    throw IOException()
+}
+
 class Prepare(private val context: Context) {
     private val dir = File(context.cacheDir, "prepared").apply { mkdirs() }
 
@@ -58,8 +66,10 @@ class Prepare(private val context: Context) {
         val out = File(dir, UUID.randomUUID().toString())
         try {
             if (type.startsWith("image/")) {
-                val bitmap = decode(uri) ?: return copy(uri, name, out)
-                return jpeg(bitmap, withExtension(name, "jpg"), out)
+                return fitting {
+                    val bitmap = decode(uri) ?: return copy(uri, name, out)
+                    jpeg(bitmap, withExtension(name, "jpg"), out)
+                }
             }
             return copy(uri, name, out)
         } catch (e: Exception) {
@@ -120,7 +130,7 @@ class Prepare(private val context: Context) {
         val out = File(dir, UUID.randomUUID().toString())
         try {
             parts.forEachIndexed { index, part ->
-                val bitmap = BitmapFactory.decodeFile(part.file.path) ?: return null
+                val bitmap = fitting { BitmapFactory.decodeFile(part.file.path) } ?: return null
                 val (w, h) = pageSize(bitmap.width, bitmap.height)
                 val page = doc.startPage(PdfDocument.PageInfo.Builder(w, h, index + 1).create())
                 page.canvas.drawBitmap(bitmap, null, android.graphics.Rect(0, 0, w, h), Paint(Paint.FILTER_BITMAP_FLAG))
@@ -142,11 +152,11 @@ class Prepare(private val context: Context) {
     }
 
     /** A scanned page, as a picked photo is: at most 2400 px on its long side, on white. Null when it cannot be read. */
-    private fun scannedPage(jpeg: ByteArray, name: String): Prepared? {
-        val raw = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: return null
+    private fun scannedPage(jpeg: ByteArray, name: String): Prepared? = fitting {
+        val raw = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: return@fitting null
         val (w, h) = fitLongEdge(raw.width, raw.height)
         val fitted = if (w == raw.width && h == raw.height) raw else Bitmap.createScaledBitmap(raw, w, h, true).also { raw.recycle() }
-        return jpeg(fitted, name, File(dir, UUID.randomUUID().toString()))
+        jpeg(fitted, name, File(dir, UUID.randomUUID().toString()))
     }
 
     /**
