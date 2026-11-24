@@ -40,7 +40,7 @@ fun pageSize(width: Int, height: Int): Pair<Int, Int> {
 /** Several pictures go as one PDF when it will fit in what the server takes. */
 fun shouldCombine(sizes: List<Long>): Boolean = sizes.size > 1 && sizes.sumOf { it + 2048 } <= MAX_UPLOAD
 
-private val PICTURE_OR_PDF = setOf("jpg", "jpeg", "png", "webp", "heic", "heif", "pdf")
+private val PICTURE_OR_PDF = setOf("jpg", "jpeg", "png", "webp", "heic", "heif", "gif", "bmp", "avif", "pdf")
 
 // a label such as "Pay stub no. 1" has a dot that is not an extension
 fun withExtension(name: String, ext: String): String {
