@@ -7,6 +7,7 @@ import type { Client, RequestDetail, Template } from "../types";
 import { ErrorNote, Field, Loading } from "../ui";
 import { ClientForm } from "./clients";
 import { ItemsEditor, newItem, toEditItems, toPayload, type EditItem } from "./items-editor";
+import { followLanguage } from "./template-language";
 import { PeopleDrafts, newDraft, toPeople, type Draft } from "./people";
 
 export function NewRequest() {
@@ -20,6 +21,9 @@ export function NewRequest() {
   const [templateId, setTemplateId] = useState("");
   const [items, setItems] = useState<EditItem[]>([newItem()]);
   const [title, setTitle] = useState("");
+  // the title the template gave, and whether the items have been changed since: neither follows a language change once the person has taken over
+  const [templateTitle, setTemplateTitle] = useState("");
+  const [itemsEdited, setItemsEdited] = useState(false);
   const [note, setNote] = useState("");
   const [deadline, setDeadline] = useState(toInput(inDays(14)));
   const [people, setPeople] = useState<Draft[]>([]);
@@ -28,13 +32,17 @@ export function NewRequest() {
 
   function pickTemplate(id: string) {
     setTemplateId(id);
+    setItemsEdited(false);
     const found = templates.data?.find((x) => x.id === id);
     if (!found) {
       setItems([newItem()]);
       return;
     }
     setItems(toEditItems(found.items));
-    if (!title) setTitle(found.name);
+    if (!title) {
+      setTitle(found.name);
+      setTemplateTitle(found.name);
+    }
     // a checklist for each person starts with the client as the principal applicant
     if (found.items.some((i) => i.per_person) && people.length === 0) setPeople([newDraft("principal", clients.data?.find((c) => c.id === clientId)?.name ?? "")]);
   }
@@ -53,7 +61,12 @@ export function NewRequest() {
   // a built-in checklist already chosen follows a change of language; one that was edited or is the firm's own stays as it is
   useEffect(() => {
     const found = templates.data?.find((x) => x.id === templateId);
-    if (found?.builtin) setItems(toEditItems(found.items));
+    const follow = followLanguage(found?.builtin ? found : undefined, itemsEdited, title, templateTitle);
+    if (follow.items) setItems(toEditItems(found!.items));
+    if (follow.title !== null) {
+      setTitle(follow.title);
+      setTemplateTitle(follow.title);
+    }
   }, [templates.data]);
 
   async function submit(e: Event) {
@@ -164,7 +177,13 @@ export function NewRequest() {
               <input type="date" min="1900-01-01" max="2100-12-31" value={validUntil} onInput={(e) => setValidUntil(e.currentTarget.value)} />
             </Field>
           )}
-          <ItemsEditor items={items} onChange={setItems} />
+          <ItemsEditor
+            items={items}
+            onChange={(next) => {
+              setItems(next);
+              setItemsEdited(true);
+            }}
+          />
         </section>
 
         <ErrorNote error={error} />
