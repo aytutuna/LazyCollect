@@ -121,7 +121,8 @@ class RequestsModel(private val scope: CoroutineScope, private val api: Api) {
                 val page = api.requests(asked.view, asked.sort, asked.status, null, asked.query, offset)
                 flow.update {
                     it.copy(
-                        rows = if (first) page.rows else it.rows.orEmpty() + page.rows,
+                        // a request that changed place between pages can come twice; the list is keyed by id
+                        rows = if (first) page.rows.distinctBy { r -> r.id } else (it.rows.orEmpty() + page.rows).distinctBy { r -> r.id },
                         next = page.next,
                         counts = page.counts ?: it.counts,
                         loading = false,

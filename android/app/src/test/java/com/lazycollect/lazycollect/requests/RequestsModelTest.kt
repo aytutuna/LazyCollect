@@ -107,6 +107,16 @@ class RequestsModelTest {
     }
 
     @Test
+    fun aRowThatComesTwiceIsListedOnce() = runBlocking {
+        server.on("GET /api/requests", page(listOf(row("r1"), row("r1")), next = 50), page(listOf(row("r1"), row("r2"))))
+        val model = RequestsModel(scope, api)
+        model.refresh()
+        assertEquals(listOf("r1"), model.settled { it.rows != null }.rows!!.map { it.id })
+        model.loadMore()
+        assertEquals(listOf("r1", "r2"), model.settled { it.rows?.size == 2 }.rows!!.map { it.id })
+    }
+
+    @Test
     fun aFailedNextPageKeepsTheRowsAndCanBeTriedAgain() = runBlocking {
         server.on("GET /api/requests", page(listOf(row("r1")), next = 50), json(500, """{"error":"server_error"}"""), page(listOf(row("r2"))))
         val model = RequestsModel(scope, api)
