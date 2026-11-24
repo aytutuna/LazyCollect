@@ -127,7 +127,7 @@ class UploadQueueTest {
     }
 
     @Test
-    fun aFileGivesUpAfterSixAutomaticTries() = runBlocking {
+    fun aFileGivesUpAfterTheFirstTryAndSixAutomaticRetries() = runBlocking {
         server.on("PUT /api/c/me/items/i1/files", json(500, """{"error":"server_error"}"""))
         val q = queue()
         q.add("i1", "a.jpg", bytes("abc"))

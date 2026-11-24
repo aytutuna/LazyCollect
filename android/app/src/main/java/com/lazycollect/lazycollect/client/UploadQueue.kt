@@ -16,6 +16,7 @@ import kotlinx.serialization.encodeToString
 
 const val MAX_UPLOAD = 25L * 1024 * 1024
 private const val KEEP_DAYS = 14L
+// retries after the first try, as in the web queue: a file is tried AUTO_TRIES + 1 times before the person decides
 private const val AUTO_TRIES = 6
 private const val FIRST_BACKOFF = 10_000L
 
