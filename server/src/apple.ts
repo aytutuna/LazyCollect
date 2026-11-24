@@ -147,7 +147,7 @@ appleBilling.post("/billing/apple", async (c) => {
   if (typeof body?.transaction_id !== "string" || !/^\d{1,20}$/.test(body.transaction_id)) return invalid(c);
   const firm = c.get("firm");
   // one subscription per account: a plan bought on the web is changed there
-  if (firm.stripe_subscription_id && (firm.plan_status === "active" || firm.plan_status === "past_due")) return c.json({ error: "subscribed" }, 409);
+  if (firm.stripe_subscription_id && ["active", "past_due", "trialing"].includes(firm.plan_status)) return c.json({ error: "subscribed" }, 409);
   let found: Standing | null;
   try {
     found = await standing(c.env, body.transaction_id);
@@ -169,6 +169,9 @@ export const appleWebhook = new Hono<AppEnv>();
 // App Store Server Notifications V2. The signed payload says which transaction changed; the state is asked of Apple again.
 appleWebhook.post("/apple/notifications", async (c) => {
   if (!configured(c.env)) return c.json({ error: "unavailable" }, 503);
+  const length = c.req.header("Content-Length");
+  if (!length || !/^\d+$/.test(length)) return c.json({ error: "length_required" }, 411);
+  if (Number(length) > MAX_BODY) return c.json({ error: "too_big" }, 413);
   const raw = await c.req.text();
   if (raw.length > MAX_BODY) return c.json({ error: "too_big" }, 413);
   let signed: unknown;
@@ -181,11 +184,11 @@ appleWebhook.post("/apple/notifications", async (c) => {
   if (!payload) return c.json({ error: "invalid" }, 400);
   const tx = await verifyJws(c.env, payload.data?.signedTransactionInfo);
   if (!tx || tx.bundleId !== BUNDLE_ID || typeof tx.originalTransactionId !== "string" || typeof tx.transactionId !== "string") return c.json({ ok: true });
-  const firm = await c.env.CONTROL.prepare("SELECT id FROM firms WHERE apple_original_transaction_id = ?").bind(tx.originalTransactionId).first<{ id: string }>();
+  const firm = await c.env.CONTROL.prepare("SELECT id FROM firms WHERE apple_original_transaction_id = ? AND plan_source = 'apple'").bind(tx.originalTransactionId).first<{ id: string }>();
   if (!firm) return c.json({ ok: true });
   try {
     const found = await standing(c.env, tx.transactionId);
-    if (found && found.original === tx.originalTransactionId) await apply(c.env, firm.id, found);
+    if (found && found.original === tx.originalTransactionId && found.token === accountToken(firm.id)) await apply(c.env, firm.id, found);
   } catch (e) {
     console.error(e instanceof Error ? e.message : "error");
     // Apple tries again later

@@ -179,3 +179,26 @@ describe("Apple's server notifications", () => {
     expect((await firmRow(cookie)).plan_status).toBe("active");
   });
 });
+
+describe("Apple against the web plan", () => {
+  it("refuses a purchase while a web trial subscription is held", async () => {
+    const { cookie, token } = await owner();
+    await env.CONTROL.prepare("UPDATE firms SET stripe_subscription_id = 'sub_1', plan_status = 'trialing'").run();
+    appleFake.subs["2000000000001"] = { status: 1, original: "1000000000001", token };
+    expect((await buy(cookie)).status).toBe(409);
+  });
+
+  it("ignores a late notification once the web plan took over, or one that names another firm", async () => {
+    const { cookie, token } = await owner();
+    appleFake.subs["2000000000001"] = { status: 1, original: "1000000000001", token };
+    await buy(cookie);
+    const sign = (id: string) => ca.sign({ data: { signedTransactionInfo: undefined } }).then(async () => ca.sign({ data: { signedTransactionInfo: await appleFake.transaction({ status: 2, original: "1000000000001", transaction: id }, id) } }));
+    appleFake.subs["2000000000002"] = { status: 2, original: "1000000000001", token: accountToken("f".repeat(32)) };
+    await notify(await sign("2000000000002"));
+    expect((await firmRow(cookie)).plan_status).toBe("active");
+    appleFake.subs["2000000000002"] = { status: 2, original: "1000000000001", token };
+    await env.CONTROL.prepare("UPDATE firms SET plan_source = 'stripe', plan_status = 'active'").run();
+    await notify(await sign("2000000000002"));
+    expect((await firmRow(cookie)).plan_status).toBe("active");
+  });
+});
