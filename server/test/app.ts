@@ -15,3 +15,8 @@ export async function proof(data: string, platform = "android") {
   playFake.tokens[token] = goodVerdict(b64url(await bindingHash(challenge, data)));
   return { challenge, token };
 }
+
+// APP_ATTEST_OFF is honoured only with a local APP_URL, whose type is the live address
+export const setAppUrl = (env: Env, url: string) => {
+  (env as { APP_URL: string }).APP_URL = url;
+};

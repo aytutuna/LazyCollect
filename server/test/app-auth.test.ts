@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Authenticator } from "./authenticator";
 import { addPasskey } from "./passkey-flow";
 import { api, codeFrom, login, mockOutbound } from "./helpers";
-import { bearer, pendingHeader, post, proof } from "./app";
+import { bearer, pendingHeader, post, proof, setAppUrl } from "./app";
 
 const EMAIL = "owner@firm.test";
 
@@ -36,9 +36,13 @@ describe("app challenge", () => {
     expect((await post("/api/app/client/exchange", { token: "x", platform: "ios" })).status).toBe(503);
     env.APP_ATTEST_OFF = "ios";
     try {
+      // a leaked setting does nothing on the live site
+      expect((await post("/api/app/challenge", { platform: "ios" })).status).toBe(503);
+      setAppUrl(env, "http://localhost:8787");
       const body = await (await post("/api/app/challenge", { platform: "ios" })).json<any>();
       expect(body.required).toBe(false);
     } finally {
+      setAppUrl(env, "https://collect.alazy.app");
       env.APP_ATTEST_OFF = undefined;
     }
   });
@@ -103,6 +107,9 @@ describe("app sign-in", () => {
     expect((await post("/api/app/auth/start", { email: EMAIL, platform: "android" })).status).toBe(503);
     env.APP_ATTEST_OFF = "android";
     try {
+      expect((await post("/api/app/auth/start", { email: EMAIL, platform: "android" })).status).toBe(503);
+      expect(sent).toHaveLength(0);
+      setAppUrl(env, "http://localhost:8787");
       expect((await post("/api/app/auth/start", { email: EMAIL, platform: "android" })).status).toBe(200);
       expect(sent).toHaveLength(1);
       let last = 200;
@@ -110,6 +117,7 @@ describe("app sign-in", () => {
       expect(last).toBe(429);
     } finally {
       env.PLAY_INTEGRITY_SA = saved;
+      setAppUrl(env, "https://collect.alazy.app");
       env.APP_ATTEST_OFF = undefined;
     }
   });
@@ -125,7 +133,7 @@ describe("app sign-in", () => {
   });
 
   it("verifies only where the code was asked for", async () => {
-    env.APP_URL = "http://localhost:8787";
+    setAppUrl(env, "http://localhost:8787");
     env.APP_ATTEST_OFF = "ios";
     try {
       const android = await startCode();
@@ -139,7 +147,7 @@ describe("app sign-in", () => {
       expect((await post("/api/app/auth/verify", { email: EMAIL, code: web, platform: "android" })).status).toBe(400);
       expect((await post("/api/auth/verify", { email: EMAIL, code: web })).status).toBe(200);
     } finally {
-      env.APP_URL = "https://collect.alazy.app";
+      setAppUrl(env, "https://collect.alazy.app");
       env.APP_ATTEST_OFF = undefined;
     }
   });

@@ -28,7 +28,7 @@ describe("Play Integrity", () => {
     mockOutbound();
     const unset = Object.create(env, { PLAY_INTEGRITY_SA: { value: undefined } });
     expect(await attested(unset, "android", undefined, "a@firm.test")).toBe(false);
-    const off = Object.create(unset, { APP_ATTEST_OFF: { value: "ios, android" } });
+    const off = Object.create(unset, { APP_ATTEST_OFF: { value: "ios, android" }, APP_URL: { value: "http://localhost:8787" } });
     expect(await attested(off, "android", undefined, "a@firm.test")).toBe(true);
     expect(playFake.calls).toHaveLength(0);
   });

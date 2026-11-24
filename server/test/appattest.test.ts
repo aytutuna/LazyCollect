@@ -158,7 +158,7 @@ describe("App Attest assertions", () => {
   it("refuses until App Attest is switched on, unless listed in APP_ATTEST_OFF", async () => {
     const unset = Object.create(env, { APP_ATTEST_ENV: { value: undefined } });
     expect(await attested(unset, "ios", undefined, "x")).toBe(false);
-    const off = Object.create(unset, { APP_ATTEST_OFF: { value: "ios" } });
+    const off = Object.create(unset, { APP_ATTEST_OFF: { value: "ios" }, APP_URL: { value: "http://127.0.0.1:8787" } });
     expect(await attested(off, "ios", undefined, "x")).toBe(true);
     expect(await attestKey(off, "a2V5", await issueChallenge(env), "AA==")).toBe(false);
   });

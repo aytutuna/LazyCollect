@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { sha256 } from "../src/util";
-import { bearer, post, proof } from "./app";
+import { bearer, post, proof, setAppUrl } from "./app";
 import { api, mockOutbound, openRequest, pdf, setup, upload } from "./helpers";
 
 async function exchange(token: string, platform = "android", attestation?: unknown) {
@@ -74,10 +74,12 @@ describe("client app session", () => {
     env.PLAY_INTEGRITY_SA = undefined;
     expect((await post("/api/app/client/exchange", { token: linkToken, platform: "android" })).status).toBe(503);
     env.APP_ATTEST_OFF = "android";
+    setAppUrl(env, "http://localhost:8787");
     try {
       expect((await post("/api/app/client/exchange", { token: linkToken, platform: "android" })).status).toBe(200);
     } finally {
       env.PLAY_INTEGRITY_SA = saved;
+      setAppUrl(env, "https://collect.alazy.app");
       env.APP_ATTEST_OFF = undefined;
     }
   });

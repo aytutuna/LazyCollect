@@ -11,8 +11,10 @@ export type Attestation = { challenge?: unknown; token?: unknown; key_id?: unkno
 export const checked = (env: Env, platform: App) => !skipped(env, platform) && (platform === "android" ? Boolean(env.PLAY_INTEGRITY_SA) : Boolean(env.APP_ATTEST_ENV));
 
 // APP_ATTEST_OFF exists so local development can run without Play Integrity or App Attest. It goes in .dev.vars only,
-// never in wrangler.toml: a platform with no check and not listed here is refused instead of waved through.
-const skipped = (env: Env, platform: App) => (env.APP_ATTEST_OFF ?? "").split(",").some((p) => p.trim() === platform);
+// never in wrangler.toml, and is ignored unless APP_URL is local, so a leaked secret can't switch the checks off on the
+// live site. A platform with no check and not listed here is refused instead of waved through.
+const local = (env: Env) => /^http:\/\/(localhost|127\.0\.0\.1)/.test(env.APP_URL);
+const skipped = (env: Env, platform: App) => local(env) && (env.APP_ATTEST_OFF ?? "").split(",").some((p) => p.trim() === platform);
 
 export const usable = (env: Env, platform: App) => skipped(env, platform) || checked(env, platform);
 
