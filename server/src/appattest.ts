@@ -94,7 +94,8 @@ export async function verifyAssertion(env: Env, keyId: string, assertion: string
     const counter = new DataView(authData.buffer, authData.byteOffset).getUint32(33);
     if (!same(authData.subarray(0, 32), await sha256(encoder.encode(APP_ID))) || counter <= row.counter) return false;
     const key = await crypto.subtle.importKey("raw", unb64(row.public_key), { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
-    if (!(await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, rawSignature(obj.get("signature")!), cat(authData, clientDataHash)))) return false;
+    const nonce = await sha256(cat(authData, clientDataHash));
+    if (!(await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, rawSignature(obj.get("signature")!), nonce))) return false;
     const res = await env.CONTROL.prepare("UPDATE app_keys SET counter = ? WHERE key_id = ? AND counter = ?").bind(counter, keyId, row.counter).run();
     return res.meta.changes === 1;
   } catch {

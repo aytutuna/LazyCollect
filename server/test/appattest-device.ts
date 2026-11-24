@@ -104,7 +104,7 @@ export class Device {
   async assert(clientDataHash: Uint8Array, o: { appId?: string; counter?: number; signer?: Device } = {}) {
     this.counter = o.counter ?? this.counter + 1;
     const authData = cat(await sha256(encoder.encode(o.appId ?? APP_ID)), Uint8Array.of(0x01), u32(this.counter));
-    const raw = new Uint8Array(await crypto.subtle.sign(ES256, (o.signer ?? this).keys.privateKey, cat(authData, clientDataHash)));
+    const raw = new Uint8Array(await crypto.subtle.sign(ES256, (o.signer ?? this).keys.privateKey, await sha256(cat(authData, clientDataHash))));
     return std(cbor(new Map<string, any>([["signature", der(raw)], ["authenticatorData", authData]])));
   }
 }
