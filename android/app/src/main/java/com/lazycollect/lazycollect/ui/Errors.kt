@@ -52,10 +52,25 @@ fun errorText(code: String, owner: Boolean = true, pastDue: Boolean = false): In
     "legal_hold" -> R.string.error_legal_hold
     "too_many_notes" -> R.string.error_too_many_notes
     "missing_file" -> R.string.error_missing_file
+    "stale" -> R.string.error_stale
+    "locked" -> R.string.error_locked
+    "too_soon" -> R.string.error_too_soon
+    "no_link" -> R.string.error_no_link
+    "not_open" -> R.string.error_not_open
+    "nothing_missing" -> R.string.error_nothing_missing
+    "email_failed" -> R.string.error_email_failed
+    "email_limit" -> R.string.error_email_limit
+    "firm_profile" -> R.string.error_firm_profile
+    "address_needed" -> R.string.error_address_needed
+    "client_email_needed" -> R.string.error_client_email_needed
+    "sender_needed" -> R.string.error_sender_needed
+    "client_unsubscribed" -> R.string.error_client_unsubscribed
+    "deadline_passed" -> R.string.error_deadline_passed
+    "busy" -> R.string.error_busy
     else -> R.string.error_server_error
 }
 
 @Composable
-fun ErrorNote(code: String?) {
-    if (code != null) Text(stringResource(errorText(code)), color = MaterialTheme.colorScheme.error, modifier = Modifier.fillMaxWidth())
+fun ErrorNote(code: String?, owner: Boolean = true, pastDue: Boolean = false) {
+    if (code != null) Text(stringResource(errorText(code, owner, pastDue)), color = MaterialTheme.colorScheme.error, modifier = Modifier.fillMaxWidth())
 }

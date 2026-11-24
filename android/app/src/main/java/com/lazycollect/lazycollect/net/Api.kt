@@ -148,6 +148,42 @@ class Api(
         send("POST", "/account/reopen", null, null)
     }
 
+    suspend fun requests(view: String, sort: String, status: String?, client: String?, query: String, offset: Int): RequestPage {
+        val q = buildString {
+            append("?view=$view&sort=$sort")
+            if (status != null) append("&status=$status")
+            if (client != null) append("&client=$client")
+            if (query.isNotEmpty()) append("&q=").append(URLEncoder.encode(query, "UTF-8").replace("+", "%20"))
+            if (offset > 0) append("&offset=$offset")
+        }
+        return call("GET", "/requests$q")
+    }
+
+    suspend fun request(id: String): RequestDetail = call("GET", "/requests/$id")
+
+    suspend fun thread(id: String): NoteThread = call("GET", "/requests/$id/notes")
+
+    suspend fun reply(id: String, body: String): NoteReply = call("POST", "/requests/$id/notes", ApiJson.encodeToString(NoteBody(body)))
+
+    suspend fun review(id: String, item: String, review: ReviewBody) {
+        send("POST", "/requests/$id/items/$item/review", ApiJson.encodeToString(review), null)
+    }
+
+    suspend fun unavailable(id: String, item: String, decision: UnavailableDecision) {
+        send("POST", "/requests/$id/items/$item/unavailable", ApiJson.encodeToString(decision), null)
+    }
+
+    suspend fun link(id: String): LinkInfo = call("GET", "/requests/$id/link")
+
+    suspend fun makeLink(id: String, email: Boolean): LinkMade = call("POST", "/requests/$id/link", ApiJson.encodeToString(LinkBody(email)))
+
+    suspend fun remind(id: String) {
+        send("POST", "/requests/$id/remind", null, null)
+    }
+
+    /** A file's bytes as the client uploaded them. The server counts every call as a view and limits how many a minute. */
+    suspend fun fileBytes(id: String): ByteArray = sendBytes("GET", "/files/$id", null, null)
+
     suspend fun devices(): List<Device> = call("GET", "/sessions")
 
     suspend fun endDevice(id: String) {
