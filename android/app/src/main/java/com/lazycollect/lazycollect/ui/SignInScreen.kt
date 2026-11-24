@@ -1,6 +1,7 @@
 package com.lazycollect.lazycollect.ui
 
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -48,6 +49,7 @@ private const val LEGAL = "https://alazy.app/collect/"
 
 @Composable
 fun SignInScreen(state: SignInState, actions: SignInActions) {
+    BackHandler(enabled = state.step != Step.Email, onBack = actions.back)
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(
             Modifier.safeDrawingPadding().verticalScroll(rememberScrollState()).padding(24.dp),
