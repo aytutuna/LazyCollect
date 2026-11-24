@@ -114,6 +114,8 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
                 client.unreadable()
             } catch (e: SecurityException) {
                 client.unreadable()
+            } catch (e: IllegalArgumentException) {
+                client.unreadable()
             } finally {
                 // a camera shot is only a copy for this queue; the picture stays nowhere else on the phone
                 uris.filter { it.authority?.endsWith(CAMERA_SUFFIX) == true }.forEach { runCatching { resolver.delete(it, null, null) } }
