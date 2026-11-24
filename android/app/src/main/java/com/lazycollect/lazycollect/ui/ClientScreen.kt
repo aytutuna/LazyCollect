@@ -315,27 +315,35 @@ private fun Adders(item: ClientItem, busy: Boolean, actions: ClientActions) {
     val context = LocalContext.current
     val hasCamera = remember { context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY) }
     var denied by rememberSaveable(item.id) { mutableStateOf(false) }
+    var forPhoto by rememberSaveable(item.id) { mutableStateOf(false) }
     val permission = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
         denied = !granted
-        if (granted) actions.scan(item)
+        when {
+            granted && forPhoto -> actions.camera(item)
+            granted -> actions.scan(item)
+            forPhoto -> files.launch(arrayOf("image/*", "application/pdf"))
+        }
+    }
+    fun withCamera(photo: Boolean) {
+        forPhoto = photo
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            denied = false
+            if (photo) actions.camera(item) else actions.scan(item)
+        } else {
+            permission.launch(Manifest.permission.CAMERA)
+        }
     }
     if (hasCamera) {
-        Button(
-            enabled = !busy,
-            onClick = {
-                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) actions.scan(item)
-                else permission.launch(Manifest.permission.CAMERA)
-            },
-        ) { Text(stringResource(R.string.scan_open)) }
+        Button(enabled = !busy, onClick = { withCamera(false) }) { Text(stringResource(R.string.scan_open)) }
     }
     if (denied) {
-        Text(stringResource(R.string.scan_denied), color = MaterialTheme.colorScheme.error)
+        Text(stringResource(if (forPhoto) R.string.photo_denied else R.string.scan_denied), color = MaterialTheme.colorScheme.error)
         TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))) }) {
             Text(stringResource(R.string.scan_open_settings))
         }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(enabled = !busy, onClick = { actions.camera(item) }) { Text(stringResource(R.string.client_take_photo)) }
+        OutlinedButton(enabled = !busy, onClick = { withCamera(true) }) { Text(stringResource(R.string.client_take_photo)) }
         OutlinedButton(enabled = !busy, onClick = { files.launch(arrayOf("image/*", "application/pdf")) }) { Text(stringResource(R.string.client_choose_file)) }
     }
 }

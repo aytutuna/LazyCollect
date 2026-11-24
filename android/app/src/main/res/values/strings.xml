@@ -262,6 +262,7 @@
     <string name="scan_open">Scan</string>
     <string name="scan_title">Scan: %1$s</string>
     <string name="scan_denied">Camera access was not allowed. You can take the photo with the camera app instead, or allow the camera for this app in settings.</string>
+    <string name="photo_denied">Camera access was not allowed. You can choose a photo from your files instead, or allow the camera for this app in settings.</string>
     <string name="scan_open_settings">Open settings</string>
     <string name="scan_photo_unreadable">The photo could not be read.</string>
     <string name="scan_photo_failed">The photo could not be taken.</string>
