@@ -63,10 +63,13 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: LazyCollectiOSUnitTests
+      # The code under test is compiled in here, since the app target links ONNX Runtime statically and the tests must not
+      # link it a second time.
+      - path: Sources/CollectApp/Intake.swift
+      - path: Sources/CollectApp/Passkey.swift
+      - path: Sources/CollectApp/Keychain.swift
     dependencies:
       - target: LazyCollectiOS
-      - package: LazyCollect
-        product: CollectApp
       - package: LazyCollect
         product: CollectKit
     settings:
