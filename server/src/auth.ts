@@ -299,7 +299,7 @@ auth.get("/me", async (c) => {
   if (!session) return c.json({ error: "unauthorized" }, 401);
   const row = await c.env.CONTROL.prepare(
     `SELECT u.id, u.email, u.name, u.role, f.id AS firm_id, f.name AS firm_name, f.tz, f.plan_status, f.trial_ends_at,
-       f.current_period_end, f.past_due_since, f.cancel_at_period_end, f.stripe_subscription_id IS NOT NULL AS subscribed, f.plan_source, f.closed_at, f.region
+       f.current_period_end, f.past_due_since, f.cancel_at_period_end, (f.stripe_subscription_id IS NOT NULL OR f.apple_original_transaction_id IS NOT NULL) AS subscribed, f.plan_source, f.closed_at, f.region
      FROM users u JOIN firms f ON f.id = u.firm_id WHERE u.id = ?`,
   )
     .bind(session.userId)

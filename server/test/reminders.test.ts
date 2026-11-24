@@ -739,6 +739,15 @@ describe("email caps", () => {
     expect((await invite(cookie, req.id)).status).toBe(429);
   });
 
+  it("gives an account paying through the App Store the subscribed cap", async () => {
+    const { cookie, req, client } = await ready();
+    mockOutbound();
+    await fill(req.id, client.id, 50, Date.now() - HOUR);
+    expect((await invite(cookie, req.id)).status).toBe(429);
+    await env.CONTROL.prepare("UPDATE firms SET plan_source = 'apple', apple_original_transaction_id = '1000000000001'").run();
+    expect((await invite(cookie, req.id)).status).toBe(200);
+  });
+
   it("leaves a capped reminder due and sends it once there is room", async () => {
     const { cookie, req, client } = await ready();
     const sent = mockOutbound();

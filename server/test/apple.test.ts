@@ -2,6 +2,8 @@ import { env, exports } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { accountToken } from "../src/apple";
 import { AppleCa, appleFake } from "./apple-fake";
+import { refreshApple } from "../src/apple";
+import { usable } from "../src/firm";
 import { api, firmRow, login, mockOutbound } from "./helpers";
 
 let ca: AppleCa;
@@ -200,5 +202,74 @@ describe("Apple against the web plan", () => {
     await env.CONTROL.prepare("UPDATE firms SET plan_source = 'stripe', plan_status = 'active'").run();
     await notify(await sign("2000000000002"));
     expect((await firmRow(cookie)).plan_status).toBe("active");
+  });
+});
+
+describe("Apple plans over time and in the rest of the app", () => {
+  async function bought(email = "owner@firm.test", original = "1000000000001", expires = Date.now() + 30 * 86_400_000) {
+    const o = await owner(email);
+    appleFake.subs["2000000000001"] = { status: 1, original, token: o.token, expires };
+    expect((await buy(o.cookie)).status).toBe(200);
+    return o;
+  }
+
+  it("does not take certificates that had expired", async () => {
+    const { cookie, token } = await owner();
+    appleFake.ca = ca = await AppleCa.create({ expired: true });
+    env.APPLE_IAP_ROOT = ca.rootPem;
+    appleFake.subs["2000000000001"] = { status: 1, original: "1000000000001", token };
+    expect((await buy(cookie)).status).toBe(404);
+  });
+
+  it("lets an active plan lapse once its period and the grace are past, and not before", async () => {
+    const { cookie } = await bought();
+    const row = await firmRow(cookie);
+    const end = row.current_period_end;
+    expect(usable(row, end + 6 * 86_400_000)).toBe(true);
+    expect(usable(row, end + 8 * 86_400_000)).toBe(false);
+    // a web plan has no such limit
+    expect(usable({ ...row, plan_source: "stripe" }, end + 30 * 86_400_000)).toBe(true);
+  });
+
+  it("asks Apple again about a plan that is about to end, and follows the answer", async () => {
+    const { cookie, token } = await bought("owner@firm.test", "1000000000001", Date.now() + 3_600_000);
+    appleFake.subs["1000000000001"] = { status: 2, original: "1000000000001", token };
+    await refreshApple(env, Date.now());
+    expect((await firmRow(cookie)).plan_status).toBe("canceled");
+    // a plan with time left is left alone
+    const other = await bought("two@firm.test", "1000000000002");
+    const calls = appleFake.calls.length;
+    await refreshApple(env, Date.now());
+    expect(appleFake.calls.length).toBe(calls);
+    expect((await firmRow(other.cookie)).plan_status).toBe("active");
+  });
+
+  it("counts an Apple payer as subscribed in /me and as a used account", async () => {
+    const { cookie } = await bought();
+    expect((await (await api("/api/me", { cookie })).json<any>()).firm.subscribed).toBe(true);
+    const { untouchedSql } = await import("../src/firm");
+    const firm = await firmRow(cookie);
+    const u = untouchedSql(firm.id, Date.now());
+    const hit = await env.CONTROL.prepare(`SELECT 1 AS x FROM firms WHERE id = ? AND ${u.sql}`).bind(firm.id, ...u.binds).first();
+    expect(hit).toBeNull();
+  });
+
+  it("tells the owner who closes the account to cancel in the App Store, and records it", async () => {
+    const { cookie } = await bought();
+    const res = await api("/api/account/close", { method: "POST", cookie, body: { confirm: "Tuna Tax" } });
+    expect(res.status).toBe(200);
+    const body = await res.json<any>();
+    expect(body.store_subscription).toMatchObject({ source: "apple", manage_url: "https://apps.apple.com/account/subscriptions" });
+    const log = await env.CONTROL.prepare("SELECT 1 FROM firms WHERE closed_at IS NOT NULL").first();
+    expect(log).not.toBeNull();
+    const audited = await env.DB_NA.prepare("SELECT meta FROM audit WHERE action = 'account.close'").first<{ meta: string }>();
+    expect(audited?.meta).toContain("apple");
+  });
+
+  it("does not let a second, expired transaction replace a live plan", async () => {
+    const { cookie, token } = await bought();
+    appleFake.subs["2000000000002"] = { status: 2, original: "1000000000002", token };
+    expect((await buy(cookie, "2000000000002")).status).toBe(409);
+    expect(await firmRow(cookie)).toMatchObject({ plan_status: "active", apple_original_transaction_id: "1000000000001" });
   });
 });

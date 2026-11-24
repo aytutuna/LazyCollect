@@ -2,9 +2,9 @@ import "reflect-metadata";
 import { X509Certificate, X509ChainBuilder } from "@peculiar/x509";
 import { Hono } from "hono";
 import { audit } from "./audit";
-import { isOwner } from "./firm";
+import { isOwner, usable } from "./firm";
 import type { AppEnv } from "./session";
-import { FETCH_TIMEOUT_MS } from "./util";
+import { DAY, FETCH_TIMEOUT_MS } from "./util";
 import { invalid, notFound, readBody } from "./validate";
 
 // The plan bought in the iPhone app: an auto-renewing subscription in App Store Connect. The phone only says which
@@ -59,9 +59,13 @@ export async function verifyJws(env: Env, jws: unknown): Promise<Claims | null> 
     if (!top.equal(root) || !leaf.getExtension(LEAF_OID) || !intermediate.getExtension(INTERMEDIATE_OID)) return null;
     const chain = await new X509ChainBuilder({ certificates: [intermediate, root] }).build(leaf);
     if (chain.length !== 3 || !chain[2].equal(root)) return null;
+    const claims = json(parts[1]);
+    // the certificates must have been valid when Apple signed, as its own libraries check
+    const at = typeof claims.signedDate === "number" ? claims.signedDate : Date.now();
+    if (![leaf, intermediate].every((x) => x.notBefore.getTime() <= at && at <= x.notAfter.getTime())) return null;
     const key = await crypto.subtle.importKey("spki", leaf.publicKey.rawData, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
     const signed = encoder.encode(`${parts[0]}.${parts[1]}`);
-    return (await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, unb64url(parts[2]), signed)) ? json(parts[1]) : null;
+    return (await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, unb64url(parts[2]), signed)) ? claims : null;
   } catch {
     return null;
   }
@@ -146,6 +150,8 @@ appleBilling.post("/billing/apple", async (c) => {
   const body = await readBody(c);
   if (typeof body?.transaction_id !== "string" || !/^\d{1,20}$/.test(body.transaction_id)) return invalid(c);
   const firm = c.get("firm");
+  // an account with a live plan of its own keeps it: another transaction does not replace it
+  const mine = await c.env.CONTROL.prepare("SELECT apple_original_transaction_id AS id FROM firms WHERE id = ?").bind(firm.id).first<{ id: string | null }>();
   // one subscription per account: a plan bought on the web is changed there
   if (firm.stripe_subscription_id && ["active", "past_due", "trialing"].includes(firm.plan_status)) return c.json({ error: "subscribed" }, 409);
   let found: Standing | null;
@@ -157,6 +163,7 @@ appleBilling.post("/billing/apple", async (c) => {
   }
   if (!found) return notFound(c);
   if (found.token !== accountToken(firm.id)) return c.json({ error: "other_account" }, 409);
+  if (mine?.id && mine.id !== found.original && (firm.plan_status === "active" || firm.plan_status === "past_due") && usable(firm, Date.now())) return c.json({ error: "subscribed" }, 409);
   const used = await c.env.CONTROL.prepare("SELECT 1 FROM firms WHERE apple_original_transaction_id = ? AND id != ?").bind(found.original, firm.id).first();
   if (used) return c.json({ error: "in_use" }, 409);
   await apply(c.env, firm.id, found);
@@ -197,3 +204,24 @@ appleWebhook.post("/apple/notifications", async (c) => {
   return c.json({ ok: true });
 });
 
+
+// The plans whose period ends within a day, or ended: asked of Apple again, so a lost notification is made up for.
+export async function refreshApple(env: Env, now: number, limit = 20) {
+  if (!configured(env)) return;
+  const { results } = await env.CONTROL.prepare(
+    `SELECT id, apple_original_transaction_id AS original FROM firms WHERE plan_source = 'apple' AND plan_status IN ('active', 'past_due')
+     AND apple_original_transaction_id IS NOT NULL AND current_period_end < ? ORDER BY current_period_end LIMIT ?`,
+  )
+    .bind(now + DAY, limit)
+    .all<{ id: string; original: string }>();
+  for (const f of results) {
+    try {
+      const found = await standing(env, f.original);
+      if (found && found.original === f.original && found.token === accountToken(f.id)) await apply(env, f.id, found);
+    } catch (e) {
+      console.error(e instanceof Error ? e.message : "error");
+    }
+  }
+}
+
+export const APPLE_MANAGE_URL = "https://apps.apple.com/account/subscriptions";

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { account, purgeClosed } from "./account";
 import { activity } from "./activity";
-import { appleBilling, appleWebhook } from "./apple";
+import { appleBilling, appleWebhook, refreshApple } from "./apple";
 import { native } from "./app";
 import { auth } from "./auth";
 import { batches, runBatches } from "./batches";
@@ -138,6 +138,7 @@ export default {
         env.CONTROL.prepare("DELETE FROM stripe_events WHERE received_at < ?").bind(now - 30 * DAY),
       ]),
     );
+    await step(() => refreshApple(env, now));
     await step(() => sweepFiles(env, now));
     await step(() => purgeExpired(env, now));
     await step(() => purgeClosed(env, now));

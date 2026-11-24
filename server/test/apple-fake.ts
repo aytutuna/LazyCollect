@@ -12,7 +12,7 @@ const newKeys = () => crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-
 const toPem = (der: ArrayBuffer) => `-----BEGIN CERTIFICATE-----\n${std(der).match(/.{1,64}/g)!.join("\n")}\n-----END CERTIFICATE-----`;
 const day = 86_400_000;
 
-type Marks = { leaf?: boolean; intermediate?: boolean };
+type Marks = { leaf?: boolean; intermediate?: boolean; expired?: boolean };
 
 export class AppleCa {
   private constructor(
@@ -25,7 +25,7 @@ export class AppleCa {
     const root = await newKeys();
     const mid = await newKeys();
     const leaf = await newKeys();
-    const base = { notBefore: new Date(Date.now() - day), notAfter: new Date(Date.now() + 365 * day), signingAlgorithm: ES256 };
+    const base = marks.expired ? { notBefore: new Date(Date.now() - 400 * day), notAfter: new Date(Date.now() - day), signingAlgorithm: ES256 } : { notBefore: new Date(Date.now() - day), notAfter: new Date(Date.now() + 365 * day), signingAlgorithm: ES256 };
     const rootCert = await X509CertificateGenerator.create({
       ...base,
       serialNumber: "01",
