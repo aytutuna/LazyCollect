@@ -85,6 +85,15 @@ describe("push registration", () => {
     expect(await stored("sessions", second)).toBe("shared");
   });
 
+  it("does not take a token from another user when the set did not take effect", async () => {
+    const first = await staffApp("a@firm.test");
+    const second = await staffApp("b@firm.test");
+    await register(first, "shared");
+    await env.CONTROL.prepare("UPDATE sessions SET expires_at = ? WHERE token_hash = ?").bind(Date.now() - 1, await sha256(second)).run();
+    expect((await register(second, "shared")).status).toBe(401);
+    expect(await stored("sessions", first)).toBe("shared");
+  });
+
   it("lets one install's sessions share a token", async () => {
     const one = await clientApp("a@firm.test");
     const two = await clientApp("b@firm.test");
