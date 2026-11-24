@@ -3,6 +3,7 @@ package com.lazycollect.lazycollect.data
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import java.security.GeneralSecurityException
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -22,16 +23,32 @@ class SecretBox {
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply { init(spec) }.generateKey()
     }
 
+    // a key that exists but cannot be used (a blob damaged by an OS update, say) is thrown away and made again
+    private fun forgetKey() {
+        runCatching { KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(ALIAS) }
+    }
+
+    private fun encryptor() = Cipher.getInstance(TRANSFORM).apply { init(Cipher.ENCRYPT_MODE, key()) }
+
     fun seal(plain: String): String {
-        val cipher = Cipher.getInstance(TRANSFORM).apply { init(Cipher.ENCRYPT_MODE, key()) }
+        val cipher = try {
+            encryptor()
+        } catch (e: GeneralSecurityException) {
+            forgetKey()
+            encryptor()
+        }
         val sealed = cipher.iv + cipher.doFinal(plain.toByteArray())
         return Base64.encodeToString(sealed, Base64.NO_WRAP)
     }
 
+    // a lost key loses the token it sealed, which is the same as being signed out
     fun open(sealed: String): String? = try {
         val bytes = Base64.decode(sealed, Base64.NO_WRAP)
         val cipher = Cipher.getInstance(TRANSFORM).apply { init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes, 0, IV_BYTES)) }
         String(cipher.doFinal(bytes, IV_BYTES, bytes.size - IV_BYTES))
+    } catch (e: GeneralSecurityException) {
+        forgetKey()
+        null
     } catch (e: Exception) {
         null
     }
