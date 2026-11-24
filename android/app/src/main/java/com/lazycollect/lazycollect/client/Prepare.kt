@@ -50,11 +50,16 @@ class Prepare(private val context: Context) {
         val resolver = context.contentResolver
         val type = resolver.getType(uri).orEmpty()
         val out = File(dir, UUID.randomUUID().toString())
-        if (type.startsWith("image/")) {
-            val bitmap = decode(uri) ?: return copy(uri, name, out)
-            return jpeg(bitmap, withExtension(name, "jpg"), out)
+        try {
+            if (type.startsWith("image/")) {
+                val bitmap = decode(uri) ?: return copy(uri, name, out)
+                return jpeg(bitmap, withExtension(name, "jpg"), out)
+            }
+            return copy(uri, name, out)
+        } catch (e: Exception) {
+            out.delete()
+            throw e
         }
-        return copy(uri, name, out)
     }
 
     /** The picture flattened onto white and written as a JPEG; the picture is recycled. */
@@ -141,13 +146,18 @@ class Prepare(private val context: Context) {
      */
     fun scanned(pages: List<ByteArray>, label: String): List<Prepared> {
         val read = ArrayList<Prepared>()
-        for ((index, jpeg) in pages.withIndex()) {
-            val made = scannedPage(jpeg, if (pages.size == 1) "$label.jpg" else "$label ${index + 1}.jpg")
-            if (made == null) {
-                read.forEach { it.file.delete() }
-                return emptyList()
+        try {
+            for ((index, jpeg) in pages.withIndex()) {
+                val made = scannedPage(jpeg, if (pages.size == 1) "$label.jpg" else "$label ${index + 1}.jpg")
+                if (made == null) {
+                    read.forEach { it.file.delete() }
+                    return emptyList()
+                }
+                read.add(made)
             }
-            read.add(made)
+        } catch (e: Exception) {
+            read.forEach { it.file.delete() }
+            throw e
         }
         if (!shouldCombine(read.map { it.file.length() })) return read
         val pdf = combine(read, label) ?: return read
@@ -157,7 +167,13 @@ class Prepare(private val context: Context) {
 
     /** Pictures chosen together are merged into one PDF named after the item when they fit. */
     fun all(uris: List<Pair<Uri, String>>, label: String): List<Prepared> {
-        val read = uris.mapNotNull { (uri, name) -> read(uri, name) }
+        val read = ArrayList<Prepared>()
+        try {
+            for ((uri, name) in uris) read(uri, name)?.let(read::add)
+        } catch (e: Exception) {
+            read.forEach { it.file.delete() }
+            throw e
+        }
         val jpegs = read.filter { it.jpeg }
         if (!shouldCombine(jpegs.map { it.file.length() })) return read
         val pdf = combine(jpegs, label) ?: return read

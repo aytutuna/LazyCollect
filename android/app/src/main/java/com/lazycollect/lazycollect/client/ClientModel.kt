@@ -19,6 +19,8 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 
+const val UNREADABLE = "file_unreadable"
+
 sealed interface ClientState {
     data object Loading : ClientState
 
@@ -187,12 +189,21 @@ class ClientModel(
                 f.file.inputStream().use { queue.add(item, f.name, it) }
             } catch (e: ApiError) {
                 error = e.code
+            } catch (e: IOException) {
+                error = UNREADABLE
+            } catch (e: SecurityException) {
+                error = UNREADABLE
             } finally {
                 f.file.delete()
             }
         }
         acting.value = Action(error = error)
         kick()
+    }
+
+    /** Tells the person a chosen file could not be read or prepared. */
+    fun unreadable() {
+        acting.value = Action(error = UNREADABLE)
     }
 
     fun retry(id: String) {

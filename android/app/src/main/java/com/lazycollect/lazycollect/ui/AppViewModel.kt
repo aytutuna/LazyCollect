@@ -33,6 +33,7 @@ import com.lazycollect.lazycollect.shell.DevicesModel
 import com.lazycollect.lazycollect.shell.FirmModel
 import com.lazycollect.lazycollect.signin.SignInModel
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -73,11 +74,20 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
     private fun pick(itemId: String, label: String, uris: List<Uri>) {
         val resolver = getApplication<Application>().contentResolver
         viewModelScope.launch(Dispatchers.IO) {
-            val named = uris.map { uri ->
-                val shown = if (uri.authority?.endsWith(CAMERA_SUFFIX) == true) null else resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null }
-                uri to (shown ?: label)
+            try {
+                val named = uris.map { uri ->
+                    val shown = if (uri.authority?.endsWith(CAMERA_SUFFIX) == true) null else resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null }
+                    uri to (shown ?: label)
+                }
+                client.add(itemId, graph.prepare.all(named, label))
+            } catch (e: IOException) {
+                client.unreadable()
+            } catch (e: SecurityException) {
+                client.unreadable()
+            } finally {
+                // a camera shot is only a copy for this queue; the picture stays nowhere else on the phone
+                uris.filter { it.authority?.endsWith(CAMERA_SUFFIX) == true }.forEach { runCatching { resolver.delete(it, null, null) } }
             }
-            client.add(itemId, graph.prepare.all(named, label))
         }
     }
 

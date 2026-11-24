@@ -211,6 +211,15 @@ class ClientModelTest {
     }
 
     @Test
+    fun aFileThatCannotBeReadSaysSoAndLeavesNothingQueued() {
+        val missing = File(dir, "gone.jpg")
+        val model = model()
+        model.add("i1", listOf(Prepared("a.jpg", missing, true)))
+        assertEquals("file_unreadable", model.action.value.error)
+        assertTrue(queue.jobs.value.isEmpty())
+    }
+
+    @Test
     fun leavingEndsTheSessionAndForgetsTheFiles() = runBlocking {
         session.start("client-session")
         queue.add("i1", "a.jpg", "abc".byteInputStream())
