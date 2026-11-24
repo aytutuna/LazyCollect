@@ -17,7 +17,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -113,43 +112,69 @@ class PreviewModel(private val scope: CoroutineScope, private val api: Api, priv
     }
 }
 
+/**
+ * Lets one draw at a time use something that must be released afterwards. [close] never waits: closing from the main thread
+ * while a draw is running would block the draw's own resume, so the draw releases when it ends.
+ */
+internal class DrawGate(private val release: () -> Unit) {
+    private val lock = Mutex()
+    private val state = Any()
+    private var closed = false
+    private var drawing = false
+
+    suspend fun <T> draw(block: () -> T): T = lock.withLock {
+        withContext(Dispatchers.IO) {
+            synchronized(state) {
+                if (closed) throw IOException("closed")
+                drawing = true
+            }
+            try {
+                block()
+            } finally {
+                synchronized(state) {
+                    drawing = false
+                    if (closed) release()
+                }
+            }
+        }
+    }
+
+    fun close() {
+        synchronized(state) {
+            if (closed) return
+            closed = true
+            if (!drawing) release()
+        }
+    }
+}
+
 /** A PDF drawn a page at a time. The renderer holds one page open at once, so the pages are drawn one after another. */
 class PdfPages(file: File) : AutoCloseable {
     private val descriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
     private val renderer = PdfRenderer(descriptor)
-    private val lock = Mutex()
-    private var closed = false
+    private val gate = DrawGate {
+        renderer.close()
+        descriptor.close()
+    }
 
     val count: Int = renderer.pageCount
 
     /** Page [index] as wide as [width] pixels, or smaller when it would take too much memory. */
-    suspend fun render(index: Int, width: Int): Bitmap = lock.withLock {
-        if (closed) throw IOException("closed")
-        withContext(Dispatchers.IO) {
-            renderer.openPage(index).use { page ->
-                var w = width.coerceIn(1, MAX_EDGE)
-                var h = (w.toLong() * page.height / page.width).toInt().coerceAtLeast(1)
-                if (w.toLong() * h > MAX_PAGE_PIXELS) {
-                    val scale = Math.sqrt(MAX_PAGE_PIXELS.toDouble() / (w.toLong() * h))
-                    w = (w * scale).toInt().coerceAtLeast(1)
-                    h = (h * scale).toInt().coerceAtLeast(1)
-                }
-                val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                bitmap.eraseColor(android.graphics.Color.WHITE)
-                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                bitmap
+    suspend fun render(index: Int, width: Int): Bitmap = gate.draw {
+        renderer.openPage(index).use { page ->
+            var w = width.coerceIn(1, MAX_EDGE)
+            var h = (w.toLong() * page.height / page.width).toInt().coerceAtLeast(1)
+            if (w.toLong() * h > MAX_PAGE_PIXELS) {
+                val scale = Math.sqrt(MAX_PAGE_PIXELS.toDouble() / (w.toLong() * h))
+                w = (w * scale).toInt().coerceAtLeast(1)
+                h = (h * scale).toInt().coerceAtLeast(1)
             }
+            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(android.graphics.Color.WHITE)
+            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            bitmap
         }
     }
 
-    override fun close() {
-        // waits for a page that is being drawn; the renderer must not be closed under it
-        runBlocking {
-            lock.withLock {
-                closed = true
-                renderer.close()
-                descriptor.close()
-            }
-        }
-    }
+    override fun close() = gate.close()
 }
