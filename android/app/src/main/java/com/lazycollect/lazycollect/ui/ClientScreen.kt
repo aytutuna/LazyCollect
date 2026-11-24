@@ -350,7 +350,7 @@ private fun Adders(item: ClientItem, busy: Boolean, actions: ClientActions) {
         }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(enabled = !busy, onClick = { withCamera(true) }) { Text(stringResource(R.string.client_take_photo)) }
+        if (hasCamera) OutlinedButton(enabled = !busy, onClick = { withCamera(true) }) { Text(stringResource(R.string.client_take_photo)) }
         OutlinedButton(enabled = !busy, onClick = { files.launch(arrayOf("image/*", "application/pdf")) }) { Text(stringResource(R.string.client_choose_file)) }
     }
 }
@@ -444,7 +444,7 @@ private fun TypedAnswer(item: ClientItem, locked: Boolean, actions: ClientAction
     val saved = item.answerText
     var text by rememberSaveable(item.id, saved) { mutableStateOf(saved) }
     var bad by rememberSaveable(item.id) { mutableStateOf(false) }
-    // the last value handed over, so focus loss, the Done key and leaving the app never send the same text twice
+    // the last value handed over while a call is out, so focus loss, the Done key and leaving the app never send the same text twice
     var sent by remember(item.id, saved) { mutableStateOf(saved) }
     if (locked && item.approved) {
         Text(saved)
@@ -471,6 +471,8 @@ private fun TypedAnswer(item: ClientItem, locked: Boolean, actions: ClientAction
         }
         sent = value
     }
+    // once the call is over, what the server holds is what was saved; a failed save is tried again on the next blur
+    LaunchedEffect(locked) { if (!locked) sent = saved }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { if (!locked) commit() }
     val focus = LocalFocusManager.current
     OutlinedTextField(
