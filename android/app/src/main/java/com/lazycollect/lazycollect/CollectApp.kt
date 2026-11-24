@@ -7,6 +7,7 @@ import com.lazycollect.lazycollect.data.SecretBox
 import com.lazycollect.lazycollect.data.Session
 import com.lazycollect.lazycollect.data.TokenStore
 import com.lazycollect.lazycollect.net.Api
+import com.lazycollect.lazycollect.scan.CornerModels
 import com.lazycollect.lazycollect.signin.CredentialPasskeys
 import com.lazycollect.lazycollect.signin.PlayIntegrity
 import java.io.File
@@ -20,6 +21,7 @@ class AppGraph(app: Application) {
     val clientApi = Api(BuildConfig.API_BASE.toHttpUrl(), token = { clientSession.token.value }, onSignedOut = clientSession::end, onPlanEnded = {})
     val uploads = UploadQueue(File(app.noBackupFilesDir, "uploads"), clientApi)
     val prepare = Prepare(app)
+    val corners by lazy { CornerModels.fromAssets(app) }
     val attester = PlayIntegrity(app, BuildConfig.CLOUD_PROJECT)
     val passkeys = CredentialPasskeys()
 }

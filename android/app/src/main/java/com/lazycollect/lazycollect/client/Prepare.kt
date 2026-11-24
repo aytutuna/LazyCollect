@@ -52,20 +52,25 @@ class Prepare(private val context: Context) {
         val out = File(dir, UUID.randomUUID().toString())
         if (type.startsWith("image/")) {
             val bitmap = decode(uri) ?: return copy(uri, name, out)
-            return try {
-                val flat = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-                Canvas(flat).apply {
-                    drawColor(Color.WHITE)
-                    drawBitmap(bitmap, 0f, 0f, null)
-                }
-                FileOutputStream(out).use { flat.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, it) }
-                flat.recycle()
-                Prepared(withExtension(name, "jpg"), out, true)
-            } finally {
-                bitmap.recycle()
-            }
+            return jpeg(bitmap, withExtension(name, "jpg"), out)
         }
         return copy(uri, name, out)
+    }
+
+    /** The picture flattened onto white and written as a JPEG; the picture is recycled. */
+    private fun jpeg(bitmap: Bitmap, name: String, out: File): Prepared {
+        try {
+            val flat = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+            Canvas(flat).apply {
+                drawColor(Color.WHITE)
+                drawBitmap(bitmap, 0f, 0f, null)
+            }
+            FileOutputStream(out).use { flat.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, it) }
+            flat.recycle()
+            return Prepared(name, out, true)
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     private fun copy(uri: Uri, name: String, out: File): Prepared? {
@@ -120,6 +125,34 @@ class Prepare(private val context: Context) {
         } finally {
             doc.close()
         }
+    }
+
+    /** A scanned page, as a picked photo is: at most 2400 px on its long side, on white. Null when it cannot be read. */
+    private fun scannedPage(jpeg: ByteArray, name: String): Prepared? {
+        val raw = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: return null
+        val (w, h) = fitLongEdge(raw.width, raw.height)
+        val fitted = if (w == raw.width && h == raw.height) raw else Bitmap.createScaledBitmap(raw, w, h, true).also { raw.recycle() }
+        return jpeg(fitted, name, File(dir, UUID.randomUUID().toString()))
+    }
+
+    /**
+     * The pages of a scan as files: "<label> n.jpg" for each page, or "<label>.jpg" for a lone page. Several that fit in what the
+     * server takes are merged into one PDF named "<label>.pdf". Empty when a page cannot be read.
+     */
+    fun scanned(pages: List<ByteArray>, label: String): List<Prepared> {
+        val read = ArrayList<Prepared>()
+        for ((index, jpeg) in pages.withIndex()) {
+            val made = scannedPage(jpeg, if (pages.size == 1) "$label.jpg" else "$label ${index + 1}.jpg")
+            if (made == null) {
+                read.forEach { it.file.delete() }
+                return emptyList()
+            }
+            read.add(made)
+        }
+        if (!shouldCombine(read.map { it.file.length() })) return read
+        val pdf = combine(read, label) ?: return read
+        read.forEach { it.file.delete() }
+        return listOf(Prepared("$label.pdf", pdf.file, false))
     }
 
     /** Pictures chosen together are merged into one PDF named after the item when they fit. */

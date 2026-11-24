@@ -1,6 +1,10 @@
 package com.lazycollect.lazycollect.ui
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.Settings
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,15 +36,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.lazycollect.lazycollect.R
 import com.lazycollect.lazycollect.client.ClientState
 import com.lazycollect.lazycollect.client.Job
@@ -62,6 +69,7 @@ class ClientActions(
     val sendNote: (String) -> Unit = {},
     val removeFile: (String) -> Unit = {},
     val pick: (item: ClientItem, uris: List<Uri>) -> Unit = { _, _ -> },
+    val scan: (item: ClientItem) -> Unit = {},
     val camera: (item: ClientItem, done: (Uri?) -> Unit) -> Unit = { _, _ -> },
     val retryJob: (String) -> Unit = {},
     val dropJob: (String) -> Unit = {},
@@ -286,8 +294,30 @@ private fun Adders(item: ClientItem, busy: Boolean, actions: ClientActions) {
     val files = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) actions.pick(item, uris)
     }
+    val context = LocalContext.current
+    val hasCamera = remember { context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY) }
+    var denied by rememberSaveable(item.id) { mutableStateOf(false) }
+    val permission = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        denied = !granted
+        if (granted) actions.scan(item)
+    }
+    if (hasCamera) {
+        Button(
+            enabled = !busy,
+            onClick = {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) actions.scan(item)
+                else permission.launch(Manifest.permission.CAMERA)
+            },
+        ) { Text(stringResource(R.string.scan_open)) }
+    }
+    if (denied) {
+        Text(stringResource(R.string.scan_denied), color = MaterialTheme.colorScheme.error)
+        TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))) }) {
+            Text(stringResource(R.string.scan_open_settings))
+        }
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(enabled = !busy, onClick = { actions.camera(item) { uri -> if (uri != null) actions.pick(item, listOf(uri)) } }) { Text(stringResource(R.string.client_take_photo)) }
+        OutlinedButton(enabled = !busy, onClick = { actions.camera(item) { uri -> if (uri != null) actions.pick(item, listOf(uri)) } }) { Text(stringResource(R.string.client_take_photo)) }
         OutlinedButton(enabled = !busy, onClick = { files.launch(arrayOf("image/*", "application/pdf")) }) { Text(stringResource(R.string.client_choose_file)) }
     }
 }

@@ -3,6 +3,9 @@ package com.lazycollect.lazycollect.ui
 import android.app.Application
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
@@ -10,7 +13,11 @@ import androidx.lifecycle.viewModelScope
 import com.lazycollect.lazycollect.CollectApp
 import com.lazycollect.lazycollect.client.ClientModel
 import com.lazycollect.lazycollect.client.startUploads
+import com.lazycollect.lazycollect.R
 import com.lazycollect.lazycollect.net.ClientItem
+import com.lazycollect.lazycollect.scan.ScanFrameFeed
+import com.lazycollect.lazycollect.scan.ScanModel
+import com.lazycollect.lazycollect.scan.ScanPageStore
 import com.lazycollect.lazycollect.shell.AppModel
 import com.lazycollect.lazycollect.shell.DevicesModel
 import com.lazycollect.lazycollect.shell.FirmModel
@@ -19,6 +26,7 @@ import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class AppViewModel(app: Application, saved: SavedStateHandle) : AndroidViewModel(app) {
     private val graph = (app as CollectApp).graph
@@ -51,6 +59,33 @@ class AppViewModel(app: Application, saved: SavedStateHandle) : AndroidViewModel
             }
             client.add(item.id, graph.prepare.all(named, item.label))
         }
+    }
+
+    /** The item being scanned, with the scanner that holds its pages; null while no scan is open. */
+    var scanning by mutableStateOf<Pair<ClientItem, ScanModel>?>(null)
+        private set
+
+    /** Opens the scanner for a file item. Pages left from an earlier scan of the same item are still there. */
+    fun scan(item: ClientItem) {
+        val app = getApplication<Application>()
+        val store = ScanPageStore(File(app.noBackupFilesDir, "scan/" + item.id))
+        val finder = graph.corners
+        val model = ScanModel(
+            viewModelScope, store, finder, ScanFrameFeed(finder),
+            finish = { pages ->
+                val files = withContext(Dispatchers.IO) { graph.prepare.scanned(pages.map { it.jpeg }, item.label) }
+                if (files.isEmpty()) throw java.io.IOException(app.getString(R.string.scan_not_finished))
+                withContext(Dispatchers.IO) { client.add(item.id, files) }
+                closeScan()
+            },
+            disk = Dispatchers.IO.limitedParallelism(1),
+        )
+        scanning = item to model
+    }
+
+    fun closeScan() {
+        scanning?.second?.feed?.close()
+        scanning = null
     }
 
     fun cameraUri(): Uri {

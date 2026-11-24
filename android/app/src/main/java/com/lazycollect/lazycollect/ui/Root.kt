@@ -105,6 +105,7 @@ private fun ClientHost(vm: AppViewModel) {
             sendNote = client::send,
             removeFile = client::removeFile,
             pick = vm::pick,
+            scan = vm::scan,
             camera = { _, done ->
                 val uri = vm.cameraUri()
                 waiting = uri to done
@@ -116,4 +117,5 @@ private fun ClientHost(vm: AppViewModel) {
     }
     LaunchedEffect(dropped) { if (dropped > 0) vm.client.acknowledgeDropped() }
     ClientRoot(state, action, jobs, dropped, actions)
+    vm.scanning?.let { (item, scan) -> ScanScreen(item.label, scan, vm::closeScan) }
 }
