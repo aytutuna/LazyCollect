@@ -162,6 +162,20 @@ class RequestsModelTest {
     }
 
     @Test
+    fun aChangedRequestMakesTheListLoadAgainWhenItIsShownNext() = runBlocking {
+        server.on("GET /api/requests", page(listOf(row("r1"))))
+        val model = RequestsModel(scope, api)
+        model.loadOnce()
+        model.settled { it.rows != null }
+        model.loadOnce()
+        assertEquals(1, server.calls("GET /api/requests").size)
+        model.markOutdated()
+        model.loadOnce()
+        model.settled { it.rows != null && !it.outdated }
+        assertEquals(2, server.calls("GET /api/requests").size)
+    }
+
+    @Test
     fun theCountOfATabIsTheServers() {
         val counts = com.lazycollect.lazycollect.net.RequestCounts(all = 9, toReview = 1, waiting = 2, expiring = 3, overdue = 4, dueSoon = 5)
         assertEquals(listOf(1, 2, 3, 4, 5, 9), VIEWS.map { counts.of(it) })

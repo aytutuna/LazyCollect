@@ -45,6 +45,8 @@ data class RequestsState(
     val loadingMore: Boolean = false,
     val error: String? = null,
     val moreError: String? = null,
+    /** A request was changed after the list was read. */
+    val outdated: Boolean = false,
 ) {
     val sort get() = chosenSort ?: sortFor(view)
     val filtered get() = query.isNotEmpty() || status != null
@@ -66,8 +68,10 @@ class RequestsModel(private val scope: CoroutineScope, private val api: Api) {
     /** For a screen that is composed again with the list already there. */
     fun loadOnce() {
         val now = flow.value
-        if (now.rows == null && !now.loading) refresh()
+        if ((now.rows == null || now.outdated) && !now.loading) refresh()
     }
+
+    fun markOutdated() = flow.update { it.copy(outdated = true) }
 
     fun refresh() = fetch(0)
 
@@ -110,7 +114,7 @@ class RequestsModel(private val scope: CoroutineScope, private val api: Api) {
     private fun fetch(offset: Int) {
         job?.cancel()
         val first = offset == 0
-        flow.update { if (first) it.copy(loading = true, loadingMore = false, error = null, moreError = null) else it.copy(loadingMore = true, moreError = null) }
+        flow.update { if (first) it.copy(loading = true, loadingMore = false, error = null, moreError = null, outdated = false) else it.copy(loadingMore = true, moreError = null) }
         val asked = flow.value
         job = scope.launch {
             try {
