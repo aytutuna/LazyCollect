@@ -268,6 +268,7 @@ class ClientModelTest {
         withTimeout(10_000) { session.token.first { it == null } }
         withTimeout(10_000) { while (queue.jobs.value.isNotEmpty()) kotlinx.coroutines.delay(20) }
         assertNull(store.load())
+        withTimeout(10_000) { while (server.calls("POST /api/app/client/logout").isEmpty()) kotlinx.coroutines.delay(20) }
         assertEquals(1, server.calls("POST /api/app/client/logout").size)
         assertEquals("Bearer client-session", server.calls("POST /api/app/client/logout").single().headers["Authorization"])
     }
@@ -320,6 +321,8 @@ class ClientModelTest {
         server.on("GET /api/c/me", view(fileItem("i1")), view(fileItem("i1", "submitted")))
         val model = model()
         ready(model)
+        // the model's own watch of the queue has to be running before a file comes and goes
+        kotlinx.coroutines.delay(200)
         queue.add("i1", "a.jpg", "abc".byteInputStream())
         queue.remove(queue.jobs.value.single().id)
         val state = withTimeout(10_000) { model.state.first { it is ClientState.Ready && it.view.items.single().status == "submitted" } }
