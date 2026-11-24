@@ -80,8 +80,11 @@ function find(dict: Record<string, string>, rules: Intl.PluralRules, key: string
   return dict[`${key}_${rules.select(n)}`] ?? dict[`${key}_other`] ?? dict[key];
 }
 
-export function t(key: string, vars: Record<string, string | number> = {}): string {
+// a text from one dictionary, else the English one, else the key itself
+export function translate(dict: Record<string, string>, rules: Intl.PluralRules, key: string, vars: Record<string, string | number> = {}): string {
   const n = typeof vars.n === "number" ? vars.n : undefined;
-  const s = find(dicts[current], plural, key, n) ?? find(en, enPlural, key, n) ?? key;
+  const s = find(dict, rules, key, n) ?? find(en, enPlural, key, n) ?? key;
   return s.replace(/\{(\w+)\}/g, (m, name) => (name in vars ? String(vars[name]) : m));
 }
+
+export const t = (key: string, vars: Record<string, string | number> = {}) => translate(dicts[current], plural, key, vars);

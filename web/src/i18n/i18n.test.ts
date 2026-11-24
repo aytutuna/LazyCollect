@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { setZone, fmtDate, fmtSize, relative } from "../format";
 import en from "./en.json";
 import fr from "./fr-CA.json";
-import { locale, pickLocale, setLocale, t } from "./index";
+import { locale, pickLocale, setLocale, t, translate } from "./index";
 
 const vars = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
 
@@ -64,9 +64,13 @@ describe("t", () => {
     expect(t("clients.requests", { n: 0 })).toBe("0 requests");
   });
 
-  it("falls back to English for a key French lacks, then to the key", () => {
-    setLocale("fr-CA", false);
-    expect(t("no.such.key")).toBe("no.such.key");
+  it("falls back to English for a key a dictionary lacks, then to the key", () => {
+    const frOnly = { "nav.requests": "Demandes" };
+    const rules = new Intl.PluralRules("fr");
+    expect(translate(frOnly, rules, "nav.requests")).toBe("Demandes");
+    expect(translate(frOnly, rules, "nav.clients")).toBe("Clients");
+    expect(translate(frOnly, rules, "clients.requests", { n: 3 })).toBe("3 requests");
+    expect(translate(frOnly, rules, "no.such.key")).toBe("no.such.key");
   });
 
   it("fills placeholders", () => {
