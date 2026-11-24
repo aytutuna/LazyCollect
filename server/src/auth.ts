@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { createSession, endSession, holdLogin, type App, type AppEnv } from "./session";
 import { sendLoginEmail } from "./email";
-import { langOf } from "./lang";
+import { langOf, pageLang } from "./lang";
 import { untouchedRegion, untouchedSql, usable } from "./firm";
 import { htmlHeaders } from "./headers";
 import { isRegion, regionOf, type Region } from "./regions";
@@ -82,7 +82,7 @@ export async function sendCode(c: Context<AppEnv>, email: string, app: App | nul
   if (inserted.meta.changes === 0) return c.json({ ok: true });
   try {
     const lang = langOf(c);
-    await sendLoginEmail(c.env, email, code, `${c.env.APP_URL}/api/auth/link?t=${linkToken}`, lang);
+    await sendLoginEmail(c.env, email, code, `${c.env.APP_URL}/api/auth/link?lang=${lang}&t=${linkToken}`, lang);
   } catch (e) {
     console.error(e instanceof Error ? e.message : "login email failed");
     await db.prepare("DELETE FROM login_codes WHERE id = ?").bind(id).run();
@@ -280,7 +280,7 @@ auth.get("/auth/link", async (c) => {
         .bind(await sha256(t), Date.now())
         .first<{ email: string }>()
     : null;
-  const lang = langOf(c);
+  const lang = pageLang(c.req.query("lang"), c.req.header("Accept-Language"));
   const w = LINK_PAGE[lang];
   const page = (body: string) =>
     c.html(`<!doctype html><html lang="${lang}"><meta name="viewport" content="width=device-width"><title>Lazy Collect</title><link rel="stylesheet" href="/link.css"><body>${body}</body>`, row ? 200 : 400, {
