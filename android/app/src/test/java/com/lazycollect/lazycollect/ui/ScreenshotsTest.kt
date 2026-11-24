@@ -47,8 +47,20 @@ class ScreenshotsTest {
         }
     }
 
-    private fun me(role: String = "owner", name: String? = "Maple Tax Services", status: String = "active", usable: Boolean = true, closedAt: Long? = null, pastDueSince: Long? = null) =
-        Me(User("u1", "aytu@example.com", null, role), FirmState("f1", name, "America/Toronto", status, closedAt = closedAt, pastDueSince = pastDueSince, usable = usable))
+    private fun me(
+        role: String = "owner",
+        name: String? = "Maple Tax Services",
+        status: String = "active",
+        usable: Boolean = true,
+        closedAt: Long? = null,
+        pastDueSince: Long? = null,
+        trialEndsAt: Long? = null,
+        periodEnd: Long? = null,
+        cancel: Boolean = false,
+    ) = Me(
+        User("u1", "aytu@example.com", null, role),
+        FirmState("f1", name, "America/Toronto", status, trialEndsAt, periodEnd, pastDueSince, cancel, closedAt = closedAt, usable = usable),
+    )
 
     private val devices = DevicesState(
         listOf(
@@ -106,10 +118,25 @@ class ScreenshotsTest {
     }
 
     @Test
-    fun settings() = capture("settings") { ShellScreen(me(), false, devices, ShellActions(), start = "settings") }
+    fun settings() = capture("settings") { ShellScreen(me(), false, devices, ShellActions(), start = "settings", now = noon) }
+
+    @Test
+    fun settingsTrial() = capture("settings-trial") {
+        ShellScreen(me(status = "trialing", trialEndsAt = noon + 9 * day), false, devices, ShellActions(), start = "settings", now = noon)
+    }
+
+    @Test
+    fun settingsSubscribed() = capture("settings-subscribed") {
+        ShellScreen(me(periodEnd = noon + 20 * day), false, devices, ShellActions(), start = "settings", now = noon)
+    }
+
+    @Test
+    fun settingsPastDue() = capture("settings-past-due") {
+        ShellScreen(me(status = "past_due", pastDueSince = noon - 2 * day), false, devices, ShellActions(), start = "settings", now = noon)
+    }
 
     @Test
     fun settingsMemberWithEndedPlan() = capture("settings-member-ended") {
-        ShellScreen(me("member", status = "canceled", usable = false), false, devices, ShellActions(), start = "settings")
+        ShellScreen(me("member", status = "canceled", usable = false), false, devices, ShellActions(), start = "settings", now = noon)
     }
 }

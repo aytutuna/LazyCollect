@@ -45,17 +45,19 @@ private enum class Tab(val route: String, @StringRes val label: Int, @DrawableRe
     Settings("settings", R.string.nav_settings, R.drawable.ic_tab_settings),
 }
 
+const val GRACE_MS = 7 * 86_400_000L
+
 /** The text of the plan banner and the date it names, or null when the plan is fine. */
 fun planBanner(me: Me, blocked: Boolean): Pair<Int, Long?>? {
     val ended = blocked || !me.firm.usable
     val owner = me.user.owner
     if (me.firm.planStatus != "past_due") return if (ended) (if (owner) R.string.plan_ended else R.string.plan_ended_member) to null else null
     if (ended) return (if (owner) R.string.plan_past_due_ended else R.string.plan_past_due_ended_member) to null
-    return (if (owner) R.string.plan_past_due else R.string.plan_past_due_member) to ((me.firm.pastDueSince ?: 0) + 7 * 86_400_000L)
+    return (if (owner) R.string.plan_past_due else R.string.plan_past_due_member) to ((me.firm.pastDueSince ?: 0) + GRACE_MS)
 }
 
 @Composable
-fun ShellScreen(me: Me, planEnded: Boolean, devices: DevicesState, actions: ShellActions, start: String = Tab.Requests.route) {
+fun ShellScreen(me: Me, planEnded: Boolean, devices: DevicesState, actions: ShellActions, start: String = Tab.Requests.route, now: Long = System.currentTimeMillis()) {
     val nav = rememberNavController()
     val current by nav.currentBackStackEntryAsState()
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
@@ -92,7 +94,7 @@ fun ShellScreen(me: Me, planEnded: Boolean, devices: DevicesState, actions: Shel
                     composable(Tab.Requests.route) { Placeholder(me.firm.name, R.string.nav_requests) }
                     composable(Tab.Clients.route) { Placeholder(me.firm.name, R.string.nav_clients) }
                     composable(Tab.Templates.route) { Placeholder(me.firm.name, R.string.nav_templates) }
-                    composable(Tab.Settings.route) { SettingsScreen(me, devices, actions) }
+                    composable(Tab.Settings.route) { SettingsScreen(me, devices, actions, now) }
                 }
             }
         }
