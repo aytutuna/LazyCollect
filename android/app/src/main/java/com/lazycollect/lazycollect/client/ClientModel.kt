@@ -91,8 +91,8 @@ class ClientModel(
             online.collect {
                 // coming back online sends what waited and refreshes a page that may have gone stale
                 if (it && !was && session.token.value != null) {
-                    load()
                     queue.wake()
+                    load()
                     val fresh = (flow.value as? ClientState.Ready)?.stale == false
                     if (!fresh && queue.jobs.value.any { it.failed == null }) kick()
                 }

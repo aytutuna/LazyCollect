@@ -51,6 +51,12 @@ private val online = Constraints.Builder().setRequiredNetworkType(NetworkType.CO
  * cancels an upload and there is never more than one waiting.
  */
 fun startUploads(context: Context) {
+    enqueuePass(context)
+    // A kick that lands after the pass's last look but before WorkManager marks it done is dropped by KEEP; this one comes back after.
+    scheduleLater(context, 2500)
+}
+
+private fun enqueuePass(context: Context) {
     val work = OneTimeWorkRequestBuilder<UploadWorker>()
         .setConstraints(online)
         .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
@@ -70,7 +76,7 @@ private fun scheduleLater(context: Context, delayMs: Long) {
 class LaterWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         (applicationContext as CollectApp).graph.uploads.touch()
-        startUploads(applicationContext)
+        enqueuePass(applicationContext)
         return Result.success()
     }
 }
