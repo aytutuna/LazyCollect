@@ -45,6 +45,21 @@ describe("push registration", () => {
     expect(await stored("client_sessions", token)).toBeNull();
   });
 
+  it("lets a client session whose link is gone clear its token, without sliding it", async () => {
+    const token = await clientApp();
+    await register(token, "fcm-c");
+    await env.DB_NA.prepare("UPDATE links SET revoked_at = ?").bind(Date.now()).run();
+    const before = await env.CONTROL.prepare("SELECT last_seen_at, expires_at FROM client_sessions").first<any>();
+    await env.CONTROL.prepare("UPDATE client_sessions SET last_seen_at = last_seen_at - 100000").run();
+    const seen = (await env.CONTROL.prepare("SELECT last_seen_at, expires_at FROM client_sessions").first<any>());
+    expect((await api("/api/app/push", { method: "DELETE", headers: bearer(token) })).status).toBe(200);
+    expect(await stored("client_sessions", token)).toBeNull();
+    expect(await env.CONTROL.prepare("SELECT last_seen_at, expires_at FROM client_sessions").first()).toEqual(seen);
+    expect(seen.expires_at).toBe(before.expires_at);
+    await env.CONTROL.prepare("UPDATE client_sessions SET expires_at = ?").bind(Date.now() - 1).run();
+    expect((await api("/api/app/push", { method: "DELETE", headers: bearer(token) })).status).toBe(401);
+  });
+
   it("goes with the session", async () => {
     const web = await login();
     const token = await staffApp();

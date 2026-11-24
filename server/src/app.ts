@@ -71,8 +71,9 @@ async function setPush(c: Context<AppEnv>, push: string | null) {
   if (!token) return c.json({ error: "unauthorized" }, 401);
   const hash = await sha256(token);
   const now = Date.now();
-  // a client session whose link is gone has nothing to be notified about
-  const live = await sessionLink(c);
+  // A client session whose link is gone has nothing to be notified about, but can still drop a token it holds.
+  // Clearing doesn't count as the app being used, so it doesn't slide the session either.
+  const live = push === null || (await sessionLink(c)) !== null;
   const [staff, client] = await c.env.CONTROL.batch([
     c.env.CONTROL.prepare("UPDATE sessions SET push_token = ? WHERE token_hash = ? AND app IS NOT NULL AND expires_at > ?").bind(push, hash, now),
     c.env.CONTROL.prepare("UPDATE client_sessions SET push_token = ? WHERE token_hash = ? AND expires_at > ? AND ?").bind(push, hash, now, live ? 1 : 0),
