@@ -16,12 +16,16 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -29,6 +33,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.lazycollect.lazycollect.R
 import com.lazycollect.lazycollect.net.Me
+import com.lazycollect.lazycollect.requests.PreviewModel
+import com.lazycollect.lazycollect.requests.RequestModel
+import com.lazycollect.lazycollect.requests.RequestsModel
 import com.lazycollect.lazycollect.shell.DevicesState
 
 class ShellActions(
@@ -39,6 +46,10 @@ class ShellActions(
 )
 
 private const val LICENCES = "settings/licences"
+private const val REQUEST = "requests/{id}"
+
+/** The models behind the Requests tab; [detail] makes the model of one open request. */
+class RequestsHost(val list: RequestsModel, val detail: (String) -> RequestModel, val preview: PreviewModel)
 
 private enum class Tab(val route: String, @StringRes val label: Int, @DrawableRes val icon: Int) {
     Requests("requests", R.string.nav_requests, R.drawable.ic_tab_requests),
@@ -59,7 +70,7 @@ fun planBanner(me: Me, blocked: Boolean): Pair<Int, Long?>? {
 }
 
 @Composable
-fun ShellScreen(me: Me, planEnded: Boolean, devices: DevicesState, actions: ShellActions, start: String = Tab.Requests.route, now: Long = System.currentTimeMillis()) {
+fun ShellScreen(me: Me, planEnded: Boolean, devices: DevicesState, actions: ShellActions, start: String = Tab.Requests.route, now: Long = System.currentTimeMillis(), requests: RequestsHost? = null) {
     val nav = rememberNavController()
     val current by nav.currentBackStackEntryAsState()
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
@@ -98,7 +109,13 @@ fun ShellScreen(me: Me, planEnded: Boolean, devices: DevicesState, actions: Shel
                     )
                 }
                 NavHost(nav, startDestination = start, modifier = Modifier.weight(1f)) {
-                    composable(Tab.Requests.route) { Placeholder(me.firm.name, R.string.nav_requests) }
+                    composable(Tab.Requests.route) {
+                        if (requests == null) Placeholder(me.firm.name, R.string.nav_requests) else RequestsRoute(requests.list, me, now) { nav.navigate("requests/$it") }
+                    }
+                    composable(REQUEST) { entry ->
+                        val id = entry.arguments?.getString("id")
+                        if (requests != null && id != null) RequestRoute(id, requests, me, planEnded, now) { nav.popBackStack() }
+                    }
                     composable(Tab.Clients.route) { Placeholder(me.firm.name, R.string.nav_clients) }
                     composable(Tab.Templates.route) { Placeholder(me.firm.name, R.string.nav_templates) }
                     composable(Tab.Settings.route) { SettingsScreen(me, devices, actions, now) { nav.navigate(LICENCES) } }
@@ -118,4 +135,45 @@ private fun Placeholder(firm: String?, @StringRes title: Int) {
             Text(stringResource(R.string.coming_soon), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+@Composable
+private fun RequestsRoute(model: RequestsModel, me: Me, now: Long, open: (String) -> Unit) {
+    val state by model.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { model.loadOnce() }
+    val actions = remember(model) {
+        RequestsActions(model::refresh, model::show, model::filter, model::sort, model::search, model::loadMore, open)
+    }
+    RequestsScreen(state, me.firm.tz, actions, now)
+}
+
+@Composable
+private fun RequestRoute(id: String, host: RequestsHost, me: Me, planEnded: Boolean, now: Long, back: () -> Unit) {
+    val model = remember(id) { host.detail(id) }
+    DisposableEffect(model) {
+        model.load()
+        onDispose {
+            model.close()
+            host.preview.close()
+        }
+    }
+    val state by model.state.collectAsStateWithLifecycle()
+    val preview by host.preview.state.collectAsStateWithLifecycle()
+    val actions = remember(model) {
+        RequestActions(
+            reload = model::load,
+            approve = model::approve,
+            reject = model::reject,
+            waive = model::waive,
+            askAgain = model::askAgain,
+            remind = model::remind,
+            showLink = model::showLink,
+            makeLink = model::makeLink,
+            reply = model::reply,
+            preview = host.preview::show,
+            closePreview = host.preview::close,
+            back = back,
+        )
+    }
+    RequestScreen(state, preview, me, planEnded || !me.firm.usable, actions, now)
 }

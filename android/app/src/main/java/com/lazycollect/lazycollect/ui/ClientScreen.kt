@@ -159,7 +159,7 @@ fun groupByPerson(items: List<ClientItem>, people: List<Person>): List<Group> {
 class Group(val person: Person?, val items: List<ClientItem>)
 
 @StringRes
-private fun roleName(role: String) = when (role) {
+fun roleName(role: String) = when (role) {
     "principal" -> R.string.role_principal
     "spouse" -> R.string.role_spouse
     "child" -> R.string.role_child

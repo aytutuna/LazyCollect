@@ -22,6 +22,9 @@ import com.lazycollect.lazycollect.client.renderExample
 import com.lazycollect.lazycollect.client.startUploads
 import com.lazycollect.lazycollect.R
 import com.lazycollect.lazycollect.net.ClientItem
+import com.lazycollect.lazycollect.requests.PreviewModel
+import com.lazycollect.lazycollect.requests.RequestModel
+import com.lazycollect.lazycollect.requests.RequestsModel
 import com.lazycollect.lazycollect.scan.ScanFrameFeed
 import com.lazycollect.lazycollect.scan.ScanModel
 import com.lazycollect.lazycollect.scan.ScanPageStore
@@ -43,17 +46,23 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
     val signIn = SignInModel(viewModelScope, graph.api, graph.attester, graph.passkeys, saved, graph.session::start)
     val firm = FirmModel(viewModelScope, graph.api, account::reload)
     val devices = DevicesModel(viewModelScope, graph.api)
+    val requests = RequestsModel(viewModelScope, graph.api)
+    private val review = File(app.cacheDir, "review")
+    val requestsHost = RequestsHost(requests, { id -> RequestModel(viewModelScope, graph.api, id, requests::markOutdated) }, PreviewModel(viewModelScope, graph.api, review))
     val clientSession = graph.clientSession
     val client = ClientModel(viewModelScope, graph.clientApi, graph.clientSession, graph.attester, graph.uploads, graph.online.state) { startUploads(app) }
 
     init {
         val keep = saved.get<String>(CAMERA_URI)?.let { Uri.parse(it).lastPathSegment }
         viewModelScope.launch(Dispatchers.IO) { clearCameraFiles(File(app.cacheDir, "camera"), keep) }
+        viewModelScope.launch(Dispatchers.IO) { review.deleteRecursively() }
         // whatever was loaded belongs to the account that was signed in
         viewModelScope.launch {
             session.token.collect {
                 firm.reset()
                 devices.reset()
+                requests.reset()
+                requestsHost.preview.close()
             }
         }
     }

@@ -75,7 +75,7 @@ fun Root(vm: AppViewModel) {
             } else {
                 val devices by vm.devices.state.collectAsStateWithLifecycle()
                 val blocked by vm.session.planEnded.collectAsStateWithLifecycle()
-                ShellScreen(account, blocked, devices, ShellActions(vm.devices::load, vm.devices::end, vm.devices::endOthers, vm.account::signOut))
+                ShellScreen(account, blocked, devices, ShellActions(vm.devices::load, vm.devices::end, vm.devices::endOthers, vm.account::signOut), requests = vm.requestsHost)
             }
         }
     }
