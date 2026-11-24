@@ -21,6 +21,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -132,6 +133,15 @@ class AppModelTest {
         withTimeout(10_000) { firm.state.first { it.firm != null } }
         firm.reset()
         assertNull(firm.state.value.firm)
+    }
+
+    @Test
+    fun aPlanThatEndedIsForgottenOnceTheServerSaysItWorks() = runBlocking {
+        server.on("GET /api/me", me(), me())
+        session.planHasEnded()
+        val model = AppModel(scope, api, session)
+        ready(model)
+        assertFalse(session.planEnded.value)
     }
 
     @Test

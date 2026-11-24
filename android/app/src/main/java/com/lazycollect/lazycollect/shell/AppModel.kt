@@ -39,7 +39,9 @@ class AppModel(private val scope: CoroutineScope, private val api: Api, private 
     private suspend fun load() {
         flow.value = MeState.Loading
         flow.value = try {
-            MeState.Ready(api.me())
+            val me = api.me()
+            if (me.firm.usable) session.planIsFine()
+            MeState.Ready(me)
         } catch (e: ApiError) {
             MeState.Failed(e.code)
         }

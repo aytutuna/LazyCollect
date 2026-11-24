@@ -25,4 +25,8 @@ class Session(private val store: TokenStore) {
     fun planHasEnded() {
         ended.value = true
     }
+
+    fun planIsFine() {
+        ended.value = false
+    }
 }
