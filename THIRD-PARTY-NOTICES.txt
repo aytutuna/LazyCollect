@@ -18,13 +18,14 @@ Lazy Collect ships the libraries below. Each is used under the licence shown.
   platform 1.3.6  MIT  (bundled with onnxruntime-web)
   guid-typescript 1.0.9  ISC  (bundled with onnxruntime-web)
   protobufjs 7.6.6  BSD-3-Clause  (bundled with onnxruntime-web)
-  DocAligner FastViT-T8 page corner model 1.1.1  Apache-2.0  (web app, fetched at build time, loaded only when the scanner opens)
+  DocAligner FastViT-T8 page corner model 1.1.1  Apache-2.0  (web app and Android app, fetched at build time, loaded only when the scanner opens)
 
   Android app (Kotlin):
-  AndroidX: Jetpack Compose with Material 3, Activity, Lifecycle, Navigation, Core, Credentials and the AndroidX libraries they use (versions in android/gradle/libs.versions.toml)  Apache-2.0
+  AndroidX: Jetpack Compose with Material 3, Activity, Lifecycle, Navigation, Core, Credentials, CameraX 1.5.1 and the AndroidX libraries they use (versions in android/gradle/libs.versions.toml)  Apache-2.0
   OkHttp 5.5.0 and Okio 3.18.1  Apache-2.0
   Kotlin standard library 2.4.21, kotlinx.coroutines 1.11.0, kotlinx.serialization 1.12.0, JetBrains annotations 23.0.0  Apache-2.0
   JSpecify 1.0.0 and Guava ListenableFuture 1.0  Apache-2.0
+  ONNX Runtime Android 1.24.2  MIT  (same licence text as onnxruntime-web below)
   Google Play services (Auth, Auth Base, Auth API Phone, Auth Blockstore, FIDO, Identity Credentials, Base, Basement, Tasks) and Google ID 1.1.0  Android Software Development Kit License
   Play Integrity 1.6.0  Play Integrity API Terms of Service
   Play core-common 2.0.4  Play Core Software Development Kit Terms of Service
@@ -306,8 +307,8 @@ SOFTWARE.
 DocAligner FastViT-T8 page corner model 1.1.1 (Apache-2.0)
 ------------------------------------------------------------------------
 
-Copyright DocsaidLab (https://github.com/DocsaidLab/DocAligner). Its convolution weights are stored as int8 (web/scripts/shrink_model.py); the network is otherwise unchanged.
-The full licence text is served with the model at /models/DocAligner-LICENSE.txt.
+Copyright DocsaidLab (https://github.com/DocsaidLab/DocAligner). Its convolution weights are stored as int8 in the web app (web/scripts/shrink_model.py); the network is otherwise unchanged. The Android app uses the original float model.
+The full licence text is served with the model at /models/DocAligner-LICENSE.txt and is the Apache License 2.0 reproduced at the end of this file.
 
 ------------------------------------------------------------------------
 platform 1.3.6 (MIT)
@@ -386,7 +387,7 @@ flatbuffers 25.9.23 and long 5.3.2 (Apache-2.0)
 Both are licensed under the Apache License 2.0, the text of which is in /models/DocAligner-LICENSE.txt.
 
 ------------------------------------------------------------------------
-Android app: AndroidX, Jetpack Compose and Material 3 (Apache-2.0)
+Android app: AndroidX, Jetpack Compose, Material 3 and CameraX (Apache-2.0)
 ------------------------------------------------------------------------
 
 Copyright (C) The Android Open Source Project, licensed under the Apache License 2.0 reproduced at the end of this file.

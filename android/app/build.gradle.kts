@@ -11,6 +11,20 @@ val debugApiBase = (findProperty("collect.apiBase") as String?) ?: "http://10.0.
 // TODO: Play Integrity needs the Cloud project number of lazy-collect, which is not linked in Play Console yet.
 val cloudProject = (findProperty("collect.cloudProject") as String?) ?: "0"
 
+abstract class CornerModelAssets : DefaultTask() {
+    @get:InputFiles
+    abstract val model: ConfigurableFileCollection
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val file = model.singleFile
+        if (file.exists()) file.copyTo(outputDir.get().asFile.resolve(file.name), overwrite = true)
+    }
+}
+
 // The notices file lives at the repo root, shared with the server and web app, and goes into the APK as an asset.
 val notices = tasks.register<Copy>("copyNotices") {
     from(rootDir.resolve("../THIRD-PARTY-NOTICES.txt"))
@@ -31,6 +45,9 @@ android {
         versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("long", "CLOUD_PROJECT", "${cloudProject}L")
+        ndk {
+            abiFilters += setOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {
@@ -86,6 +103,28 @@ android {
     }
 }
 
+// The corner model is fetched, not checked in (scripts/fetch_docaligner.sh). Unit tests run without it; an APK or bundle without it would
+// ship a scanner that finds no page, so packaging stops.
+androidComponents {
+    onVariants { variant ->
+        val task = tasks.register<CornerModelAssets>("add${variant.name.replaceFirstChar { it.uppercase() }}CornerModel") {
+            model.from(rootProject.file("models/fastvit_t8_h_e_bifpn_256_fp32.onnx"))
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(task, CornerModelAssets::outputDir)
+    }
+}
+
+val checkCornerModel = tasks.register("checkCornerModel") {
+    val model = rootProject.file("models/fastvit_t8_h_e_bifpn_256_fp32.onnx")
+    doLast {
+        if (!model.exists()) throw GradleException("The corner model is missing: run android/scripts/fetch_docaligner.sh")
+    }
+}
+
+tasks.configureEach {
+    if (name in setOf("packageDebug", "packageRelease", "bundleDebug", "bundleRelease")) dependsOn(checkCornerModel)
+}
+
 dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
@@ -105,6 +144,11 @@ dependencies {
     implementation(libs.play.integrity)
     implementation(libs.work.runtime)
     implementation(libs.exifinterface)
+    implementation(libs.camerax.core)
+    implementation(libs.camerax.camera2)
+    implementation(libs.camerax.lifecycle)
+    implementation(libs.camerax.view)
+    implementation(libs.onnxruntime.android)
 
     implementation(libs.okhttp)
     implementation(libs.okhttp.coroutines)

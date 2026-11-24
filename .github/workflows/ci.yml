@@ -69,6 +69,8 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0"
+      - name: Corner model
+        run: bash scripts/fetch_docaligner.sh
       - name: Build
         run: ./gradlew assembleDebug --console=plain
       # the screen tests render each screen and write PNGs only when run through recordRoborazziDebug
