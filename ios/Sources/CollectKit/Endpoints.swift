@@ -128,6 +128,19 @@ extension APIClient {
         return try await post("/requests", body)
     }
 
+    /// Tells the Worker which App Store transaction paid for the plan; it asks Apple what the plan is worth.
+    public func billApple(transaction: String) async throws {
+        let _: JSON = try await post("/billing/apple", ["transaction_id": .string(transaction)])
+    }
+
+    /// The account token a purchase carries: the firm's id as a UUID, which is how the Worker knows who it was bought for.
+    public static func accountToken(firmId: String) -> String? {
+        guard firmId.count == 32, firmId.allSatisfy(\.isHexDigit) else { return nil }
+        let s = Array(firmId.lowercased())
+        let groups = [0..<8, 8..<12, 12..<16, 16..<20, 20..<32]
+        return groups.map { String(s[$0]) }.joined(separator: "-")
+    }
+
     public func fileURL(file: FileRef) async throws -> URL {
         try await download(path: "/files/\(file.id)", name: file.name)
     }

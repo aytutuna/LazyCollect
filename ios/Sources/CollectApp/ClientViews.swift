@@ -178,6 +178,7 @@ struct ItemView: View {
 
     @State private var photos: [PhotosPickerItem] = []
     @State private var camera = false
+    @State private var scanning = false
     @State private var picking = false
     @State private var example: UIImage?
     @State private var showExample = false
@@ -284,6 +285,7 @@ struct ItemView: View {
             Section { Text("This one was approved. It cannot be changed.").foregroundStyle(.secondary) }
         } else {
             Section {
+                Button { scanning = true } label: { Label("Scan a document", systemImage: "doc.viewfinder") }
                 if UIImagePickerController.isSourceTypeAvailable(.camera) {
                     Button { camera = true } label: { Label("Take a photo", systemImage: "camera") }
                 }
@@ -309,6 +311,9 @@ struct ItemView: View {
                     if let data = image.jpegData(compressionQuality: 1) { take(photos: [data], item: item) }
                 }
                 .ignoresSafeArea()
+            }
+            .fullScreenCover(isPresented: $scanning) {
+                ScannerView(label: item.label) { model.upload($0, to: item) }
             }
             .fileImporter(isPresented: $picking, allowedContentTypes: [.pdf, .image]) { result in
                 guard case .success(let url) = result else { return }

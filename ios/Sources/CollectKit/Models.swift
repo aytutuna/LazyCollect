@@ -104,6 +104,7 @@ public struct Me: Decodable, Equatable, Sendable {
         public let pastDueSince: Int?
         public let cancelAtPeriodEnd: Bool
         public let subscribed: Bool
+        public let planSource: String?
         public let closedAt: Int?
         public let held: Bool
         public let usable: Bool

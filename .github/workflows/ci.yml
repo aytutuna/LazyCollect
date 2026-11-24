@@ -64,8 +64,17 @@ jobs:
       - uses: actions/checkout@v7
       - name: Select Xcode 26.6
         run: sudo xcode-select -s /Applications/Xcode_26.6.app
+      - name: Fetch the corner model
+        run: bash scripts/fetch_docaligner.sh
       - name: Test CollectKit
         run: swift test --filter CollectKitTests
+      # The scanner's page pipeline, and the corner model on the page photos in Tests/CollectScanModelTests
+      - name: Test CollectScan
+        run: swift test --filter CollectScanTests
+      - name: Test CollectScanModel
+        run: swift test --filter CollectScanModelTests
+        env:
+          LAZYCOLLECT_REQUIRE_CORNER_MODEL: '1'
   ios-app:
     # The app target, built, with its unit tests run on the Simulator
     needs: ios-kit
@@ -113,6 +122,8 @@ jobs:
           fi
           unzip -q "$zip" -d "$RUNNER_TEMP/xcodegen-$XCODEGEN_VERSION"
           echo "$RUNNER_TEMP/xcodegen-$XCODEGEN_VERSION/xcodegen/bin" >> "$GITHUB_PATH"
+      - name: Fetch the corner model
+        run: bash ios/scripts/fetch_docaligner.sh
       - name: Write the project
         run: xcodegen generate --spec ios/project.yml
       - name: Build and test

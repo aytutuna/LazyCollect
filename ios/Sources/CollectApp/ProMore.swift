@@ -1,5 +1,6 @@
 #if os(iOS)
 import CollectKit
+import StoreKit
 import SwiftUI
 
 struct ClientsView: View {
@@ -242,7 +243,9 @@ struct NewRequestView: View {
 
 struct SettingsView: View {
     @EnvironmentObject var session: ProSession
+    @StateObject private var plan = PlanStore()
     @State private var confirm = false
+    @State private var managing = false
 
     var body: some View {
         NavigationStack {
@@ -256,6 +259,8 @@ struct SettingsView: View {
                     Section("Plan") {
                         Text(planText(me.firm))
                         if !me.firm.usable { Text("Reminders and new requests are off until the plan is active.").foregroundStyle(.orange) }
+                        planActions(me)
+                        if let message = plan.message { Text(message).foregroundStyle(.red) }
                     }
                 }
                 Section {
@@ -264,9 +269,40 @@ struct SettingsView: View {
                 if let problem = session.problem { Section { Text(problem).foregroundStyle(.red) } }
             }
             .navigationTitle("Settings")
+            .task { await plan.load() }
+            .manageSubscriptionsSheet(isPresented: $managing)
             .confirmationDialog("Sign out of Lazy Collect?", isPresented: $confirm, titleVisibility: .visible) {
                 Button("Sign out", role: .destructive) { Task { await session.signOut() } }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func planActions(_ me: Me) -> some View {
+        if me.firm.planSource == "apple" {
+            Button("Manage subscription") { managing = true }
+        } else if me.firm.subscribed {
+            Text("This plan is managed on the website.").font(.footnote).foregroundStyle(.secondary)
+        } else if me.user.role != "owner" {
+            Text("Only the owner can start the plan.").font(.footnote).foregroundStyle(.secondary)
+        } else {
+            if let price = plan.product?.displayPrice {
+                Button("Subscribe, \(price) a month") { subscribe(me) }.disabled(plan.busy)
+                if let offer = plan.offer { Text("Starts with \(offer).").font(.footnote).foregroundStyle(.secondary) }
+            }
+            Button("Restore purchases") { restore(me) }.disabled(plan.busy)
+        }
+    }
+
+    private func subscribe(_ me: Me) {
+        Task {
+            if await plan.buy(firmId: me.firm.id, api: session.api) { await session.loadMe() }
+        }
+    }
+
+    private func restore(_ me: Me) {
+        Task {
+            if await plan.restore(firmId: me.firm.id, api: session.api) { await session.loadMe() }
         }
     }
 

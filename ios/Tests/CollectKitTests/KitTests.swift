@@ -122,6 +122,31 @@ final class KitTests: XCTestCase {
         XCTAssertNil(ClientLink.token(in: "https://example.com/"))
     }
 
+    func testTheAccountTokenIsTheFirmIdAsAUUID() {
+        XCTAssertEqual(APIClient.accountToken(firmId: "0123456789abcdef0123456789ABCDEF"), "01234567-89ab-cdef-0123-456789abcdef")
+        XCTAssertNil(APIClient.accountToken(firmId: "short"))
+        XCTAssertNotNil(UUID(uuidString: APIClient.accountToken(firmId: String(repeating: "a", count: 32))!))
+    }
+
+    func testBillingTellsTheWorkerTheTransaction() async throws {
+        Stub.on("POST /api/billing/apple", .init(body: "{\"ok\":true,\"plan_status\":\"active\"}"))
+        try await Stub.client().billApple(transaction: "2000000000001")
+        XCTAssertEqual(try JSONDecoder().decode(JSON.self, from: Stub.bodies[0]), ["transaction_id": "2000000000001"])
+    }
+
+    func testMeDecodes() async throws {
+        let json = """
+        {"user":{"id":"u","email":"a@b.test","name":null,"role":"owner"},
+         "firm":{"id":"f","name":"Firm","tz":"America/Toronto","plan_status":"trialing","trial_ends_at":5,"current_period_end":null,
+                 "past_due_since":null,"cancel_at_period_end":false,"subscribed":false,"plan_source":null,"closed_at":null,"held":false,"usable":true}}
+        """
+        Stub.on("GET /api/me", .init(body: json))
+        let me = try await Stub.client().me()
+        XCTAssertEqual(me.firm.planStatus, "trialing")
+        XCTAssertNil(me.firm.planSource)
+        XCTAssertTrue(me.firm.usable)
+    }
+
     func testReviewNamesTheFilesSeen() async throws {
         Stub.on("POST /api/requests/r1/items/i1/review", .init(body: "{\"ok\":true}"))
         let item = try JSONDecoder.snake.decode(ReviewItem.self, from: Data("""
