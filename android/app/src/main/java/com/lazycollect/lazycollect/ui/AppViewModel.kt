@@ -42,6 +42,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
 class AppViewModel(app: Application, private val saved: SavedStateHandle) : AndroidViewModel(app) {
@@ -69,6 +70,9 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
         val keep = saved.get<String>(CAMERA_URI)?.let { Uri.parse(it).lastPathSegment }
         viewModelScope.launch(Dispatchers.IO) { clearCameraFiles(File(app.cacheDir, "camera"), keep) }
         viewModelScope.launch(Dispatchers.IO) { review.deleteRecursively() }
+        // copies a dead process left behind; newer ones belong to a pick that started since
+        val started = System.currentTimeMillis() - 5000
+        viewModelScope.launch(Dispatchers.IO) { File(app.cacheDir, "prepared").listFiles().orEmpty().filter { it.lastModified() < started }.forEach { it.delete() } }
         // whatever was loaded belongs to the account that was signed in
         viewModelScope.launch {
             session.token.collect {
@@ -125,6 +129,7 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
 
     // Scanned pages hold ID documents, so none of them may outlast the checklist on a phone someone else may pick up.
     private fun wipeClientFiles() {
+        scanning?.second?.wipe()
         closeScan()
         work.cancelChildren()
         val app = getApplication<Application>()
@@ -145,9 +150,13 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
         val model = ScanModel(
             CoroutineScope(viewModelScope.coroutineContext + work), store, finder, ScanFrameFeed(finder),
             finish = { pages ->
-                val files = withContext(Dispatchers.IO) { graph.prepare.scanned(pages.map { it.jpeg }, item.label) }
-                if (files.isEmpty()) throw java.io.IOException(app.getString(R.string.scan_not_finished))
-                withContext(Dispatchers.IO) { client.add(item.id, files, epoch) }
+                // Not cancellable: a result thrown away on cancel would leave the prepared copies on disk. add refuses them when the epoch moved and deletes them.
+                val made = withContext(NonCancellable + Dispatchers.IO) {
+                    val files = graph.prepare.scanned(pages.map { it.jpeg }, item.label)
+                    if (files.isNotEmpty()) client.add(item.id, files, epoch)
+                    files.isNotEmpty()
+                }
+                if (!made) throw java.io.IOException(app.getString(R.string.scan_not_finished))
                 closeScan()
             },
             disk = Dispatchers.IO.limitedParallelism(1),

@@ -183,7 +183,16 @@ class ScanModel(
     private fun persist(job: (ScanPageStore) -> Unit) {
         val store = store ?: return
         // NonCancellable: leaving the screen right after a shot must not lose the page being written.
-        scope.launch(disk + NonCancellable) { job(store) }
+        scope.launch(disk + NonCancellable) { if (!wiped) job(store) }
+    }
+
+    @Volatile private var wiped = false
+
+    /** The checklist is gone: every stored page goes, after what was already asked of the store, and nothing is written again. */
+    fun wipe() {
+        val store = store ?: return
+        wiped = true
+        scope.launch(disk + NonCancellable) { store.removeAll() }
     }
 
     /** Returns once the pages are read and everything asked of the store so far is written. */

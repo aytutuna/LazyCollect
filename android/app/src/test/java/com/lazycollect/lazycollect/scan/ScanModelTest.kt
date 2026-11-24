@@ -104,6 +104,18 @@ class ScanModelTest {
     }
 
     @Test
+    fun nothingIsWrittenAfterTheStoreIsWiped() = runTest {
+        val folder = File(System.getProperty("java.io.tmpdir"), "scan-model-" + UUID.randomUUID()).also { folders.add(it) }
+        val store = ScanPageStore(folder)
+        val scan = model(store)
+        scan.add(page(10), jpeg(10))
+        scan.wipe()
+        scan.add(page(20), jpeg(20))
+        advanceUntilIdle()
+        assertFalse(folder.exists())
+    }
+
+    @Test
     fun aPageMovesEarlierAndLaterAndStopsAtTheEnds() = runTest {
         val scan = modelWith(listOf(10, 20, 30))
         val ids = scan.ids()
