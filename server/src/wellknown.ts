@@ -7,8 +7,18 @@ import type { AppEnv } from "./session";
 // site's RP ID work in them.
 export const wellKnown = new Hono<AppEnv>();
 
-// the signing certificate fingerprints of the Android app, AA:BB:... and comma separated
-export const androidCerts = (env: Env) => (env.ANDROID_CERT_SHA256 ?? "").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+// the signing certificate fingerprints of the Android app, comma separated, with or without colons (apksigner prints
+// them without); an entry that is not 32 bytes of hex is dropped
+export function androidCerts(env: Env): string[] {
+  const certs: string[] = [];
+  for (const entry of (env.ANDROID_CERT_SHA256 ?? "").split(",")) {
+    const hex = entry.replace(/[:\s]/g, "").toUpperCase();
+    if (!hex) continue;
+    if (/^[0-9A-F]{64}$/.test(hex)) certs.push(hex.match(/../g)!.join(":"));
+    else console.warn("ANDROID_CERT_SHA256 has an entry that is not a SHA-256 fingerprint; ignored");
+  }
+  return certs;
+}
 
 // the origin a passkey ceremony in the Android app reports instead of the site's https origin
 export function androidOrigin(fingerprint: string): string {

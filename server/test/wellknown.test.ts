@@ -14,15 +14,15 @@ afterEach(() => {
 });
 
 describe("assetlinks.json", () => {
-  it("names the package and the fingerprints from the variable", async () => {
-    env.ANDROID_CERT_SHA256 = `${FP.toLowerCase()}, 00:11`;
+  it("names the package and the valid fingerprints from the variable, in colon form", async () => {
+    env.ANDROID_CERT_SHA256 = `${FP.toLowerCase().replaceAll(":", "")}, 00:11`;
     const res = await get("/.well-known/assetlinks.json");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/json");
     expect(res.headers.get("location")).toBeNull();
     const [entry] = await res.json<any[]>();
     expect(entry.relation).toContain("delegate_permission/common.get_login_creds");
-    expect(entry.target).toEqual({ namespace: "android_app", package_name: "com.lazycollect.lazycollect", sha256_cert_fingerprints: [FP, "00:11"] });
+    expect(entry.target).toEqual({ namespace: "android_app", package_name: "com.lazycollect.lazycollect", sha256_cert_fingerprints: [FP] });
   });
 
   it("is valid with no fingerprint until the release key is known", async () => {
@@ -51,7 +51,7 @@ describe("passkeys from the Android app", () => {
   }
 
   it("accepts the app's own origin once its fingerprint is set, for adding and for signing in", async () => {
-    env.ANDROID_CERT_SHA256 = FP;
+    env.ANDROID_CERT_SHA256 = FP.replaceAll(":", "").toLowerCase();
     const { cookie, key } = await enrolled();
     const options = await (await api("/api/passkeys/options", { method: "POST", cookie })).json<any>();
     const added = await api("/api/passkeys", { method: "POST", cookie, body: { response: await key.register(options, FP_ORIGIN) } });
