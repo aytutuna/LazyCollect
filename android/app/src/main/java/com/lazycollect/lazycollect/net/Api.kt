@@ -21,6 +21,10 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.coroutines.executeAsync
+import okio.Buffer
+import okio.BufferedSink
+import okio.ForwardingSink
+import okio.buffer
 
 /** What went wrong with a call. [code] is what the server's {error} says, or network and server_error when it said nothing. */
 sealed class ApiError(val code: String) : Exception(code) {
@@ -200,9 +204,37 @@ class Api(
     suspend fun example(item: String): ByteArray = sendBytes("GET", "/c/me/items/$item/example", null, null)
 
     /** One file as the raw body, with its length, so the server can refuse a big one before it reads it. [uploadId] makes a repeat harmless. */
-    suspend fun upload(item: String, name: String, uploadId: String, file: File) {
-        val body = file.asRequestBody("application/octet-stream".toMediaType())
+    suspend fun upload(item: String, name: String, uploadId: String, file: File, onSent: (Long) -> Unit = {}) {
+        val body = ProgressBody(file.asRequestBody("application/octet-stream".toMediaType()), onSent)
         val headers = mapOf("Upload-Id" to uploadId, "X-File-Name" to URLEncoder.encode(name, "UTF-8").replace("+", "%20"))
         send("PUT", "/c/me/items/$item/files", null, null, raw = body, headers = headers)
+    }
+}
+
+/** Passes a body through and says how much of it has gone, at most about every percent. */
+private class ProgressBody(private val body: RequestBody, private val onSent: (Long) -> Unit) : RequestBody() {
+    override fun contentType() = body.contentType()
+
+    override fun contentLength() = body.contentLength()
+
+    override fun isOneShot() = body.isOneShot()
+
+    override fun writeTo(sink: BufferedSink) {
+        val total = body.contentLength()
+        val step = maxOf(total / 100, 1L)
+        var sent = 0L
+        var reported = 0L
+        val counting = object : ForwardingSink(sink) {
+            override fun write(source: Buffer, byteCount: Long) {
+                super.write(source, byteCount)
+                sent += byteCount
+                if (sent - reported >= step || sent == total) {
+                    reported = sent
+                    onSent(sent)
+                }
+            }
+        }.buffer()
+        body.writeTo(counting)
+        counting.flush()
     }
 }

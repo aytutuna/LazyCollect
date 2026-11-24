@@ -43,6 +43,11 @@ class UploadQueue(private val dir: File, private val api: Api, private val now: 
 
     val jobs: StateFlow<List<Job>> get() = flow
 
+    private val sending = MutableStateFlow<Map<String, Float>>(emptyMap())
+
+    /** How much of the file being sent has gone, 0 to 1, by job id; only the one in flight is listed. */
+    val progress: StateFlow<Map<String, Float>> get() = sending
+
     init {
         dir.mkdirs()
         val cutoff = now() - KEEP_DAYS * 24 * 3600 * 1000
@@ -124,7 +129,10 @@ class UploadQueue(private val dir: File, private val api: Api, private val now: 
                 continue
             }
             try {
-                api.upload(job.itemId, job.name, job.uploadId, data(job.id))
+                sending.value = mapOf(job.id to 0f)
+                api.upload(job.itemId, job.name, job.uploadId, data(job.id)) { sent ->
+                    if (job.size > 0) sending.value = mapOf(job.id to (sent.toFloat() / job.size).coerceIn(0f, 1f))
+                }
                 remove(job.id)
             } catch (e: ApiError.Unauthorized) {
                 return Pass.SignedOut
@@ -138,6 +146,8 @@ class UploadQueue(private val dir: File, private val api: Api, private val now: 
                 } else {
                     change(job.id) { it.copy(failed = e.code) }
                 }
+            } finally {
+                sending.value = emptyMap()
             }
         }
         if (later) Pass.Later else Pass.Done

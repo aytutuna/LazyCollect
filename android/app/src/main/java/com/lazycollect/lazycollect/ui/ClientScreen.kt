@@ -27,6 +27,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -81,7 +82,7 @@ class ClientActions(
 )
 
 @Composable
-fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions) {
+fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions, progress: Map<String, Float> = emptyMap()) {
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         when (state) {
             ClientState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -95,7 +96,7 @@ fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int
                 Button(onClick = actions.reload) { Text(stringResource(R.string.retry)) }
                 OutlinedButton(onClick = actions.leave) { Text(stringResource(R.string.client_leave)) }
             }
-            is ClientState.Ready -> Checklist(state.view, state.stale, action, jobs, dropped, actions)
+            is ClientState.Ready -> Checklist(state.view, state.stale, action, jobs, dropped, actions, progress)
         }
     }
 }
@@ -103,7 +104,7 @@ fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int
 private fun scopeOf(items: List<ClientItem>) = items.filter { it.required }.ifEmpty { items }
 
 @Composable
-private fun Checklist(view: ClientView, stale: Boolean, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions) {
+private fun Checklist(view: ClientView, stale: Boolean, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions, progress: Map<String, Float>) {
     val scope = scopeOf(view.items)
     val received = scope.count { it.received }
     val unavailable = scope.count { it.status == "unavailable" }
@@ -120,7 +121,7 @@ private fun Checklist(view: ClientView, stale: Boolean, action: Action, jobs: Li
         if (stale) item { Notice(stringResource(R.string.client_refresh_failed), stringResource(R.string.retry), actions.reload) }
         if (action.error != null) item { ErrorNote(action.error) }
         if (dropped > 0) item { Notice(stringResource(R.string.client_items_gone), null, {}) }
-        items(jobs, key = { it.id }) { JobRow(it, actions) }
+        items(jobs, key = { it.id }) { JobRow(it, progress[it.id], actions) }
         item {
             Text(stringResource(R.string.client_progress, received, scope.size), style = MaterialTheme.typography.titleMedium)
             if (unavailable > 0) Text(stringResource(R.string.client_progress_na, unavailable), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -188,13 +189,23 @@ private fun Notice(text: String, button: String?, onClick: () -> Unit) {
     }
 }
 
+/** The share of a file sent, as the person reads it. */
+fun percentText(fraction: Float): String = "${(fraction * 100).toInt().coerceIn(0, 100)}%"
+
 @Composable
-private fun JobRow(job: Job, actions: ClientActions) {
+private fun JobRow(job: Job, progress: Float?, actions: ClientActions) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (job.failed == null) CircularProgressIndicator(Modifier.padding(end = 4.dp), strokeWidth = 2.dp)
-            Column(Modifier.weight(1f)) {
-                Text(stringResource(if (job.failed == null) R.string.client_job_waiting else R.string.client_job_failed, job.name))
+            if (job.failed == null && progress == null) CircularProgressIndicator(Modifier.padding(end = 4.dp), strokeWidth = 2.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                val retrying = job.failed == null && job.tries > 0
+                Text(stringResource(if (job.failed != null) R.string.client_job_failed else if (retrying) R.string.client_job_retrying else R.string.client_job_waiting, job.name))
+                if (progress != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LinearProgressIndicator(progress = { progress }, modifier = Modifier.weight(1f))
+                        Text(percentText(progress), style = MaterialTheme.typography.labelMedium)
+                    }
+                }
                 job.failed?.let { ErrorNote(it) }
             }
             if (job.failed != null) TextButton(onClick = { actions.retryJob(job.id) }) { Text(stringResource(R.string.client_try_now)) }

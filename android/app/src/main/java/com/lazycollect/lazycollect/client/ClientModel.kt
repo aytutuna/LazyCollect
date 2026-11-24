@@ -47,6 +47,7 @@ class ClientModel(
     val state: StateFlow<ClientState> get() = flow
     val action: StateFlow<Action> get() = acting
     val jobs get() = queue.jobs
+    val progress get() = queue.progress
 
     /** How many waiting files were dropped because their item left the list; shown once. */
     val dropped: StateFlow<Int> get() = gone
