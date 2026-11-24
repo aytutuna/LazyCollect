@@ -109,6 +109,16 @@ class SignInModelTest {
     }
 
     @Test
+    fun theAddressIsCleanedLikeTheServerDoesBeforeItIsHashed() = runBlocking {
+        server.on("POST /api/app/challenge", ok("""{"challenge":"Zm9vYmFy_challenge-1","required":true}"""))
+        server.on("POST /api/app/auth/start", ok())
+        model.sendCode("\uFEFF\u00A0Someone@Example.com\u2003\uFEFF")
+        settled { it.step == Step.Code }
+        assertEquals("LGPAHjQYu9e8WBccTKhyslOZMU1X2X8l5bJRVgHMO_c", hashes.single())
+        assertEquals("someone@example.com", model.state.value.email)
+    }
+
+    @Test
     fun noAttestationIsSentWhenTheServerDoesNotAskForOne() = runBlocking {
         challenges(false)
         server.on("POST /api/app/auth/start", ok())

@@ -26,6 +26,9 @@ data class SignInState(
 
 private val EMAIL = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
 
+// The server cleans the address with JS trim(), whose idea of a space differs from Kotlin's; the integrity hash needs the same string.
+private fun isJsSpace(c: Char) = c in '\t'..'\r' || c == '\uFEFF' || c == '\u2028' || c == '\u2029' || Character.getType(c) == Character.SPACE_SEPARATOR.toInt()
+
 class SignInModel(
     private val scope: CoroutineScope,
     private val api: Api,
@@ -65,7 +68,7 @@ class SignInModel(
     }
 
     fun sendCode(input: String) {
-        val email = input.trim().lowercase()
+        val email = input.trim(::isJsSpace).lowercase()
         if (email.length > 254 || !EMAIL.matches(email)) {
             flow.update { it.copy(email = input, error = "invalid_email") }
             return
