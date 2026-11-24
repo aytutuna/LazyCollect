@@ -1,6 +1,7 @@
 package com.lazycollect.lazycollect.signin
 
 import android.content.Context
+import androidx.lifecycle.SavedStateHandle
 import com.lazycollect.lazycollect.net.Api
 import com.lazycollect.lazycollect.net.ApiError
 import com.lazycollect.lazycollect.net.Attestation
@@ -29,18 +30,32 @@ private val EMAIL = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
 // The server cleans the address with JS trim(), whose idea of a space differs from Kotlin's; the integrity hash needs the same string.
 private fun isJsSpace(c: Char) = c in '\t'..'\r' || c == '\uFEFF' || c == '\u2028' || c == '\u2029' || Character.getType(c) == Character.SPACE_SEPARATOR.toInt()
 
+private const val EMAIL_KEY = "email"
+private const val CODE_KEY = "code"
+
 class SignInModel(
     private val scope: CoroutineScope,
     private val api: Api,
     private val attester: Attester,
     private val passkeys: Passkeys,
+    private val saved: SavedStateHandle = SavedStateHandle(),
     private val signedIn: (String) -> Unit,
 ) {
-    private val flow = MutableStateFlow(SignInState())
+    // only the code step is kept across process death; a pending passkey login is not, and starts again from the email
+    private val flow = MutableStateFlow(SignInState(if (saved.get<Boolean>(CODE_KEY) == true) Step.Code else Step.Email, saved.get<String>(EMAIL_KEY).orEmpty()))
     private var pending: String? = null
     private var autoPasskey = false
 
     val state: StateFlow<SignInState> get() = flow
+
+    init {
+        scope.launch {
+            flow.collect {
+                saved[EMAIL_KEY] = it.email
+                saved[CODE_KEY] = it.step == Step.Code
+            }
+        }
+    }
 
     private fun run(block: suspend () -> Unit) {
         val held = pending

@@ -2,6 +2,7 @@ package com.lazycollect.lazycollect.signin
 
 import android.app.Application
 import android.content.Context
+import androidx.lifecycle.SavedStateHandle
 import androidx.test.core.app.ApplicationProvider
 import com.lazycollect.lazycollect.net.Api
 import com.lazycollect.lazycollect.net.FakeServer
@@ -14,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -109,6 +111,19 @@ class SignInModelTest {
         val body = server.calls("POST /api/app/auth/start").single().body!!.utf8()
         assertTrue(body, body.contains(""""attestation":{"challenge":"challenge-1","token":"integrity-1"}"""))
         assertTrue(body, body.contains(""""email":"someone@example.com""""))
+    }
+
+    @Test
+    fun theCodeStepSurvivesTheProcessBeingKilled() = runBlocking {
+        val saved = SavedStateHandle()
+        val first = SignInModel(scope, api, attester, passkeys, saved) { tokens += it }
+        challenges(true)
+        server.on("POST /api/app/auth/start", ok())
+        first.sendCode("Someone@Example.com")
+        withTimeout(10_000) { first.state.first { it.step == Step.Code } }
+        withTimeout(10_000) { while (saved.get<String>("email") != "someone@example.com") delay(10) }
+        val again = SignInModel(scope, api, attester, passkeys, SavedStateHandle(saved.keys().associateWith { saved.get<Any>(it) })) { tokens += it }
+        assertEquals(SignInState(Step.Code, "someone@example.com"), again.state.value)
     }
 
     @Test
