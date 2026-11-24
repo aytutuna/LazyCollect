@@ -112,8 +112,10 @@ class ClientModel(
             val challenge = api.challenge()
             val attestation = if (challenge.required) Attestation(challenge.challenge, attest(requestHash(challenge.challenge, token))) else null
             val exchanged = api.exchange(token, attestation)
+            val old = session.token.value
             try {
                 session.start(exchanged.token)
+                if (old != null && old != exchanged.token) scope.launch { runCatching { api.clientLogout(old) } }
             } catch (e: GeneralSecurityException) {
                 unsaved(exchanged.token)
             } catch (e: IOException) {
