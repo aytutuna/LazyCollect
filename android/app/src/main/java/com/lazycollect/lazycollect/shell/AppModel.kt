@@ -6,6 +6,7 @@ import com.lazycollect.lazycollect.net.ApiError
 import com.lazycollect.lazycollect.net.Me
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -23,6 +24,8 @@ sealed interface MeState {
 class AppModel(private val scope: CoroutineScope, private val api: Api, private val session: Session) {
     private val flow = MutableStateFlow<MeState>(MeState.Loading)
     private val acting = MutableStateFlow(Action())
+    private var loading: Job? = null
+    private var working: Job? = null
 
     val me: StateFlow<MeState> get() = flow
     val action: StateFlow<Action> get() = acting
@@ -30,8 +33,11 @@ class AppModel(private val scope: CoroutineScope, private val api: Api, private 
     init {
         scope.launch {
             session.token.collect {
+                // whatever was running belongs to the account that was signed in
+                loading?.cancel()
+                working?.cancel()
                 acting.value = Action()
-                if (it != null) load()
+                if (it != null) reload()
             }
         }
     }
@@ -48,7 +54,8 @@ class AppModel(private val scope: CoroutineScope, private val api: Api, private 
     }
 
     fun reload() {
-        scope.launch { load() }
+        loading?.cancel()
+        loading = scope.launch { load() }
     }
 
     fun reopen() {
@@ -64,8 +71,9 @@ class AppModel(private val scope: CoroutineScope, private val api: Api, private 
     }
 
     private fun act(block: suspend () -> Unit) {
+        working?.cancel()
         acting.value = Action(busy = true)
-        scope.launch {
+        working = scope.launch {
             try {
                 block()
                 acting.value = Action()

@@ -26,6 +26,7 @@ class FirmModel(private val scope: CoroutineScope, private val api: Api, private
     }
 
     fun load() {
+        job?.cancel()
         flow.value = FirmState()
         job = scope.launch {
             try {
@@ -44,6 +45,7 @@ class FirmModel(private val scope: CoroutineScope, private val api: Api, private
     }
 
     fun save(update: FirmUpdate) {
+        job?.cancel()
         flow.update { it.copy(busy = true, error = null) }
         job = scope.launch {
             try {

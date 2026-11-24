@@ -11,6 +11,7 @@ import com.lazycollect.lazycollect.net.Me
 import com.lazycollect.lazycollect.net.json
 import com.lazycollect.lazycollect.net.ok
 import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,8 +46,8 @@ class AppModelTest {
         server.close()
     }
 
-    private fun me(role: String = "owner", closedAt: String = "null") =
-        ok("""{"user":{"id":"u1","email":"a@b.co","name":null,"role":"$role"},"firm":{"id":"f1","name":"Firm","tz":"America/Toronto","plan_status":"active","closed_at":$closedAt}}""")
+    private fun me(role: String = "owner", closedAt: String = "null", firm: String = "Firm") =
+        ok("""{"user":{"id":"u1","email":"a@b.co","name":null,"role":"$role"},"firm":{"id":"f1","name":"$firm","tz":"America/Toronto","plan_status":"active","closed_at":$closedAt}}""")
 
     private suspend fun ready(model: AppModel): Me = withTimeout(10_000) { (model.me.first { it !is MeState.Loading } as MeState.Ready).me }
 
@@ -56,6 +57,21 @@ class AppModelTest {
         val model = AppModel(scope, api, session)
         assertEquals("Firm", ready(model).firm.name)
         assertEquals("Bearer saved-token", server.calls("GET /api/me").single().headers["Authorization"])
+    }
+
+    private fun slow(response: mockwebserver3.MockResponse) = response.newBuilder().headersDelay(400, TimeUnit.MILLISECONDS).build()
+
+    @Test
+    fun aReloadThatOutlivesItsAccountWritesNothing() = runBlocking {
+        server.on("GET /api/me", me(firm = "First"), slow(me(firm = "First")), me(firm = "Second"))
+        val model = AppModel(scope, api, session)
+        assertEquals("First", ready(model).firm.name)
+        model.reload()
+        delay(100)
+        session.end()
+        session.start("other-token")
+        delay(900)
+        assertEquals("Second", (model.me.value as MeState.Ready).me.firm.name)
     }
 
     @Test
@@ -142,6 +158,29 @@ class AppModelTest {
         val model = AppModel(scope, api, session)
         ready(model)
         assertFalse(session.planEnded.value)
+    }
+
+    @Test
+    fun onlyTheLatestFirmLoadCounts() = runBlocking {
+        server.on("GET /api/firm", slow(ok("""{"name":"Old","tz":"America/Toronto"}""")), ok("""{"name":"New","tz":"America/Toronto"}"""))
+        val firm = FirmModel(scope, api) {}
+        firm.load()
+        delay(100)
+        firm.load()
+        delay(800)
+        assertEquals("New", firm.state.value.firm?.name)
+    }
+
+    @Test
+    fun aResetStopsEveryFirmLoad() = runBlocking {
+        server.on("GET /api/firm", slow(ok("""{"name":"Old","tz":"America/Toronto"}""")))
+        val firm = FirmModel(scope, api) {}
+        firm.load()
+        firm.load()
+        delay(100)
+        firm.reset()
+        delay(800)
+        assertNull(firm.state.value.firm)
     }
 
     @Test
