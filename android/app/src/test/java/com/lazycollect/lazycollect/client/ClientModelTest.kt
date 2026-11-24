@@ -15,6 +15,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -49,7 +51,7 @@ class ClientModelTest {
         dir.deleteRecursively()
     }
 
-    private fun model() = ClientModel(scope, api, session, attester, queue) { kicks++ }
+    private fun model(online: StateFlow<Boolean> = MutableStateFlow(true)) = ClientModel(scope, api, session, attester, queue, online) { kicks++ }
 
     private fun view(vararg items: String) = ok(
         """{"firm_name":"Firm","tz":"America/Toronto","title":"Study permit","note":null,"deadline":1800000000000,"status":"open","expires_at":1900000000000,
@@ -182,5 +184,44 @@ class ClientModelTest {
         withTimeout(10_000) { while (queue.jobs.value.isNotEmpty()) kotlinx.coroutines.delay(20) }
         assertNull(store.load())
         assertEquals(1, server.calls("POST /api/app/client/logout").size)
+    }
+
+    @Test
+    fun comingBackOnlineRefreshesTheChecklist() = runBlocking {
+        session.start("client-session")
+        server.on("GET /api/c/me", view(fileItem("i1")))
+        val network = MutableStateFlow(false)
+        val model = model(network)
+        ready(model)
+        assertEquals(1, server.calls("GET /api/c/me").size)
+        network.value = true
+        withTimeout(10_000) { while (server.calls("GET /api/c/me").size < 2) kotlinx.coroutines.delay(20) }
+        assertTrue(model.connected.value)
+    }
+
+    @Test
+    fun aRefreshThatFailsOnReturnStillStartsTheWaitingFiles() = runBlocking {
+        session.start("client-session")
+        server.on("GET /api/c/me", view(fileItem("i1")), json(503, """{"error":"server_error"}"""))
+        val network = MutableStateFlow(true)
+        val model = model(network)
+        ready(model)
+        queue.add("i1", "a.jpg", "abc".byteInputStream())
+        val before = kicks
+        network.value = false
+        kotlinx.coroutines.delay(100)
+        network.value = true
+        withTimeout(10_000) { while (kicks == before) kotlinx.coroutines.delay(20) }
+        assertTrue(kicks > before)
+    }
+
+    @Test
+    fun staysQuietWhenTheConnectionNeverWentAway() = runBlocking {
+        session.start("client-session")
+        server.on("GET /api/c/me", view(fileItem("i1")))
+        val model = model(MutableStateFlow(true))
+        ready(model)
+        kotlinx.coroutines.delay(200)
+        assertEquals(1, server.calls("GET /api/c/me").size)
     }
 }

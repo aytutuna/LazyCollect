@@ -1,8 +1,10 @@
 package com.lazycollect.lazycollect
 
 import android.app.Application
+import com.lazycollect.lazycollect.client.Online
 import com.lazycollect.lazycollect.client.Prepare
 import com.lazycollect.lazycollect.client.UploadQueue
+import com.lazycollect.lazycollect.client.SystemNetwork
 import com.lazycollect.lazycollect.data.SecretBox
 import com.lazycollect.lazycollect.data.Session
 import com.lazycollect.lazycollect.data.TokenStore
@@ -20,6 +22,7 @@ class AppGraph(app: Application) {
     val clientSession = Session(TokenStore(File(app.noBackupFilesDir, "client.bin"), box::seal, box::open))
     val clientApi = Api(BuildConfig.API_BASE.toHttpUrl(), token = { clientSession.token.value }, onSignedOut = clientSession::end, onPlanEnded = {})
     val uploads = UploadQueue(File(app.noBackupFilesDir, "uploads"), clientApi)
+    val online = Online(SystemNetwork(app))
     val prepare = Prepare(app)
     val corners by lazy { CornerModels.fromAssets(app) }
     val attester = PlayIntegrity(app, BuildConfig.CLOUD_PROJECT)

@@ -43,7 +43,7 @@ class AppViewModel(app: Application, saved: SavedStateHandle) : AndroidViewModel
     val firm = FirmModel(viewModelScope, graph.api, account::reload)
     val devices = DevicesModel(viewModelScope, graph.api)
     val clientSession = graph.clientSession
-    val client = ClientModel(viewModelScope, graph.clientApi, graph.clientSession, graph.attester, graph.uploads) { startUploads(app) }
+    val client = ClientModel(viewModelScope, graph.clientApi, graph.clientSession, graph.attester, graph.uploads, graph.online.state) { startUploads(app) }
 
     init {
         // whatever was loaded belongs to the account that was signed in

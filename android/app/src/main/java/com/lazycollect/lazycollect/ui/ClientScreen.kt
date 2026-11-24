@@ -82,7 +82,7 @@ class ClientActions(
 )
 
 @Composable
-fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions, progress: Map<String, Float> = emptyMap()) {
+fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions, progress: Map<String, Float> = emptyMap(), offline: Boolean = false) {
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         when (state) {
             ClientState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -96,7 +96,7 @@ fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int
                 Button(onClick = actions.reload) { Text(stringResource(R.string.retry)) }
                 OutlinedButton(onClick = actions.leave) { Text(stringResource(R.string.client_leave)) }
             }
-            is ClientState.Ready -> Checklist(state.view, state.stale, action, jobs, dropped, actions, progress)
+            is ClientState.Ready -> Checklist(state.view, state.stale, action, jobs, dropped, actions, progress, offline)
         }
     }
 }
@@ -104,7 +104,7 @@ fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int
 private fun scopeOf(items: List<ClientItem>) = items.filter { it.required }.ifEmpty { items }
 
 @Composable
-private fun Checklist(view: ClientView, stale: Boolean, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions, progress: Map<String, Float>) {
+private fun Checklist(view: ClientView, stale: Boolean, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions, progress: Map<String, Float>, offline: Boolean) {
     val scope = scopeOf(view.items)
     val received = scope.count { it.received }
     val unavailable = scope.count { it.status == "unavailable" }
@@ -118,6 +118,7 @@ private fun Checklist(view: ClientView, stale: Boolean, action: Action, jobs: Li
             Text(stringResource(R.string.client_due, formatDate(view.deadline, view.tz)), color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(stringResource(R.string.client_privacy, view.firmName), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        if (offline) item { Notice(stringResource(R.string.client_offline), null, {}) }
         if (stale) item { Notice(stringResource(R.string.client_refresh_failed), stringResource(R.string.retry), actions.reload) }
         if (action.error != null) item { ErrorNote(action.error) }
         if (dropped > 0) item { Notice(stringResource(R.string.client_items_gone), null, {}) }

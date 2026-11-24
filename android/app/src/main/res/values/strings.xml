@@ -194,6 +194,7 @@
         <item quantity="other">%1$d files waiting to upload</item>
     </plurals>
     <string name="client_job_waiting">%1$s: waiting to upload</string>
+    <string name="client_offline">You are offline. Your files are saved on this device and will upload when you are back online.</string>
     <string name="client_job_retrying">%1$s: could not send yet, trying again</string>
     <string name="client_job_failed">%1$s could not be uploaded.</string>
     <string name="client_try_now">Try again</string>

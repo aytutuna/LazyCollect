@@ -38,6 +38,7 @@ class ClientModel(
     private val session: Session,
     private val attester: Attester,
     private val queue: UploadQueue,
+    private val online: StateFlow<Boolean> = MutableStateFlow(true),
     private val kick: () -> Unit,
 ) {
     private val flow = MutableStateFlow<ClientState>(ClientState.Loading)
@@ -48,6 +49,7 @@ class ClientModel(
     val action: StateFlow<Action> get() = acting
     val jobs get() = queue.jobs
     val progress get() = queue.progress
+    val connected: StateFlow<Boolean> get() = online
 
     /** How many waiting files were dropped because their item left the list; shown once. */
     val dropped: StateFlow<Int> get() = gone
@@ -65,6 +67,18 @@ class ClientModel(
                     flow.value = ClientState.Loading
                     load()
                 }
+            }
+        }
+        scope.launch {
+            var was = online.value
+            online.collect {
+                // coming back online sends what waited and refreshes a page that may have gone stale
+                if (it && !was && session.token.value != null) {
+                    load()
+                    val fresh = (flow.value as? ClientState.Ready)?.stale == false
+                    if (!fresh && queue.jobs.value.any { it.failed == null }) kick()
+                }
+                was = it
             }
         }
     }
