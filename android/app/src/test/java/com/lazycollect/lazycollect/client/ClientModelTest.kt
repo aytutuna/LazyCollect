@@ -100,6 +100,45 @@ class ClientModelTest {
     }
 
     @Test
+    fun aMissingItemReloadsInsteadOfEndingTheSession() = runBlocking {
+        session.start("client-session")
+        queue.add("i1", "a.jpg", "abc".byteInputStream())
+        server.on("GET /api/c/me", view(fileItem("i1")))
+        server.on("DELETE /api/c/me/files/f9", json(404, """{"error":"not_found"}"""))
+        val model = model()
+        ready(model)
+        model.removeFile("f9")
+        withTimeout(10_000) { while (server.calls("GET /api/c/me").size < 2) kotlinx.coroutines.delay(20) }
+        assertTrue(model.state.value is ClientState.Ready)
+        assertEquals(1, queue.jobs.value.size)
+        assertEquals("client-session", session.token.value)
+    }
+
+    @Test
+    fun aMissingItemOnAGoneLinkShowsGone() = runBlocking {
+        session.start("client-session")
+        server.on("GET /api/c/me", view(fileItem("i1")), json(404, """{"error":"not_found"}"""))
+        server.on("PUT /api/c/me/items/i1/answer", json(404, """{"error":"not_found"}"""))
+        val model = model()
+        ready(model)
+        model.answer("i1", JsonPrimitive("x"))
+        withTimeout(10_000) { model.state.first { it == ClientState.Gone } }
+        Unit
+    }
+
+    @Test
+    fun aDeadLinkOnExchangeIsAPlainError() = runBlocking {
+        server.on("POST /api/app/challenge", ok("""{"challenge":"c1","required":false}"""))
+        server.on("POST /api/app/client/exchange", json(404, """{"error":"not_found"}"""))
+        val model = model()
+        model.open("https://collect.alazy.app/c/$token")
+        withTimeout(10_000) { model.action.first { it.error != null } }
+        assertEquals("not_found", model.action.value.error)
+        assertEquals(ClientState.Loading, model.state.value)
+        assertNull(session.token.value)
+    }
+
+    @Test
     fun anAnswerReplacesTheWholeList() = runBlocking {
         session.start("client-session")
         server.on("GET /api/c/me", view("""{"id":"q1","label":"Married?","required":true,"status":"empty","kind":"yesno","files":[]}"""))

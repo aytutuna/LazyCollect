@@ -98,7 +98,7 @@ class ClientModel(
             acting.value = Action(error = "invalid_link")
             return
         }
-        act {
+        act(reloadOnMissing = false) {
             val challenge = api.challenge()
             val attestation = if (challenge.required) Attestation(challenge.challenge, attest(requestHash(challenge.challenge, token))) else null
             val exchanged = api.exchange(token, attestation)
@@ -210,7 +210,8 @@ class ClientModel(
         }
     }
 
-    private fun act(block: suspend () -> Unit) {
+    /** A 404 from a call on the checklist can be one item or file that went; [load] tells whether the link did. */
+    private fun act(reloadOnMissing: Boolean = true, block: suspend () -> Unit) {
         acting.value = Action(busy = true)
         scope.launch {
             try {
@@ -219,11 +220,9 @@ class ClientModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiError.Other) {
-                if (e.status == 404 && flow.value is ClientState.Ready) {
-                    // the link went while the page was open
-                    queue.forget()
-                    flow.value = ClientState.Gone
+                if (e.status == 404 && reloadOnMissing && flow.value is ClientState.Ready) {
                     acting.value = Action()
+                    load()
                 } else {
                     acting.value = Action(error = e.code)
                 }

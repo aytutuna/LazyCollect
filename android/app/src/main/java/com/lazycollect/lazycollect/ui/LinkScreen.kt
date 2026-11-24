@@ -36,7 +36,7 @@ fun LinkScreen(action: Action, onOpen: (String) -> Unit, onBack: () -> Unit) {
             Text(stringResource(R.string.link_title), style = MaterialTheme.typography.titleLarge)
             Text(stringResource(R.string.link_intro), color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(value = link, onValueChange = { link = it }, label = { Text(stringResource(R.string.link_field)) }, modifier = Modifier.fillMaxWidth())
-            ErrorNote(action.error)
+            ErrorNote(if (action.error == "not_found") "link_expired" else action.error)
             Button(enabled = !action.busy && link.isNotBlank(), onClick = { onOpen(link) }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.link_go)) }
             TextButton(onClick = onBack) { Text(stringResource(R.string.link_back)) }
         }

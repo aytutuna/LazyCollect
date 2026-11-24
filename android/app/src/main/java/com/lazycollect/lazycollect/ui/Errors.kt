@@ -44,6 +44,7 @@ fun errorText(code: String, owner: Boolean = true, pastDue: Boolean = false): In
     "storage" -> R.string.error_storage
     "unavailable" -> R.string.error_unavailable
     "invalid_link" -> R.string.error_invalid_link
+    "link_expired" -> R.string.error_link_expired
     "too_big" -> R.string.error_too_big
     "unsupported_type" -> R.string.error_unsupported_type
     "limit" -> R.string.error_limit
