@@ -41,6 +41,8 @@ class ClientModel(
     private val attester: Attester,
     private val queue: UploadQueue,
     private val online: StateFlow<Boolean> = MutableStateFlow(true),
+    /** Removes what the phone kept for the checklist besides the queue: scanned pages and prepared copies. */
+    private val wipe: () -> Unit = {},
     private val kick: () -> Unit,
 ) {
     private val flow = MutableStateFlow<ClientState>(ClientState.Loading)
@@ -62,13 +64,14 @@ class ClientModel(
 
     init {
         scope.launch {
+            var previous: String? = null
             session.token.collect {
-                if (it == null) {
-                    queue.forget()
-                } else {
+                if (it == null || (previous != null && previous != it)) forgetAll()
+                if (it != null) {
                     flow.value = ClientState.Loading
                     load()
                 }
+                previous = it
             }
         }
         scope.launch {
@@ -134,7 +137,7 @@ class ClientModel(
             show(api.view())
         } catch (e: ApiError.Other) {
             if (e.status == 404 || e.status == 410) {
-                queue.forget()
+                forgetAll()
                 flow.value = ClientState.Gone
             } else {
                 fail(before, e)
@@ -142,6 +145,11 @@ class ClientModel(
         } catch (e: ApiError) {
             fail(before, e)
         }
+    }
+
+    private fun forgetAll() {
+        queue.forget()
+        wipe()
     }
 
     private fun fail(before: ClientState.Ready?, e: ApiError) {

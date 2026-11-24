@@ -41,6 +41,7 @@ class ClientModelTest {
     private val api = Api(server.url, token = { session.token.value }, onSignedOut = session::end, onPlanEnded = {})
     private val queue = UploadQueue(File(dir, "uploads"), api)
     private var kicks = 0
+    private var wipes = 0
     private var proofFor: String? = null
     private val attester = Attester { hash -> proofFor = hash; "integrity-token" }
 
@@ -51,7 +52,7 @@ class ClientModelTest {
         dir.deleteRecursively()
     }
 
-    private fun model(online: StateFlow<Boolean> = MutableStateFlow(true)) = ClientModel(scope, api, session, attester, queue, online) { kicks++ }
+    private fun model(online: StateFlow<Boolean> = MutableStateFlow(true)) = ClientModel(scope, api, session, attester, queue, online, wipe = { wipes++ }) { kicks++ }
 
     private fun view(vararg items: String) = ok(
         """{"firm_name":"Firm","tz":"America/Toronto","title":"Study permit","note":null,"deadline":1800000000000,"status":"open","expires_at":1900000000000,
@@ -216,6 +217,40 @@ class ClientModelTest {
         val model = model()
         model.add("i1", listOf(Prepared("a.jpg", missing, true)))
         assertEquals("file_unreadable", model.action.value.error)
+        assertTrue(queue.jobs.value.isEmpty())
+    }
+
+    @Test
+    fun aGoneLinkWipesTheScannedPages() = runBlocking {
+        session.start("client-session")
+        server.on("GET /api/c/me", json(404, """{"error":"not_found"}"""))
+        val model = model()
+        assertEquals(ClientState.Gone, ready(model))
+        assertTrue(wipes >= 1)
+    }
+
+    @Test
+    fun endingTheSessionWipesTheScannedPages() = runBlocking {
+        session.start("client-session")
+        server.on("GET /api/c/me", view(fileItem("i1")))
+        val model = model()
+        ready(model)
+        val before = wipes
+        session.end()
+        withTimeout(10_000) { while (wipes == before) kotlinx.coroutines.delay(20) }
+        assertTrue(wipes > before)
+    }
+
+    @Test
+    fun aReplacedSessionWipesWhatTheOldOneLeft() = runBlocking {
+        session.start("old-session")
+        queue.add("i1", "a.jpg", "abc".byteInputStream())
+        server.on("GET /api/c/me", view(fileItem("i1")))
+        val model = model()
+        ready(model)
+        val before = wipes
+        session.start("new-session")
+        withTimeout(10_000) { while (wipes == before) kotlinx.coroutines.delay(20) }
         assertTrue(queue.jobs.value.isEmpty())
     }
 

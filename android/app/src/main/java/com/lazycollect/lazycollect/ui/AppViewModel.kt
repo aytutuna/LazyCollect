@@ -50,8 +50,12 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
     val requests = RequestsModel(viewModelScope, graph.api)
     private val review = File(app.cacheDir, "review")
     val requestsHost = RequestsHost(requests, { id -> RequestModel(viewModelScope, graph.api, id, requests::markOutdated) }, PreviewModel(viewModelScope, graph.api, review))
+    /** The item being scanned, with the scanner that holds its pages; null while no scan is open. */
+    var scanning by mutableStateOf<Pair<ClientItem, ScanModel>?>(null)
+        private set
+
     val clientSession = graph.clientSession
-    val client = ClientModel(viewModelScope, graph.clientApi, graph.clientSession, graph.attester, graph.uploads, graph.online.state) { startUploads(app) }
+    val client = ClientModel(viewModelScope, graph.clientApi, graph.clientSession, graph.attester, graph.uploads, graph.online.state, ::wipeClientFiles) { startUploads(app) }
 
     init {
         val keep = saved.get<String>(CAMERA_URI)?.let { Uri.parse(it).lastPathSegment }
@@ -91,9 +95,16 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
         }
     }
 
-    /** The item being scanned, with the scanner that holds its pages; null while no scan is open. */
-    var scanning by mutableStateOf<Pair<ClientItem, ScanModel>?>(null)
-        private set
+    // Scanned pages hold ID documents, so none of them may outlast the checklist on a phone someone else may pick up.
+    private fun wipeClientFiles() {
+        closeScan()
+        val app = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            File(app.noBackupFilesDir, "scan").deleteRecursively()
+            File(app.cacheDir, "prepared").listFiles().orEmpty().forEach { it.delete() }
+            clearCameraFiles(File(app.cacheDir, "camera"), null)
+        }
+    }
 
     /** Opens the scanner for a file item. Pages left from an earlier scan of the same item are still there. */
     fun scan(item: ClientItem) {
