@@ -103,6 +103,8 @@ dependencies {
     implementation(libs.credentials)
     implementation(libs.credentials.play.services)
     implementation(libs.play.integrity)
+    implementation(libs.work.runtime)
+    implementation(libs.exifinterface)
 
     implementation(libs.okhttp)
     implementation(libs.okhttp.coroutines)

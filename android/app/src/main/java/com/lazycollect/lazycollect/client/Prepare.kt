@@ -1,0 +1,134 @@
+package com.lazycollect.lazycollect.client
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.pdf.PdfDocument
+import android.net.Uri
+import androidx.exifinterface.media.ExifInterface
+import java.io.File
+import java.io.FileOutputStream
+import java.util.UUID
+import kotlin.math.max
+import kotlin.math.roundToInt
+
+private const val LONG_EDGE = 2400
+private const val JPEG_QUALITY = 82
+private const val PAGE_LONG_SIDE = 842f
+
+/** A file ready to be queued. [jpeg] marks the ones that may be merged into one PDF. */
+class Prepared(val name: String, val file: File, val jpeg: Boolean)
+
+/** The size a picture is scaled to so its long side is at most [limit], never larger than it is. */
+fun fitLongEdge(width: Int, height: Int, limit: Int = LONG_EDGE): Pair<Int, Int> {
+    val long = max(width, height)
+    if (long <= limit) return width to height
+    val scale = limit.toDouble() / long
+    return max(1, (width * scale).roundToInt()) to max(1, (height * scale).roundToInt())
+}
+
+/** A PDF page for a picture: the long side is 842 points, as on the web page. */
+fun pageSize(width: Int, height: Int): Pair<Int, Int> {
+    val scale = PAGE_LONG_SIDE / max(width, height)
+    return max(1, (width * scale).roundToInt()) to max(1, (height * scale).roundToInt())
+}
+
+/** Several pictures go as one PDF when it will fit in what the server takes. */
+fun shouldCombine(sizes: List<Long>): Boolean = sizes.size > 1 && sizes.sumOf { it + 2048 } <= MAX_UPLOAD
+
+fun withExtension(name: String, ext: String): String = name.substringBeforeLast('.', name).ifBlank { "file" } + ".$ext"
+
+class Prepare(private val context: Context) {
+    private val dir = File(context.cacheDir, "prepared").apply { mkdirs() }
+
+    /** A picture becomes a JPEG at most 2400 px on its long side; a PDF or anything else is copied as it is. Null when it cannot be read. */
+    fun read(uri: Uri, name: String): Prepared? {
+        val resolver = context.contentResolver
+        val type = resolver.getType(uri).orEmpty()
+        val out = File(dir, UUID.randomUUID().toString())
+        if (type.startsWith("image/")) {
+            val bitmap = decode(uri) ?: return copy(uri, name, out)
+            return try {
+                val flat = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+                Canvas(flat).apply {
+                    drawColor(Color.WHITE)
+                    drawBitmap(bitmap, 0f, 0f, null)
+                }
+                FileOutputStream(out).use { flat.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, it) }
+                flat.recycle()
+                Prepared(withExtension(name, "jpg"), out, true)
+            } finally {
+                bitmap.recycle()
+            }
+        }
+        return copy(uri, name, out)
+    }
+
+    private fun copy(uri: Uri, name: String, out: File): Prepared? {
+        val input = context.contentResolver.openInputStream(uri) ?: return null
+        input.use { i -> out.outputStream().use { i.copyTo(it) } }
+        return Prepared(name, out, false)
+    }
+
+    private fun decode(uri: Uri): Bitmap? {
+        val resolver = context.contentResolver
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+        if (bounds.outWidth <= 0) return null
+        var sample = 1
+        while (max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= LONG_EDGE) sample *= 2
+        val raw = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) } ?: return null
+        val orientation = resolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) } ?: ExifInterface.ORIENTATION_NORMAL
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+        }
+        val (w, h) = fitLongEdge(raw.width, raw.height)
+        matrix.postScale(w.toFloat() / raw.width, h.toFloat() / raw.height)
+        val turned = Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, matrix, true)
+        if (turned !== raw) raw.recycle()
+        return turned
+    }
+
+    /** One page per picture. Null when the result is too big for the server, so the pictures go on their own. */
+    fun combine(parts: List<Prepared>, name: String): Prepared? {
+        val doc = PdfDocument()
+        try {
+            parts.forEachIndexed { index, part ->
+                val bitmap = BitmapFactory.decodeFile(part.file.path) ?: return null
+                val (w, h) = pageSize(bitmap.width, bitmap.height)
+                val page = doc.startPage(PdfDocument.PageInfo.Builder(w, h, index + 1).create())
+                page.canvas.drawBitmap(bitmap, null, android.graphics.Rect(0, 0, w, h), Paint(Paint.FILTER_BITMAP_FLAG))
+                doc.finishPage(page)
+                bitmap.recycle()
+            }
+            val out = File(dir, UUID.randomUUID().toString())
+            FileOutputStream(out).use { doc.writeTo(it) }
+            if (out.length() > MAX_UPLOAD) {
+                out.delete()
+                return null
+            }
+            return Prepared(withExtension(name, "pdf"), out, false)
+        } finally {
+            doc.close()
+        }
+    }
+
+    /** Pictures chosen together are merged into one PDF named after the item when they fit. */
+    fun all(uris: List<Pair<Uri, String>>, label: String): List<Prepared> {
+        val read = uris.mapNotNull { (uri, name) -> read(uri, name) }
+        val jpegs = read.filter { it.jpeg }
+        if (!shouldCombine(jpegs.map { it.file.length() })) return read
+        val pdf = combine(jpegs, label) ?: return read
+        jpegs.forEach { it.file.delete() }
+        return read.filter { !it.jpeg } + pdf
+    }
+}
