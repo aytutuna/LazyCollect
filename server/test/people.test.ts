@@ -52,9 +52,12 @@ describe("people on a new request", () => {
     // the firm's day, not UTC's: they differ for hours every evening
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Toronto" });
     const thisYear = Number(today.slice(0, 4));
-    const day = (y: number) => `${y}${today.slice(4)}`;
+    // on Feb 29 the same date 18 years back may not exist
+    const leapDay = today.endsWith("-02-29");
+    const turned = leapDay ? `${thisYear - 18}-02-28` : `${thisYear - 18}${today.slice(4)}`;
+    const notYet = leapDay ? `${thisYear - 18}-03-01` : `${thisYear - 17}${today.slice(4)}`;
     const items = [{ label: "Passport", per_person: "adults", required: true }];
-    const { req } = await family({ items, people: [{ role: "child", name: "Turned", dob: day(thisYear - 18) }, { role: "child", name: "Not yet", dob: day(thisYear - 18 + 1) }] });
+    const { req } = await family({ items, people: [{ role: "child", name: "Turned", dob: turned }, { role: "child", name: "Not yet", dob: notYet }] });
     expect(labels(req)).toEqual(["Passport — Turned"]);
   });
 
