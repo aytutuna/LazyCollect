@@ -15,13 +15,16 @@ describe("firm write limit", () => {
   it("answers 429 after 120 writes a minute, for that firm only", async () => {
     const a = await login("a@firm.test");
     const b = await login("b@firm.test");
+    // the limiter counts in fixed one-minute windows, so the writes must not straddle a minute
+    const left = 60_000 - (Date.now() % 60_000);
+    if (left < 20_000) await new Promise((r) => setTimeout(r, left + 100));
     const statuses: number[] = [];
     for (let i = 0; i < 121; i++) statuses.push((await api("/api/templates/none", { method: "DELETE", cookie: a })).status);
     expect(statuses.slice(0, 120).every((s) => s === 404)).toBe(true);
     expect(statuses[120]).toBe(429);
     expect((await api("/api/templates/none", { method: "DELETE", cookie: b })).status).toBe(404);
     expect((await api("/api/templates", { cookie: a })).status).toBe(200);
-  }, 30_000);
+  }, 60_000);
 });
 
 describe("export limit", () => {
