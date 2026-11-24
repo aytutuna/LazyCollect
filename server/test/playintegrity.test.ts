@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { attested, bindingHash, issueChallenge } from "../src/attest";
 import { ANDROID_PACKAGE } from "../src/playintegrity";
+import { mockOutbound } from "./helpers";
 import { goodVerdict, playFake, type Verdict } from "./play-fake";
 
 const b64url = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
@@ -12,7 +13,9 @@ async function attempt(data: string, edit: (v: Verdict) => void = () => {}, stat
   const challenge = await issueChallenge(env);
   const verdict = goodVerdict(await hashFor(challenge, data));
   edit(verdict);
-  playFake({ tok: verdict }, status);
+  mockOutbound();
+  playFake.tokens = { tok: verdict };
+  playFake.status = status;
   return { challenge, ok: await attested(env, "android", { challenge, token: "tok" }, data) };
 }
 
@@ -22,14 +25,14 @@ describe("Play Integrity", () => {
   });
 
   it("is off, and needs nothing from the app, until the service account is set", async () => {
-    const calls = playFake({});
+    mockOutbound();
     const off = Object.create(env, { PLAY_INTEGRITY_SA: { value: undefined } });
     expect(await attested(off, "android", undefined, "a@firm.test")).toBe(true);
-    expect(calls).toHaveLength(0);
+    expect(playFake.calls).toHaveLength(0);
   });
 
   it("refuses a missing or malformed attestation", async () => {
-    playFake({});
+    mockOutbound();
     expect(await attested(env, "android", undefined, "x")).toBe(false);
     expect(await attested(env, "android", { challenge: "c" }, "x")).toBe(false);
     expect(await attested(env, "android", { token: "t" }, "x")).toBe(false);
@@ -37,24 +40,27 @@ describe("Play Integrity", () => {
   });
 
   it("refuses a challenge it never issued or that has expired", async () => {
-    playFake({ tok: goodVerdict(await hashFor("made-up", "x")) });
+    mockOutbound();
+    playFake.tokens = { tok: goodVerdict(await hashFor("made-up", "x")) };
     expect(await attested(env, "android", { challenge: "made-up", token: "tok" }, "x")).toBe(false);
     const challenge = await issueChallenge(env);
     await env.CONTROL.prepare("UPDATE app_challenges SET expires_at = ?").bind(Date.now() - 1).run();
-    playFake({ tok: goodVerdict(await hashFor(challenge, "x")) });
+    playFake.tokens = { tok: goodVerdict(await hashFor(challenge, "x")) };
     expect(await attested(env, "android", { challenge, token: "tok" }, "x")).toBe(false);
   });
 
   it("refuses a replayed challenge", async () => {
     const { challenge, ok } = await attempt("a@firm.test");
     expect(ok).toBe(true);
-    playFake({ tok: goodVerdict(await hashFor(challenge, "a@firm.test")) });
+    mockOutbound();
+    playFake.tokens = { tok: goodVerdict(await hashFor(challenge, "a@firm.test")) };
     expect(await attested(env, "android", { challenge, token: "tok" }, "a@firm.test")).toBe(false);
   });
 
   it("refuses a token made for other request data", async () => {
     const challenge = await issueChallenge(env);
-    playFake({ tok: goodVerdict(await hashFor(challenge, "a@firm.test")) });
+    mockOutbound();
+    playFake.tokens = { tok: goodVerdict(await hashFor(challenge, "a@firm.test")) };
     expect(await attested(env, "android", { challenge, token: "tok" }, "b@firm.test")).toBe(false);
   });
 

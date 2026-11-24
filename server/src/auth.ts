@@ -15,7 +15,7 @@ const MAX_FAILED_PER_DAY = 10;
 const TRIAL_DAYS = 14;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function need(env: Env, ...names: (keyof Env)[]) {
+export function need(env: Env, ...names: (keyof Env)[]) {
   for (const n of names) if (!env[n]) throw new Error(`${n} is not set`);
 }
 

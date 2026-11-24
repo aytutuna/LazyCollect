@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { account, purgeClosed } from "./account";
 import { activity } from "./activity";
+import { native } from "./app";
 import { auth } from "./auth";
 import { batches, runBatches } from "./batches";
 import { billing, stripeWebhook } from "./billing";
@@ -53,6 +54,7 @@ app.route("/api", stripeWebhook);
 app.use("/api/*", csrf, loadSession);
 app.get("/api/health", (c) => c.json({ ok: true }));
 app.route("/api", auth);
+app.route("/api", native);
 app.route("/api", pending);
 app.route("/api", client);
 app.route("/api", uploads);

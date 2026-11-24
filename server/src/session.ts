@@ -136,7 +136,8 @@ export async function loadPending(c: Context<AppEnv>): Promise<Pending | null> {
 }
 
 export async function endPending(c: Context<AppEnv>) {
-  const token = bearerOf(c, "Pending") ?? getCookie(c, PENDING_COOKIE);
+  const fromApp = bearerOf(c, "Pending");
+  const token = fromApp ?? getCookie(c, PENDING_COOKIE);
   if (token) await c.env.CONTROL.prepare("DELETE FROM pending_logins WHERE token_hash = ?").bind(await sha256(token)).run();
-  deleteCookie(c, PENDING_COOKIE, { path: "/", secure: true });
+  if (!fromApp) deleteCookie(c, PENDING_COOKIE, { path: "/", secure: true });
 }

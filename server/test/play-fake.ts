@@ -1,4 +1,3 @@
-import { vi } from "vitest";
 import { ANDROID_PACKAGE } from "../src/playintegrity";
 
 export type Verdict = {
@@ -15,20 +14,22 @@ export function goodVerdict(requestHash: string): Verdict {
   };
 }
 
-// Google's token endpoint and decodeIntegrityToken: a token string maps to the verdict the fake decodes it to
-export function playFake(tokens: Record<string, Verdict>, status = 200) {
-  const real = globalThis.fetch;
-  const calls: string[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const url = input instanceof Request ? input.url : String(input);
+// Google's token endpoint and decodeIntegrityToken, answered through mockOutbound: a token string maps to the verdict
+// the fake decodes it to
+export const playFake = {
+  tokens: {} as Record<string, Verdict>,
+  status: 200,
+  calls: [] as string[],
+  reset() {
+    this.tokens = {};
+    this.status = 200;
+    this.calls = [];
+  },
+  handle(url: string, init?: RequestInit): Response {
     if (url === "https://oauth.test/token") return Response.json({ access_token: "ya29.test", expires_in: 3600 });
-    if (url.startsWith("https://play.test/")) {
-      calls.push(url);
-      if (status !== 200) return Response.json({ error: { code: status } }, { status });
-      const verdict = tokens[JSON.parse(String(init?.body)).integrity_token];
-      return verdict ? Response.json({ tokenPayloadExternal: verdict }) : Response.json({ error: { code: 400 } }, { status: 400 });
-    }
-    return real(input, init);
-  });
-  return calls;
-}
+    this.calls.push(url);
+    if (this.status !== 200) return Response.json({ error: { code: this.status } }, { status: this.status });
+    const verdict = this.tokens[JSON.parse(String(init?.body)).integrity_token];
+    return verdict ? Response.json({ tokenPayloadExternal: verdict }) : Response.json({ error: { code: 400 } }, { status: 400 });
+  },
+};

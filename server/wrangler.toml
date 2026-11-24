@@ -3,6 +3,8 @@
 # STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET (billing; STRIPE_PRICE_ID below is a plain var, not a secret)
 # PLAY_INTEGRITY_SA (the service account JSON that may call Play Integrity's decodeIntegrityToken): the Android check
 # in the app endpoints stays off until it is set
+# APP_ATTEST_ENV (production, development or any): turns on the iPhone check; ANDROID_CERT_SHA256 (the app's signing
+# certificate SHA-256 fingerprints, comma separated): for the Android passkey origin and /.well-known/assetlinks.json
 # For wrangler dev put the same names in .dev.vars (gitignored), plus
 # APP_URL=http://localhost:8787 so the origin check and email links match.
 
@@ -86,6 +88,11 @@ simple = { limit = 60, period = 60 }
 name = "NOTE"
 namespace_id = "2008"
 simple = { limit = 6, period = 60 }
+
+[[ratelimits]]
+name = "APP"
+namespace_id = "2009"
+simple = { limit = 30, period = 60 }
 
 [triggers]
 crons = ["*/10 * * * *"]
