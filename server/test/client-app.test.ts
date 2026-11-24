@@ -97,6 +97,19 @@ describe("client app session", () => {
     expect((await upload("/api/c/me", "x".repeat(32), pdf(100), { headers: bearer(token) })).status).toBe(404);
   });
 
+  it("slides only while the link is live, so a dead link's session still expires", async () => {
+    const { token } = await clientApp();
+    const old = Date.now() - 2 * 3_600_000;
+    const expiry = () => env.CONTROL.prepare("SELECT expires_at FROM client_sessions").first<{ expires_at: number }>().then((r) => r!.expires_at);
+    await env.CONTROL.prepare("UPDATE client_sessions SET last_seen_at = ?, expires_at = ?").bind(old, old + 60_000_000).run();
+    await env.DB_NA.prepare("UPDATE links SET revoked_at = ?").bind(Date.now()).run();
+    expect((await api("/api/c/me", { headers: bearer(token) })).status).toBe(404);
+    expect(await expiry()).toBe(old + 60_000_000);
+    await env.DB_NA.prepare("UPDATE links SET revoked_at = NULL").run();
+    expect((await api("/api/c/me", { headers: bearer(token) })).status).toBe(200);
+    expect(await expiry()).toBeGreaterThan(old + 60_000_000);
+  });
+
   it("ends on logout, on expiry and when the token is wrong", async () => {
     const { token } = await clientApp();
     expect((await api("/api/c/me", { headers: bearer("nope") })).status).toBe(404);

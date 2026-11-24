@@ -4,7 +4,7 @@ import { isRegion, regionOf, type Region } from "./regions";
 import { NEWEST } from "./notes";
 import { presentItem, visible } from "./questions";
 import { canSend, sendersOf } from "./reminders";
-import { loadClientSession, type AppEnv } from "./session";
+import { loadClientSession, slideClientSession, type AppEnv } from "./session";
 import { HOUR, hmac, ipPrefix, randomId } from "./util";
 import { notFound } from "./validate";
 
@@ -45,9 +45,14 @@ export async function findLink(env: Env, token: string): Promise<LiveLink | null
 // keeps only the link's hash, so a revoked or expired link ends it too.
 export async function linkOf(c: Context<AppEnv>): Promise<LiveLink | null> {
   const token = c.req.param("token") ?? "";
-  if (token !== "me") return findLink(c.env, token);
+  return token !== "me" ? findLink(c.env, token) : sessionLink(c);
+}
+
+export async function sessionLink(c: Context<AppEnv>): Promise<LiveLink | null> {
   const session = await loadClientSession(c);
-  return session && isRegion(session.region) ? linkByHash(c.env, session.region, session.linkHash) : null;
+  const link = session && isRegion(session.region) ? await linkByHash(c.env, session.region, session.linkHash) : null;
+  if (session && link) await slideClientSession(c, session);
+  return link;
 }
 
 // what the client sees: the items that apply to them, with their files and the answers they gave

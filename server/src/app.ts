@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { need, normalizeEmail, rateLimited, sendCode, verifyCode } from "./auth";
 import { attestKey, attested, checked, issueChallenge, usable } from "./attest";
-import { findLink } from "./client";
+import { findLink, sessionLink } from "./client";
 import { bearerOf, createClientSession, isApp, type AppEnv } from "./session";
 import { sha256 } from "./util";
 import { invalid, notFound, readBody, text } from "./validate";
@@ -70,9 +70,11 @@ async function setPush(c: Context<AppEnv>, push: string | null) {
   if (!token) return c.json({ error: "unauthorized" }, 401);
   const hash = await sha256(token);
   const now = Date.now();
+  // a client session whose link is gone has nothing to be notified about
+  const live = await sessionLink(c);
   const [staff, client] = await c.env.CONTROL.batch([
     c.env.CONTROL.prepare("UPDATE sessions SET push_token = ? WHERE token_hash = ? AND app IS NOT NULL AND expires_at > ?").bind(push, hash, now),
-    c.env.CONTROL.prepare("UPDATE client_sessions SET push_token = ? WHERE token_hash = ? AND expires_at > ?").bind(push, hash, now),
+    c.env.CONTROL.prepare("UPDATE client_sessions SET push_token = ? WHERE token_hash = ? AND expires_at > ? AND ?").bind(push, hash, now, live ? 1 : 0),
   ]);
   if (staff.meta.changes + client.meta.changes === 0) return c.json({ error: "unauthorized" }, 401);
   // a device that signs in as someone else keeps its token, so the old session must stop receiving it

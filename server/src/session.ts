@@ -73,7 +73,7 @@ export async function endSession(c: Context<AppEnv>) {
   deleteCookie(c, COOKIE, { path: "/", secure: true });
 }
 
-export type ClientSession = { tokenHash: string; region: string; linkHash: string };
+export type ClientSession = { tokenHash: string; region: string; linkHash: string; lastSeenAt: number };
 
 export async function createClientSession(c: Context<AppEnv>, region: string, linkHash: string, app: App): Promise<string> {
   const token = randomToken();
@@ -84,20 +84,23 @@ export async function createClientSession(c: Context<AppEnv>, region: string, li
   return token;
 }
 
-// An app's session for a client. Whether the link behind it still works is checked by whoever uses it.
+// An app's session for a client. Whether the link behind it still works is checked by whoever uses it, which then
+// slides the session; one whose link is gone is left to expire.
 export async function loadClientSession(c: Context<AppEnv>): Promise<ClientSession | null> {
   const token = bearerOf(c);
   if (!token) return null;
   const tokenHash = await sha256(token);
-  const now = Date.now();
   const row = await c.env.CONTROL.prepare("SELECT region, link_hash, last_seen_at FROM client_sessions WHERE token_hash = ? AND expires_at > ?")
-    .bind(tokenHash, now)
+    .bind(tokenHash, Date.now())
     .first<{ region: string; link_hash: string; last_seen_at: number }>();
-  if (!row) return null;
-  if (now - row.last_seen_at > HOUR) {
-    await c.env.CONTROL.prepare("UPDATE client_sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?").bind(now, now + LIFETIME, tokenHash).run();
+  return row && { tokenHash, region: row.region, linkHash: row.link_hash, lastSeenAt: row.last_seen_at };
+}
+
+export async function slideClientSession(c: Context<AppEnv>, session: ClientSession) {
+  const now = Date.now();
+  if (now - session.lastSeenAt > HOUR) {
+    await c.env.CONTROL.prepare("UPDATE client_sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?").bind(now, now + LIFETIME, session.tokenHash).run();
   }
-  return { tokenHash, region: row.region, linkHash: row.link_hash };
 }
 
 export const loadSession: MiddlewareHandler<AppEnv> = async (c, next) => {

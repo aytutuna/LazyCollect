@@ -38,6 +38,13 @@ describe("push registration", () => {
     expect(await stored("client_sessions", token)).toBe("fcm-c");
   });
 
+  it("is refused for a client session whose link is gone", async () => {
+    const token = await clientApp();
+    await env.DB_NA.prepare("UPDATE links SET revoked_at = ?").bind(Date.now()).run();
+    expect((await register(token, "fcm-c")).status).toBe(401);
+    expect(await stored("client_sessions", token)).toBeNull();
+  });
+
   it("goes with the session", async () => {
     const web = await login();
     const token = await staffApp();
