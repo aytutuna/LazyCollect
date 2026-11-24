@@ -119,11 +119,13 @@ class UploadQueue(private val dir: File, private val api: Api, private val now: 
         flow.value = next
     }
 
-    /** Sends what is waiting, once each. [Pass.Later] means a try failed for a reason that may pass. */
+    /** Sends what is waiting, once each, including files added while it runs. [Pass.Later] means a try failed for a reason that may pass. */
     suspend fun run(): Pass = lock.withLock {
         var later = false
-        for (job in flow.value.filter { it.failed == null }) {
-            if (job.id !in flow.value.map { it.id }) continue
+        val attempted = HashSet<String>()
+        while (true) {
+            val job = flow.value.firstOrNull { it.failed == null && it.id !in attempted } ?: break
+            attempted += job.id
             if (!data(job.id).exists()) {
                 change(job.id) { it.copy(failed = "missing_file") }
                 continue

@@ -8,7 +8,13 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
 import kotlin.io.path.createTempDirectory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import mockwebserver3.MockResponse
+import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -49,6 +55,22 @@ class UploadQueueTest {
         assertEquals("Bearer client-token", request.headers["Authorization"])
         assertTrue(q.jobs.value.isEmpty())
         assertTrue(dir.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun aFileAddedDuringAPassGoesInTheSamePass() = runBlocking {
+        val slow = MockResponse.Builder().code(201).addHeader("Content-Type", "application/json").body("""{"id":"f1","name":"a.jpg","size":3,"uploaded_at":1}""")
+            .headersDelay(400, TimeUnit.MILLISECONDS).build()
+        server.on("PUT /api/c/me/items/i1/files", slow)
+        server.on("PUT /api/c/me/items/i2/files", created)
+        val q = queue()
+        q.add("i1", "a.jpg", bytes("abc"))
+        val pass = async(Dispatchers.Default) { q.run() }
+        withTimeout(5_000) { while (server.calls("PUT /api/c/me/items/i1/files").isEmpty()) delay(10) }
+        q.add("i2", "b.jpg", bytes("def"))
+        assertEquals(Pass.Done, pass.await())
+        assertEquals(1, server.calls("PUT /api/c/me/items/i2/files").size)
+        assertTrue(q.jobs.value.isEmpty())
     }
 
     @Test

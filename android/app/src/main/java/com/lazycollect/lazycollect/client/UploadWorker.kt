@@ -50,5 +50,5 @@ fun startUploads(context: Context) {
         .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
         .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
         .build()
-    WorkManager.getInstance(context).enqueueUniqueWork("uploads", ExistingWorkPolicy.REPLACE, work)
+    WorkManager.getInstance(context).enqueueUniqueWork("uploads", ExistingWorkPolicy.APPEND_OR_REPLACE, work)
 }
