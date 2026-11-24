@@ -7,8 +7,14 @@ const CHALLENGE_TTL = 5 * MINUTE;
 
 export type Attestation = { challenge?: unknown; token?: unknown; key_id?: unknown; assertion?: unknown };
 
-// whether the server checks this platform at all; the app skips asking its OS for a proof when it does not
-export const checked = (env: Env, platform: App) => (platform === "android" ? Boolean(env.PLAY_INTEGRITY_SA) : Boolean(env.APP_ATTEST_ENV));
+// whether the server checks this platform; the app skips asking its OS for a proof when it does not
+export const checked = (env: Env, platform: App) => !skipped(env, platform) && (platform === "android" ? Boolean(env.PLAY_INTEGRITY_SA) : Boolean(env.APP_ATTEST_ENV));
+
+// APP_ATTEST_OFF exists so local development can run without Play Integrity or App Attest. It goes in .dev.vars only,
+// never in wrangler.toml: a platform with no check and not listed here is refused instead of waved through.
+const skipped = (env: Env, platform: App) => (env.APP_ATTEST_OFF ?? "").split(",").some((p) => p.trim() === platform);
+
+export const usable = (env: Env, platform: App) => skipped(env, platform) || checked(env, platform);
 
 export async function issueChallenge(env: Env): Promise<string> {
   const challenge = randomToken();
@@ -29,10 +35,10 @@ export async function bindingHash(challenge: string, data: string): Promise<Uint
 
 const b64url = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 
-// Each platform's check stays off until its config is set, so the endpoints can ship before the Play Integrity service
-// account exists or App Attest is switched on. Turnstile does not run in the apps; the rate limits are what is left then.
+// Turnstile does not run in the apps, so a platform without a working check is not usable at all (see usable).
 export async function attested(env: Env, platform: App, att: unknown, data: string): Promise<boolean> {
-  if (!checked(env, platform)) return true;
+  if (skipped(env, platform)) return true;
+  if (!checked(env, platform)) return false;
   if (!att || typeof att !== "object") return false;
   const { challenge, token, key_id, assertion } = att as Attestation;
   if (typeof challenge !== "string" || !(await takeChallenge(env, challenge))) return false;

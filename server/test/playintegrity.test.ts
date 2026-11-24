@@ -24,9 +24,11 @@ describe("Play Integrity", () => {
     expect((await attempt("a@firm.test")).ok).toBe(true);
   });
 
-  it("is off, and needs nothing from the app, until the service account is set", async () => {
+  it("refuses without the service account, and needs nothing from the app when listed in APP_ATTEST_OFF", async () => {
     mockOutbound();
-    const off = Object.create(env, { PLAY_INTEGRITY_SA: { value: undefined } });
+    const unset = Object.create(env, { PLAY_INTEGRITY_SA: { value: undefined } });
+    expect(await attested(unset, "android", undefined, "a@firm.test")).toBe(false);
+    const off = Object.create(unset, { APP_ATTEST_OFF: { value: "ios, android" } });
     expect(await attested(off, "android", undefined, "a@firm.test")).toBe(true);
     expect(playFake.calls).toHaveLength(0);
   });

@@ -12,6 +12,7 @@ interface Secrets {
   PLAY_INTEGRITY_BASE?: string;
   APP_ATTEST_ENV?: string;
   APP_ATTEST_ROOT?: string;
+  APP_ATTEST_OFF?: string;
   ANDROID_CERT_SHA256?: string;
 }
 interface Env extends Secrets {}

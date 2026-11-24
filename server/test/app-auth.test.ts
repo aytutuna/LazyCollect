@@ -26,7 +26,21 @@ describe("app challenge", () => {
     const body = await res.json<any>();
     expect(body.challenge.length).toBeGreaterThan(30);
     expect(body.required).toBe(true);
-    expect((await (await post("/api/app/challenge", { platform: "ios" })).json<any>()).required).toBe(false);
+  });
+
+  it("is unavailable for a platform with no check set up, unless it is listed in APP_ATTEST_OFF", async () => {
+    expect((await post("/api/app/challenge", { platform: "ios" })).status).toBe(503);
+    expect(await (await post("/api/app/challenge", { platform: "ios" })).json()).toEqual({ error: "unavailable" });
+    expect((await post("/api/app/attest", { key_id: "a", challenge: "b", attestation: "c" })).status).toBe(503);
+    expect((await post("/api/app/auth/start", { email: EMAIL, platform: "ios" })).status).toBe(503);
+    expect((await post("/api/app/client/exchange", { token: "x", platform: "ios" })).status).toBe(503);
+    env.APP_ATTEST_OFF = "ios";
+    try {
+      const body = await (await post("/api/app/challenge", { platform: "ios" })).json<any>();
+      expect(body.required).toBe(false);
+    } finally {
+      env.APP_ATTEST_OFF = undefined;
+    }
   });
 
   it("refuses an unknown platform and a request without the X-Collect header", async () => {
@@ -82,10 +96,12 @@ describe("app sign-in", () => {
     expect((await post("/api/app/auth/verify", { email: EMAIL, code: "123456" })).status).toBe(400);
   });
 
-  it("takes no proof while Play Integrity is not set up, and still rate limits", async () => {
+  it("takes no proof for a platform in APP_ATTEST_OFF, and still rate limits", async () => {
     const sent = mockOutbound();
     const saved = env.PLAY_INTEGRITY_SA;
     env.PLAY_INTEGRITY_SA = undefined;
+    expect((await post("/api/app/auth/start", { email: EMAIL, platform: "android" })).status).toBe(503);
+    env.APP_ATTEST_OFF = "android";
     try {
       expect((await post("/api/app/auth/start", { email: EMAIL, platform: "android" })).status).toBe(200);
       expect(sent).toHaveLength(1);
@@ -94,6 +110,7 @@ describe("app sign-in", () => {
       expect(last).toBe(429);
     } finally {
       env.PLAY_INTEGRITY_SA = saved;
+      env.APP_ATTEST_OFF = undefined;
     }
   });
 

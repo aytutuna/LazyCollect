@@ -67,15 +67,18 @@ describe("client app session", () => {
     expect((await exchange(linkToken, "android", good)).status).toBe(400);
   });
 
-  it("takes no proof while Play Integrity is not set up", async () => {
+  it("takes no proof for a platform in APP_ATTEST_OFF", async () => {
     const linkToken = (await openRequest()).path.split("/c/")[1];
     mockOutbound();
     const saved = env.PLAY_INTEGRITY_SA;
     env.PLAY_INTEGRITY_SA = undefined;
+    expect((await post("/api/app/client/exchange", { token: linkToken, platform: "android" })).status).toBe(503);
+    env.APP_ATTEST_OFF = "android";
     try {
       expect((await post("/api/app/client/exchange", { token: linkToken, platform: "android" })).status).toBe(200);
     } finally {
       env.PLAY_INTEGRITY_SA = saved;
+      env.APP_ATTEST_OFF = undefined;
     }
   });
 
