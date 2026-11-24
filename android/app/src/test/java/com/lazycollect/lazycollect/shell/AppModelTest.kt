@@ -145,6 +145,17 @@ class AppModelTest {
     }
 
     @Test
+    fun loadingTheFirmAgainKeepsAFormThatIsOpen() = runBlocking {
+        server.on("GET /api/firm", ok("""{"name":"Old","tz":"America/Toronto"}"""))
+        val firm = FirmModel(scope, api) {}
+        firm.loadOnce()
+        withTimeout(10_000) { firm.state.first { it.firm != null } }
+        firm.loadOnce()
+        assertEquals("Old", firm.state.value.firm?.name)
+        assertEquals(1, server.calls("GET /api/firm").size)
+    }
+
+    @Test
     fun aPlanThatEndedIsRemembered() = runBlocking {
         server.on("GET /api/me", me())
         server.on("PATCH /api/firm", json(402, """{"error":"plan"}"""))

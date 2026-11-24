@@ -19,6 +19,12 @@ class FirmModel(private val scope: CoroutineScope, private val api: Api, private
 
     val state: StateFlow<FirmState> get() = flow
 
+    /** For a screen that may be composed again with the form half filled in. */
+    fun loadOnce() {
+        val now = flow.value
+        if (now.firm == null && now.error == null) load()
+    }
+
     fun load() {
         flow.value = FirmState()
         job = scope.launch {

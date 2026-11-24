@@ -50,7 +50,7 @@ fun Root(vm: AppViewModel) {
                 ClosedScreen(account, System.currentTimeMillis(), action, vm.account::reopen, vm.account::signOut)
             } else if (account.firm.name.isNullOrEmpty()) {
                 val firm by vm.firm.state.collectAsStateWithLifecycle()
-                LaunchedEffect(Unit) { vm.firm.load() }
+                LaunchedEffect(Unit) { vm.firm.loadOnce() }
                 SetupScreen(firm, account.user.owner, vm.firm::save, vm.firm::load, vm.account::signOut)
             } else {
                 val devices by vm.devices.state.collectAsStateWithLifecycle()
