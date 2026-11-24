@@ -121,7 +121,7 @@ class SignInModel(
 
     private fun done(token: String) {
         pending = null
-        flow.value = SignInState()
         signedIn(token)
+        flow.value = SignInState()
     }
 }
