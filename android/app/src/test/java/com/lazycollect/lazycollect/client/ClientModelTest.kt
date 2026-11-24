@@ -216,6 +216,19 @@ class ClientModelTest {
     }
 
     @Test
+    fun aFileThatWentReloadsTheChecklist() = runBlocking {
+        session.start("client-session")
+        server.on("GET /api/c/me", view(fileItem("i1")), view(fileItem("i1", "submitted")))
+        val model = model()
+        ready(model)
+        queue.add("i1", "a.jpg", "abc".byteInputStream())
+        queue.remove(queue.jobs.value.single().id)
+        val state = withTimeout(10_000) { model.state.first { it is ClientState.Ready && it.view.items.single().status == "submitted" } }
+        assertTrue(state is ClientState.Ready)
+        assertEquals(2, server.calls("GET /api/c/me").size)
+    }
+
+    @Test
     fun staysQuietWhenTheConnectionNeverWentAway() = runBlocking {
         session.start("client-session")
         server.on("GET /api/c/me", view(fileItem("i1")))

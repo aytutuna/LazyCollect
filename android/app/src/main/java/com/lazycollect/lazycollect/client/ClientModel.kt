@@ -70,6 +70,14 @@ class ClientModel(
             }
         }
         scope.launch {
+            var waiting = queue.jobs.value.size
+            queue.jobs.collect {
+                // a file that went (or was dropped) changes what the checklist should show
+                if (it.size < waiting && session.token.value != null) load()
+                waiting = it.size
+            }
+        }
+        scope.launch {
             var was = online.value
             online.collect {
                 // coming back online sends what waited and refreshes a page that may have gone stale
