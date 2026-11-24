@@ -71,10 +71,15 @@ fun ShellScreen(me: Me, planEnded: Boolean, devices: DevicesState, actions: Shel
                         NavigationBarItem(
                             selected = current?.destination?.route?.startsWith(tab.route) == true || (current == null && start == tab.route),
                             onClick = {
-                                nav.navigate(tab.route) {
-                                    popUpTo(nav.graph.findStartDestination().id) { saveState = true }
-                                    launchSingleTop = true
-                                    restoreState = true
+                                // the tab's own page again, from a page inside it
+                                if (current?.destination?.route?.startsWith(tab.route) == true) {
+                                    nav.popBackStack(tab.route, inclusive = false)
+                                } else {
+                                    nav.navigate(tab.route) {
+                                        popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
                                 }
                             },
                             icon = { Icon(painterResource(tab.icon), contentDescription = null) },
