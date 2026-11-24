@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -47,11 +49,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import com.lazycollect.lazycollect.R
 import com.lazycollect.lazycollect.client.ClientState
 import com.lazycollect.lazycollect.client.Job
@@ -437,6 +443,8 @@ private fun TypedAnswer(item: ClientItem, locked: Boolean, actions: ClientAction
     val saved = item.answerText
     var text by rememberSaveable(item.id, saved) { mutableStateOf(saved) }
     var bad by rememberSaveable(item.id) { mutableStateOf(false) }
+    // the last value handed over, so focus loss, the Done key and leaving the app never send the same text twice
+    var sent by remember(item.id, saved) { mutableStateOf(saved) }
     if (locked && item.approved) {
         Text(saved)
         return
@@ -445,11 +453,35 @@ private fun TypedAnswer(item: ClientItem, locked: Boolean, actions: ClientAction
         DateField(stringResource(R.string.client_answer_text), saved, !locked, null) { actions.answer(item.id, it?.let(::JsonPrimitive)) }
         return
     }
+    fun commit() {
+        val value = text.trim()
+        if (value == sent.trim()) return
+        when {
+            value.isEmpty() -> actions.answer(item.id, null)
+            item.kind == "number" -> {
+                val n = numberAnswer(value)
+                if (n == null) {
+                    bad = true
+                    return
+                }
+                actions.answer(item.id, JsonPrimitive(n))
+            }
+            else -> actions.answer(item.id, JsonPrimitive(value))
+        }
+        sent = value
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { if (!locked) commit() }
+    val focus = LocalFocusManager.current
     OutlinedTextField(
         value = text,
         onValueChange = { text = it.take(if (item.kind == "longtext") 5000 else 500); bad = false },
         enabled = !locked,
         singleLine = item.kind != "longtext",
+        keyboardOptions = if (item.kind == "longtext") KeyboardOptions.Default else KeyboardOptions(imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = {
+            commit()
+            focus.clearFocus()
+        }),
         label = { Text(stringResource(R.string.client_answer_text)) },
         isError = bad,
         supportingText = {
@@ -457,15 +489,7 @@ private fun TypedAnswer(item: ClientItem, locked: Boolean, actions: ClientAction
                 bad -> Text(stringResource(R.string.client_number_invalid))
             }
         },
-        modifier = Modifier.fillMaxWidth().onFocusChanged {
-            if (it.isFocused || text == saved) return@onFocusChanged
-            val value = text.trim()
-            when {
-                value.isEmpty() -> actions.answer(item.id, null)
-                item.kind == "number" -> numberAnswer(value)?.let { n -> actions.answer(item.id, JsonPrimitive(n)) } ?: run { bad = true }
-                else -> actions.answer(item.id, JsonPrimitive(value))
-            }
-        },
+        modifier = Modifier.fillMaxWidth().onFocusChanged { if (!it.isFocused) commit() },
     )
 }
 
