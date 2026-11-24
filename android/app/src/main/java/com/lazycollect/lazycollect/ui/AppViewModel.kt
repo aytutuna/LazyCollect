@@ -1,6 +1,7 @@
 package com.lazycollect.lazycollect.ui
 
 import android.app.Application
+import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.compose.runtime.getValue
@@ -12,6 +13,11 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.lazycollect.lazycollect.CollectApp
 import com.lazycollect.lazycollect.client.ClientModel
+import com.lazycollect.lazycollect.client.ExampleRef
+import com.lazycollect.lazycollect.client.decodeExample
+import com.lazycollect.lazycollect.client.exampleRef
+import com.lazycollect.lazycollect.client.parseExample
+import com.lazycollect.lazycollect.client.renderExample
 import com.lazycollect.lazycollect.client.startUploads
 import com.lazycollect.lazycollect.R
 import com.lazycollect.lazycollect.net.ClientItem
@@ -86,6 +92,15 @@ class AppViewModel(app: Application, saved: SavedStateHandle) : AndroidViewModel
     fun closeScan() {
         scanning?.second?.feed?.close()
         scanning = null
+    }
+
+    /** The picture that shows what an item should look like, or null when there is none or it cannot be had. */
+    suspend fun example(item: ClientItem): Bitmap? = withContext(Dispatchers.IO) {
+        when (val ref = exampleRef(item.example)) {
+            is ExampleRef.Builtin -> runCatching { getApplication<Application>().assets.open("examples/${ref.name}.svg").use { renderExample(parseExample(it), 900) } }.getOrNull()
+            ExampleRef.Uploaded -> client.example(item.id)?.let(::decodeExample)
+            null -> null
+        }
     }
 
     fun cameraUri(): Uri {

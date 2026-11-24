@@ -230,6 +230,9 @@
     <string name="client_expires_on">Expires on</string>
     <string name="client_issued_on">Issued on</string>
     <string name="client_date_hint">Year-month-day, like 2027-03-31</string>
+    <string name="example_see">See an example</string>
+    <string name="example_hide">Hide the example</string>
+    <string name="example_alt">Example of %1$s</string>
     <string name="client_date_invalid">Enter a date like 2027-03-31.</string>
     <string name="client_valid_months">Valid for %1$d months.</string>
     <string name="client_for_everyone">For everyone</string>

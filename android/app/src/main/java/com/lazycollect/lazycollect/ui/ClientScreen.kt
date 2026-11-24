@@ -2,10 +2,12 @@ package com.lazycollect.lazycollect.ui
 
 import android.Manifest
 import android.content.Intent
+import android.graphics.Bitmap
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
 import androidx.annotation.StringRes
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -51,6 +54,7 @@ import androidx.core.content.ContextCompat
 import com.lazycollect.lazycollect.R
 import com.lazycollect.lazycollect.client.ClientState
 import com.lazycollect.lazycollect.client.Job
+import com.lazycollect.lazycollect.client.exampleRef
 import com.lazycollect.lazycollect.net.ClientItem
 import com.lazycollect.lazycollect.net.ClientView
 import com.lazycollect.lazycollect.net.Person
@@ -73,6 +77,7 @@ class ClientActions(
     val camera: (item: ClientItem, done: (Uri?) -> Unit) -> Unit = { _, _ -> },
     val retryJob: (String) -> Unit = {},
     val dropJob: (String) -> Unit = {},
+    val example: suspend (ClientItem) -> Bitmap? = { null },
 )
 
 @Composable
@@ -218,6 +223,7 @@ private fun ItemCard(item: ClientItem, view: ClientView, busy: Boolean, actions:
                 Text(mark + stringResource(word), style = MaterialTheme.typography.labelLarge)
             }
             item.help?.takeIf { it.isNotBlank() }?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            Example(item, actions)
             if (item.status == "rejected") Rejected(item, actions)
             else if (item.status == "submitted" && !item.rejectNote.isNullOrBlank()) Text(stringResource(R.string.client_earlier_note, item.rejectNote), color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (item.kind == "file") FileBody(item, view, busy, actions) else Question(item, busy, actions)
@@ -503,4 +509,23 @@ private fun sizeText(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"
     bytes < 1024 * 1024 -> "${bytes / 1024} KB"
     else -> "%.1f MB".format(java.util.Locale.CANADA, bytes / 1048576.0)
+}
+
+@Composable
+private fun Example(item: ClientItem, actions: ClientActions) {
+    if (exampleRef(item.example) == null) return
+    var open by rememberSaveable(item.id) { mutableStateOf(false) }
+    var picture by remember(item.id, item.example) { mutableStateOf<Bitmap?>(null) }
+    var failed by remember(item.id, item.example) { mutableStateOf(false) }
+    LaunchedEffect(open) {
+        if (open && picture == null && !failed) {
+            picture = actions.example(item)
+            failed = picture == null
+        }
+    }
+    if (failed) return
+    TextButton(onClick = { open = !open }) { Text(stringResource(if (open) R.string.example_hide else R.string.example_see)) }
+    picture?.takeIf { open }?.let {
+        Image(it.asImageBitmap(), stringResource(R.string.example_alt, item.label), Modifier.fillMaxWidth())
+    }
 }

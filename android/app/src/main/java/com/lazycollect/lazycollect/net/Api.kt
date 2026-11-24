@@ -60,7 +60,17 @@ class Api(
         asToken: String? = null,
         raw: RequestBody? = null,
         headers: Map<String, String> = emptyMap(),
-    ): String = withContext(io) {
+    ): String = sendBytes(method, path, body, pending, asToken, raw, headers).decodeToString()
+
+    private suspend fun sendBytes(
+        method: String,
+        path: String,
+        body: String?,
+        pending: String?,
+        asToken: String? = null,
+        raw: RequestBody? = null,
+        headers: Map<String, String> = emptyMap(),
+    ): ByteArray = withContext(io) {
         val bearer = if (pending == null) asToken ?: token() else null
         val request = Request.Builder().url(base.resolve("/api$path")!!)
         when {
@@ -72,9 +82,9 @@ class Api(
         request.method(method, if (method == "GET") null else raw ?: (body ?: "").toRequestBody(JSON_TYPE))
         try {
             http.newCall(request.build()).executeAsync().use { response ->
-                val text = response.body.string()
-                if (!response.isSuccessful) throw errorOf(response.code, text, bearer != null)
-                text
+                val bytes = response.body.bytes()
+                if (!response.isSuccessful) throw errorOf(response.code, bytes.decodeToString(), bearer != null)
+                bytes
             }
         } catch (e: IOException) {
             throw ApiError.Network()
@@ -185,6 +195,9 @@ class Api(
     suspend fun deleteFile(id: String) {
         send("DELETE", "/c/me/files/$id", null, null)
     }
+
+    /** The picture a professional added to show what an item should look like. */
+    suspend fun example(item: String): ByteArray = sendBytes("GET", "/c/me/items/$item/example", null, null)
 
     /** One file as the raw body, with its length, so the server can refuse a big one before it reads it. [uploadId] makes a repeat harmless. */
     suspend fun upload(item: String, name: String, uploadId: String, file: File) {

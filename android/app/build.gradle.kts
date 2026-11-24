@@ -31,7 +31,13 @@ val checkCornerModel = tasks.register("checkCornerModel") {
     }
 }
 
-tasks.named("preBuild") { dependsOn(notices, cornerModel) }
+// The example drawings are the web page's own files, drawn at run time from assets/examples.
+val examples = tasks.register<Copy>("copyExamples") {
+    from(rootDir.resolve("../web/public/examples"))
+    into(layout.buildDirectory.dir("generated/examples/examples"))
+}
+
+tasks.named("preBuild") { dependsOn(notices, cornerModel, examples) }
 
 tasks.configureEach {
     if (name in setOf("packageDebug", "packageRelease", "bundleDebug", "bundleRelease")) dependsOn(checkCornerModel)
@@ -102,6 +108,7 @@ android {
 
     sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/notices").get().asFile)
     sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("corner-model").get().asFile)
+    sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/examples").get().asFile)
 
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/LICENSE*")

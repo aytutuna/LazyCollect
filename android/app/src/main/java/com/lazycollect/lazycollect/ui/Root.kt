@@ -113,6 +113,7 @@ private fun ClientHost(vm: AppViewModel) {
             },
             retryJob = client::retry,
             dropJob = client::drop,
+            example = vm::example,
         )
     }
     LaunchedEffect(dropped) { if (dropped > 0) vm.client.acknowledgeDropped() }

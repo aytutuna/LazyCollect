@@ -149,6 +149,9 @@ class ClientModel(
 
     fun found(item: String) = act { api.found(item); load() }
 
+    /** The professional's example for an item, or null when it cannot be had; nothing is kept. */
+    suspend fun example(item: String): ByteArray? = try { api.example(item) } catch (e: ApiError) { null }
+
     fun send(note: String) = act { api.note(note.trim()); load() }
 
     fun removeFile(id: String) = act { api.deleteFile(id); load() }
