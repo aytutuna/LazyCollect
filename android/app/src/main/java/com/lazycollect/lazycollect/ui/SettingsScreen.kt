@@ -45,7 +45,7 @@ fun planLine(firm: FirmState, now: Long): Pair<Int, Long?> = when {
 }
 
 @Composable
-fun SettingsScreen(me: Me, devices: DevicesState, actions: ShellActions, now: Long = System.currentTimeMillis()) {
+fun SettingsScreen(me: Me, devices: DevicesState, actions: ShellActions, now: Long = System.currentTimeMillis(), onLicences: () -> Unit = {}) {
     LaunchedEffect(Unit) { actions.loadDevices() }
     Column(
         Modifier.verticalScroll(rememberScrollState()).padding(24.dp),
@@ -88,5 +88,7 @@ fun SettingsScreen(me: Me, devices: DevicesState, actions: ShellActions, now: Lo
             Text(stringResource(R.string.loading), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         ErrorNote(devices.error)
+        HorizontalDivider()
+        TextButton(onClick = onLicences) { Text(stringResource(R.string.licences_title)) }
     }
 }

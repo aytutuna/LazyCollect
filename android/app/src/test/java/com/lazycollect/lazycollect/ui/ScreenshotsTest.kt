@@ -121,6 +121,9 @@ class ScreenshotsTest {
     fun settings() = capture("settings") { ShellScreen(me(), false, devices, ShellActions(), start = "settings", now = noon) }
 
     @Test
+    fun licences() = capture("licences") { ShellScreen(me(), false, devices, ShellActions(), start = "settings/licences", now = noon) }
+
+    @Test
     fun settingsTrial() = capture("settings-trial") {
         ShellScreen(me(status = "trialing", trialEndsAt = noon + 9 * day), false, devices, ShellActions(), start = "settings", now = noon)
     }

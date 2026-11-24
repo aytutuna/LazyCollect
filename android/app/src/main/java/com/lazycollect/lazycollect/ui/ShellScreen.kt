@@ -38,6 +38,8 @@ class ShellActions(
     val signOut: () -> Unit = {},
 )
 
+private const val LICENCES = "settings/licences"
+
 private enum class Tab(val route: String, @StringRes val label: Int, @DrawableRes val icon: Int) {
     Requests("requests", R.string.nav_requests, R.drawable.ic_tab_requests),
     Clients("clients", R.string.nav_clients, R.drawable.ic_tab_clients),
@@ -67,7 +69,7 @@ fun ShellScreen(me: Me, planEnded: Boolean, devices: DevicesState, actions: Shel
                 NavigationBar {
                     Tab.entries.forEach { tab ->
                         NavigationBarItem(
-                            selected = current?.destination?.route == tab.route || (current == null && start == tab.route),
+                            selected = current?.destination?.route?.startsWith(tab.route) == true || (current == null && start == tab.route),
                             onClick = {
                                 nav.navigate(tab.route) {
                                     popUpTo(nav.graph.findStartDestination().id) { saveState = true }
@@ -94,7 +96,8 @@ fun ShellScreen(me: Me, planEnded: Boolean, devices: DevicesState, actions: Shel
                     composable(Tab.Requests.route) { Placeholder(me.firm.name, R.string.nav_requests) }
                     composable(Tab.Clients.route) { Placeholder(me.firm.name, R.string.nav_clients) }
                     composable(Tab.Templates.route) { Placeholder(me.firm.name, R.string.nav_templates) }
-                    composable(Tab.Settings.route) { SettingsScreen(me, devices, actions, now) }
+                    composable(Tab.Settings.route) { SettingsScreen(me, devices, actions, now) { nav.navigate(LICENCES) } }
+                    composable(LICENCES) { LicencesScreen() }
                 }
             }
         }

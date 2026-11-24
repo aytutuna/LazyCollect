@@ -11,6 +11,14 @@ val debugApiBase = (findProperty("collect.apiBase") as String?) ?: "http://10.0.
 // TODO: Play Integrity needs the Cloud project number of lazy-collect, which is not linked in Play Console yet.
 val cloudProject = (findProperty("collect.cloudProject") as String?) ?: "0"
 
+// The notices file lives at the repo root, shared with the server and web app, and goes into the APK as an asset.
+val notices = tasks.register<Copy>("copyNotices") {
+    from(rootDir.resolve("../THIRD-PARTY-NOTICES.txt"))
+    into(layout.buildDirectory.dir("generated/notices"))
+}
+
+tasks.named("preBuild") { dependsOn(notices) }
+
 android {
     namespace = "com.lazycollect.lazycollect"
     compileSdk = 37
@@ -70,6 +78,8 @@ android {
             }
         }
     }
+
+    sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/notices").get().asFile)
 
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/LICENSE*")
