@@ -8,6 +8,7 @@ import {
 } from "@simplewebauthn/server";
 import { isoBase64URL } from "@simplewebauthn/server/helpers";
 import { MINUTE, randomId } from "./util";
+import { androidCerts, androidOrigin } from "./wellknown";
 
 const CHALLENGE_TTL = 5 * MINUTE;
 export const MAX_PASSKEYS = 10;
@@ -31,7 +32,7 @@ export type Who = { id: string; email: string; name: string | null };
 
 function rp(env: Env) {
   const url = new URL(env.APP_URL);
-  return { expectedRPID: url.hostname, expectedOrigin: url.origin };
+  return { expectedRPID: url.hostname, expectedOrigin: [url.origin, ...androidCerts(env).map(androidOrigin)] };
 }
 
 const transportsOf = (p: Pick<Passkey, "transports">): string[] | undefined => (p.transports ? JSON.parse(p.transports) : undefined);

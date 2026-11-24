@@ -36,6 +36,7 @@ import { csrf } from "./csrf";
 import { htmlHeaders } from "./headers";
 import { DAY } from "./util";
 import { loadSession, type AppEnv } from "./session";
+import { wellKnown } from "./wellknown";
 
 const app = new Hono<AppEnv>();
 
@@ -101,6 +102,8 @@ app.route("/api", files);
 app.route("/api", examples);
 
 app.route("/u", unsubscribe);
+
+app.route("/", wellKnown);
 
 app.get("/c/*", async (c) => {
   const page = await c.env.ASSETS.fetch(new URL("/c", c.req.url));

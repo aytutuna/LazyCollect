@@ -19,7 +19,7 @@ routes = [{ pattern = "collect.alazy.app", custom_domain = true }]
 directory = "../web/dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/api/*", "/c/*", "/u/*"]
+run_worker_first = ["/api/*", "/c/*", "/u/*", "/.well-known/assetlinks.json", "/.well-known/apple-app-site-association"]
 
 [observability]
 enabled = true
