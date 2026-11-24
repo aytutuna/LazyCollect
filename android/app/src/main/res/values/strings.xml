@@ -102,10 +102,11 @@
     <string name="plan_line_cancelling">Subscribed until %1$s. It will not renew.</string>
     <string name="plan_line_past_due">Your last payment did not go through. Update your payment details by %1$s to keep your account working.</string>
     <string name="plan_line_past_due_ended">Your payment did not go through and the grace period has ended. New links and deadline changes are paused. Update your payment details.</string>
+    <string name="plan_owner_only">Only the owner of the account can change the plan.</string>
     <string name="plan_line_ended">Your plan has ended. New links and deadline changes are paused. Everything you already have stays available.</string>
     <string name="licences_title">Open-source licences</string>
     <string name="security_devices">Where you are signed in</string>
-    <string name="security_this_device">this device</string>
+    <string name="security_this_device">This device</string>
     <string name="security_device_unknown">Unknown device</string>
     <string name="security_device_times">signed in %1$s, last active %2$s</string>
     <string name="security_signout">Sign out</string>

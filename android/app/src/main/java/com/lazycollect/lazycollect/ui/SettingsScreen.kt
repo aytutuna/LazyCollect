@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -59,6 +58,7 @@ fun SettingsScreen(me: Me, devices: DevicesState, actions: ShellActions, now: Lo
         Text(stringResource(R.string.settings_plan), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
         val (plan, date) = planLine(me.firm, now)
         Text(if (date == null) stringResource(plan) else stringResource(plan, formatDate(date, me.firm.tz)))
+        if (!me.user.owner) Text(stringResource(R.string.plan_owner_only), color = MaterialTheme.colorScheme.onSurfaceVariant)
         // TODO: the subscribe and manage buttons go here once the plan is sold through Google Play Billing
         HorizontalDivider()
         Text(stringResource(R.string.security_devices), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
@@ -69,7 +69,7 @@ fun SettingsScreen(me: Me, devices: DevicesState, actions: ShellActions, now: Lo
                     Column(Modifier.weight(1f)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(device.label ?: stringResource(R.string.security_device_unknown), style = MaterialTheme.typography.titleSmall)
-                            if (device.current) AssistChip(onClick = {}, label = { Text(stringResource(R.string.security_this_device)) })
+                            if (device.current) Text(stringResource(R.string.security_this_device), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text(
                             stringResource(R.string.security_device_times, formatDateTime(device.createdAt, me.firm.tz), formatDateTime(device.lastSeenAt, me.firm.tz)),
