@@ -44,6 +44,7 @@ class SignInModelTest {
     private var attesterFails = false
     private var passkeyFails: String? = null
     private var passkeyGate: CompletableDeferred<Unit>? = null
+    private val promptOpen = CompletableDeferred<Unit>()
 
     private val attester = Attester { hash ->
         if (attesterFails) throw IllegalStateException("no Play Services")
@@ -61,6 +62,7 @@ class SignInModelTest {
         }
 
         override suspend fun get(host: Context, options: JsonObject): JsonObject {
+            promptOpen.complete(Unit)
             passkeyGate?.await()
             passkeyFails?.let { throw PasskeyFailed(it) }
             used += "get"
@@ -381,7 +383,7 @@ class SignInModelTest {
         server.on("POST /api/auth/logout", ok())
         passkeyGate = CompletableDeferred()
         model.usePasskey(host, "")
-        awaitCalls("POST /api/auth/pending/options")
+        promptOpen.await()
         model.back()
         passkeyGate!!.complete(Unit)
         awaitCalls("POST /api/auth/logout")
