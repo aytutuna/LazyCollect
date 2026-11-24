@@ -28,7 +28,12 @@ class AppModel(private val scope: CoroutineScope, private val api: Api, private 
     val action: StateFlow<Action> get() = acting
 
     init {
-        scope.launch { session.token.collect { if (it != null) load() } }
+        scope.launch {
+            session.token.collect {
+                acting.value = Action()
+                if (it != null) load()
+            }
+        }
     }
 
     private suspend fun load() {

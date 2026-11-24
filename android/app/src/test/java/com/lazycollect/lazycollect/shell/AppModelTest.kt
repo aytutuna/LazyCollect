@@ -92,6 +92,49 @@ class AppModelTest {
     }
 
     @Test
+    fun aReopenErrorDoesNotOutliveTheSession() = runBlocking {
+        server.on("GET /api/me", me())
+        server.on("POST /api/account/reopen", json(409, """{"error":"expired"}"""))
+        val model = AppModel(scope, api, session)
+        ready(model)
+        model.reopen()
+        withTimeout(10_000) { model.action.first { it.error == "expired" } }
+        session.end()
+        withTimeout(10_000) { model.action.first { it.error == null && !it.busy } }
+        assertNull(model.action.value.error)
+    }
+
+    @Test
+    fun devicesAreForgottenOnReset() = runBlocking {
+        server.on("GET /api/sessions", ok("""[{"id":"s1","label":"Phone","created_at":1,"last_seen_at":2,"current":true}]"""))
+        val devices = DevicesModel(scope, api)
+        devices.load()
+        withTimeout(10_000) { devices.state.first { it.devices != null } }
+        devices.reset()
+        assertNull(devices.state.value.devices)
+    }
+
+    @Test
+    fun aDevicesAnswerForTheOldAccountIsDropped() = runBlocking {
+        server.on("GET /api/sessions", ok("""[{"id":"s1","label":"Phone","created_at":1,"last_seen_at":2,"current":true}]"""))
+        val devices = DevicesModel(scope, api)
+        devices.load()
+        devices.reset()
+        delay(300)
+        assertNull(devices.state.value.devices)
+    }
+
+    @Test
+    fun theFirmFormStartsEmptyAfterAReset() = runBlocking {
+        server.on("GET /api/firm", ok("""{"name":"Old","tz":"America/Toronto"}"""))
+        val firm = FirmModel(scope, api) {}
+        firm.load()
+        withTimeout(10_000) { firm.state.first { it.firm != null } }
+        firm.reset()
+        assertNull(firm.state.value.firm)
+    }
+
+    @Test
     fun aPlanThatEndedIsRemembered() = runBlocking {
         server.on("GET /api/me", me())
         server.on("PATCH /api/firm", json(402, """{"error":"plan"}"""))

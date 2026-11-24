@@ -8,6 +8,7 @@ import com.lazycollect.lazycollect.shell.AppModel
 import com.lazycollect.lazycollect.shell.DevicesModel
 import com.lazycollect.lazycollect.shell.FirmModel
 import com.lazycollect.lazycollect.signin.SignInModel
+import kotlinx.coroutines.launch
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val graph = (app as CollectApp).graph
@@ -17,4 +18,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val signIn = SignInModel(viewModelScope, graph.api, graph.attester, graph.passkeys, graph.session::start)
     val firm = FirmModel(viewModelScope, graph.api, account::reload)
     val devices = DevicesModel(viewModelScope, graph.api)
+
+    init {
+        // whatever was loaded belongs to the account that was signed in
+        viewModelScope.launch {
+            session.token.collect {
+                firm.reset()
+                devices.reset()
+            }
+        }
+    }
 }

@@ -6,6 +6,7 @@ import com.lazycollect.lazycollect.net.Firm
 import com.lazycollect.lazycollect.net.FirmUpdate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -14,12 +15,13 @@ import kotlinx.coroutines.launch
 /** The account's name and business details, for the first-run screen. */
 class FirmModel(private val scope: CoroutineScope, private val api: Api, private val saved: () -> Unit) {
     private val flow = MutableStateFlow(FirmState())
+    private var job: Job? = null
 
     val state: StateFlow<FirmState> get() = flow
 
     fun load() {
         flow.value = FirmState()
-        scope.launch {
+        job = scope.launch {
             try {
                 flow.update { it.copy(firm = api.firm()) }
             } catch (e: CancellationException) {
@@ -30,9 +32,14 @@ class FirmModel(private val scope: CoroutineScope, private val api: Api, private
         }
     }
 
+    fun reset() {
+        job?.cancel()
+        flow.value = FirmState()
+    }
+
     fun save(update: FirmUpdate) {
         flow.update { it.copy(busy = true, error = null) }
-        scope.launch {
+        job = scope.launch {
             try {
                 api.saveFirm(update)
                 flow.update { it.copy(busy = false) }
