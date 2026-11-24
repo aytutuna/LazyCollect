@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- wrangler dev runs on the host, a private address that Android 17 keeps apps from reaching without this -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <application android:networkSecurityConfig="@xml/network_security_config" />
 </manifest>
