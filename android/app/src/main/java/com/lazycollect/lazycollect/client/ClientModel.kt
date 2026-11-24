@@ -92,6 +92,7 @@ class ClientModel(
                 // coming back online sends what waited and refreshes a page that may have gone stale
                 if (it && !was && session.token.value != null) {
                     load()
+                    queue.wake()
                     val fresh = (flow.value as? ClientState.Ready)?.stale == false
                     if (!fresh && queue.jobs.value.any { it.failed == null }) kick()
                 }
@@ -198,11 +199,14 @@ class ClientModel(
     fun removeFile(id: String) = act { api.deleteFile(id); load() }
 
     /** Puts prepared files in the queue and starts sending. The prepared copies are removed. */
-    fun add(item: String, files: List<Prepared>) {
+    fun add(item: String, files: List<Prepared>, epoch: Int = queue.epoch) {
         var error: String? = null
+        var ended = false
         for (f in files) {
             try {
-                f.file.inputStream().use { queue.add(item, f.name, it) }
+                if (!ended) f.file.inputStream().use { queue.add(item, f.name, it, epoch) }
+            } catch (e: SessionEnded) {
+                ended = true
             } catch (e: ApiError) {
                 error = e.code
             } catch (e: IOException) {
@@ -213,9 +217,13 @@ class ClientModel(
                 f.file.delete()
             }
         }
+        if (ended) return
         acting.value = Action(error = error)
         kick()
     }
+
+    /** Which checklist work is being prepared for; pass it back to [add]. */
+    val epoch: Int get() = queue.epoch
 
     /** Tells the person a chosen file could not be read or prepared. */
     fun unreadable() {

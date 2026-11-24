@@ -36,7 +36,11 @@ import com.lazycollect.lazycollect.signin.SignInModel
 import java.io.File
 import java.io.IOException
 import java.util.UUID
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -54,6 +58,9 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
     /** The item being scanned, with the scanner that holds its pages; null while no scan is open. */
     var scanning by mutableStateOf<Pair<ClientItem, ScanModel>?>(null)
         private set
+
+    // prepared files and finished scans belong to the checklist that was open; leaving it cancels them
+    private val work = SupervisorJob(viewModelScope.coroutineContext[Job])
 
     val clientSession = graph.clientSession
     val client = ClientModel(viewModelScope, graph.clientApi, graph.clientSession, graph.attester, graph.uploads, graph.online.state, ::wipeClientFiles) { startUploads(app) }
@@ -95,13 +102,14 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
 
     private fun pick(itemId: String, label: String, uris: List<Uri>) {
         val resolver = getApplication<Application>().contentResolver
-        viewModelScope.launch(Dispatchers.IO) {
+        val epoch = client.epoch
+        viewModelScope.launch(Dispatchers.IO + work) {
             try {
                 val named = uris.map { uri ->
                     val shown = if (uri.authority?.endsWith(CAMERA_SUFFIX) == true) null else resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null }
                     uri to (shown ?: label)
                 }
-                client.add(itemId, graph.prepare.all(named, label))
+                client.add(itemId, graph.prepare.all(named, label), epoch)
             } catch (e: IOException) {
                 client.unreadable()
             } catch (e: SecurityException) {
@@ -116,6 +124,7 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
     // Scanned pages hold ID documents, so none of them may outlast the checklist on a phone someone else may pick up.
     private fun wipeClientFiles() {
         closeScan()
+        work.cancelChildren()
         val app = getApplication<Application>()
         stopUploads(app)
         viewModelScope.launch(Dispatchers.IO) {
@@ -130,12 +139,13 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
         val app = getApplication<Application>()
         val store = ScanPageStore(File(app.noBackupFilesDir, "scan/" + item.id))
         val finder = graph.corners
+        val epoch = client.epoch
         val model = ScanModel(
-            viewModelScope, store, finder, ScanFrameFeed(finder),
+            CoroutineScope(viewModelScope.coroutineContext + work), store, finder, ScanFrameFeed(finder),
             finish = { pages ->
                 val files = withContext(Dispatchers.IO) { graph.prepare.scanned(pages.map { it.jpeg }, item.label) }
                 if (files.isEmpty()) throw java.io.IOException(app.getString(R.string.scan_not_finished))
-                withContext(Dispatchers.IO) { client.add(item.id, files) }
+                withContext(Dispatchers.IO) { client.add(item.id, files, epoch) }
                 closeScan()
             },
             disk = Dispatchers.IO.limitedParallelism(1),
