@@ -72,6 +72,23 @@ class AppViewModel(app: Application, private val saved: SavedStateHandle) : Andr
         }
     }
 
+    /** A link another app opened this one with, waiting for the person to say whether it replaces the open checklist. */
+    var pendingLink by mutableStateOf<String?>(null)
+        private set
+
+    fun link(token: String) {
+        if (clientSession.token.value == null) client.open(token) else pendingLink = token
+    }
+
+    fun replaceChecklist() {
+        pendingLink?.let(client::open)
+        pendingLink = null
+    }
+
+    fun keepChecklist() {
+        pendingLink = null
+    }
+
     /** Reads what the person chose, makes it ready (photos scaled, several merged into one PDF) and queues it. */
     fun pick(item: ClientItem, uris: List<Uri>) = pick(item.id, item.label, uris)
 

@@ -8,11 +8,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -31,6 +33,15 @@ import com.lazycollect.lazycollect.shell.MeState
 
 @Composable
 fun Root(vm: AppViewModel) {
+    if (vm.pendingLink != null) {
+        AlertDialog(
+            onDismissRequest = vm::keepChecklist,
+            title = { Text(stringResource(R.string.link_replace_title)) },
+            text = { Text(stringResource(R.string.link_replace_body)) },
+            confirmButton = { TextButton(onClick = vm::replaceChecklist) { Text(stringResource(R.string.link_replace_yes)) } },
+            dismissButton = { TextButton(onClick = vm::keepChecklist) { Text(stringResource(R.string.link_replace_no)) } },
+        )
+    }
     val clientToken by vm.clientSession.token.collectAsStateWithLifecycle()
     if (clientToken != null) {
         ClientHost(vm)

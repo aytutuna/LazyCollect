@@ -151,6 +151,10 @@
     <string name="link_back">Back to sign in</string>
     <string name="error_link_expired">This link has expired or was replaced by a newer one. Ask for a new link and paste it here.</string>
     <string name="error_file_unreadable">That file could not be read. Try choosing it again, or pick another one.</string>
+    <string name="link_replace_title">Open a different checklist?</string>
+    <string name="link_replace_body">A checklist is already open. Opening this link replaces it, and files that have not been sent yet are removed from this phone.</string>
+    <string name="link_replace_yes">Open the new one</string>
+    <string name="link_replace_no">Keep this one</string>
     <string name="error_invalid_link">That does not look like a Lazy Collect link. Paste the whole link from the email.</string>
     <string name="error_too_big">That file is over 25 MB, which is the most we can take.</string>
     <string name="error_unsupported_type">Only photos and PDF files can be sent.</string>

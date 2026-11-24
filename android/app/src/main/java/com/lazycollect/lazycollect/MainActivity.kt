@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import com.lazycollect.lazycollect.client.collectToken
 import com.lazycollect.lazycollect.ui.AppViewModel
 import com.lazycollect.lazycollect.ui.LazyCollectTheme
 import com.lazycollect.lazycollect.ui.Root
@@ -27,6 +28,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openLink(intent: Intent) {
-        intent.data?.takeIf { intent.action == Intent.ACTION_VIEW }?.let { model.client.open(it.toString()) }
+        intent.collectToken(listOf("https://collect.alazy.app", BuildConfig.API_BASE))?.let(model::link)
     }
 }
