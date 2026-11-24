@@ -1,10 +1,14 @@
+import { saveKey, verifyAssertion, verifyAttestation } from "./appattest";
 import { playIntegrityOk } from "./playintegrity";
 import type { App } from "./session";
 import { MINUTE, randomToken } from "./util";
 
 const CHALLENGE_TTL = 5 * MINUTE;
 
-export type Attestation = { challenge?: unknown; token?: unknown };
+export type Attestation = { challenge?: unknown; token?: unknown; key_id?: unknown; assertion?: unknown };
+
+// whether the server checks this platform at all; the app skips asking its OS for a proof when it does not
+export const checked = (env: Env, platform: App) => (platform === "android" ? Boolean(env.PLAY_INTEGRITY_SA) : Boolean(env.APP_ATTEST_ENV));
 
 export async function issueChallenge(env: Env): Promise<string> {
   const challenge = randomToken();
@@ -26,13 +30,19 @@ export async function bindingHash(challenge: string, data: string): Promise<Uint
 const b64url = (b: Uint8Array) => btoa(String.fromCharCode(...b)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 
 // Each platform's check stays off until its config is set, so the endpoints can ship before the Play Integrity service
-// account exists. Turnstile does not run in the apps; the rate limits are what is left then.
+// account exists or App Attest is switched on. Turnstile does not run in the apps; the rate limits are what is left then.
 export async function attested(env: Env, platform: App, att: unknown, data: string): Promise<boolean> {
-  if (platform !== "android") return false;
-  if (!env.PLAY_INTEGRITY_SA) return true;
+  if (!checked(env, platform)) return true;
   if (!att || typeof att !== "object") return false;
-  const { challenge, token } = att as Attestation;
-  if (typeof challenge !== "string" || typeof token !== "string" || !token) return false;
-  if (!(await takeChallenge(env, challenge))) return false;
-  return playIntegrityOk(env, token, b64url(await bindingHash(challenge, data)));
+  const { challenge, token, key_id, assertion } = att as Attestation;
+  if (typeof challenge !== "string" || !(await takeChallenge(env, challenge))) return false;
+  if (platform === "android") return typeof token === "string" && playIntegrityOk(env, token, b64url(await bindingHash(challenge, data)));
+  return typeof key_id === "string" && typeof assertion === "string" && verifyAssertion(env, key_id, assertion, await bindingHash(challenge, data));
+}
+
+// An iPhone attests its key once; the challenge is bound with the fixed data "attest".
+export async function attestKey(env: Env, keyId: string, challenge: string, attestation: string): Promise<boolean> {
+  if (!env.APP_ATTEST_ENV || !(await takeChallenge(env, challenge))) return false;
+  const key = await verifyAttestation(env, keyId, attestation, await bindingHash(challenge, "attest"));
+  return key !== null && saveKey(env, keyId, key);
 }

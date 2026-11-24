@@ -9,8 +9,10 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@peculiar/x509": "2.2.0",
     "@simplewebauthn/server": "14.1.0",
-    "hono": "4.13.19"
+    "hono": "4.13.19",
+    "reflect-metadata": "0.2.2"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.8.4",
