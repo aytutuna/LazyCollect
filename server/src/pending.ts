@@ -11,13 +11,13 @@ export const pending = new Hono<AppEnv>();
 
 const gone = (c: Context) => c.json({ error: "pending_expired" }, 401);
 
-async function finish(c: Context<AppEnv>, p: Pending): Promise<boolean> {
+// the new session's token, or null when the pending login was already used
+async function finish(c: Context<AppEnv>, p: Pending): Promise<string | null> {
   // deleting the row is what makes the token single use
   const taken = await c.env.CONTROL.prepare("DELETE FROM pending_logins WHERE token_hash = ? RETURNING 1 AS ok").bind(p.tokenHash).first();
-  if (!taken) return false;
+  if (!taken) return null;
   await endPending(c);
-  await createSession(c, p.userId, p.firmId);
-  return true;
+  return createSession(c, p.userId, p.firmId, p.app);
 }
 
 pending.get("/auth/pending", async (c) => {
@@ -74,5 +74,7 @@ pending.post("/auth/pending/verify", async (c) => {
     if (!id) return c.json({ error: "passkey_exists" }, 409);
     await auditLogin(c.env, p.firmId, p.userId, "passkey.add", "passkey", id, { name, enrol: true });
   }
-  return (await finish(c, p)) ? c.json({ ok: true }) : gone(c);
+  const token = await finish(c, p);
+  if (!token) return gone(c);
+  return c.json(p.app ? { ok: true, token } : { ok: true });
 });

@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { createSession, endSession, holdLogin, type AppEnv } from "./session";
+import { createSession, endSession, holdLogin, type App, type AppEnv } from "./session";
 import { sendLoginEmail } from "./email";
 import { untouchedRegion, untouchedSql, usable } from "./firm";
 import { htmlHeaders } from "./headers";
@@ -50,7 +50,11 @@ auth.post("/auth/start", async (c) => {
   const ip = c.req.header("CF-Connecting-IP");
   if (await rateLimited(c.env, c.env.LOGIN, ip)) return c.json({ error: "rate_limited" }, 429);
   if (!(await turnstileOk(c.env, body?.turnstile, ip))) return c.json({ error: "turnstile" }, 400);
+  return sendCode(c, email);
+});
 
+// the part of signing in that follows the bot check, shared with the apps
+export async function sendCode(c: Context<AppEnv>, email: string): Promise<Response> {
   const db = c.env.CONTROL;
   const now = Date.now();
   const id = randomId();
@@ -83,7 +87,7 @@ auth.post("/auth/start", async (c) => {
     return c.json({ error: "email" }, 502);
   }
   return c.json({ ok: true });
-});
+}
 
 type Found = { id: string; firm_id: string; role: string; disabled_at: number | null };
 
@@ -149,8 +153,10 @@ async function acceptInvite(c: Context<AppEnv>, email: string, existing: Found |
   }
 }
 
+export type SignedIn = { step: "session" | "passkey" | "enrol"; token: string };
+
 // what the email step leads to: a session, or a pending login that owes a passkey (held, or still to be added)
-async function signIn(c: Context<AppEnv>, email: string): Promise<"session" | "passkey" | "enrol" | null> {
+async function signIn(c: Context<AppEnv>, email: string, app: App | null): Promise<SignedIn | null> {
   const db = c.env.CONTROL;
   const find = () => db.prepare("SELECT id, firm_id, role, disabled_at FROM users WHERE email = ?").bind(email).first<Found>();
   let user = await find();
@@ -188,15 +194,19 @@ async function signIn(c: Context<AppEnv>, email: string): Promise<"session" | "p
     .bind(user.id, user.firm_id)
     .first<{ keys: number; required: number }>();
   const step = keys!.keys > 0 ? "passkey" : keys!.required === 1 ? "enrol" : null;
-  if (step) {
-    await holdLogin(c, user.id, step);
-    return step;
-  }
-  await createSession(c, user.id, user.firm_id);
-  return "session";
+  if (step) return { step, token: await holdLogin(c, user.id, step, app) };
+  return { step: "session", token: await createSession(c, user.id, user.firm_id, app) };
 }
 
-auth.post("/auth/verify", async (c) => {
+// what a sign-in step answers: the web has its cookies, an app is handed the session token or the pending one
+function signedIn(r: SignedIn, app: App | null) {
+  if (!app) return r.step === "session" ? { ok: true } : { ok: true, step: r.step };
+  return r.step === "session" ? { ok: true, token: r.token } : { ok: true, step: r.step, pending: r.token };
+}
+
+auth.post("/auth/verify", (c) => verifyCode(c, null));
+
+export async function verifyCode(c: Context<AppEnv>, app: App | null): Promise<Response> {
   need(c.env, "HASH_KEY");
   if (await rateLimited(c.env, c.env.VERIFY, c.req.header("CF-Connecting-IP"))) return c.json({ error: "rate_limited" }, 429);
   const body = await c.req.json<{ email?: unknown; code?: unknown }>().catch(() => null);
@@ -233,10 +243,10 @@ auth.post("/auth/verify", async (c) => {
     .bind(now, row.id)
     .run();
   if (used.meta.changes !== 1) return c.json({ error: "invalid" }, 400);
-  const step = await signIn(c, row.email);
-  if (!step) return c.json({ error: "disabled" }, 403);
-  return c.json(step === "session" ? { ok: true } : { ok: true, step });
-});
+  const result = await signIn(c, row.email, app);
+  if (!result) return c.json({ error: "disabled" }, 403);
+  return c.json(signedIn(result, app));
+}
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -274,9 +284,9 @@ auth.post("/auth/link", async (c) => {
     .bind(Date.now(), await sha256(body.t), Date.now())
     .first<{ email: string }>();
   if (!row) return c.json({ error: "invalid" }, 400);
-  const step = await signIn(c, row.email);
-  if (!step) return c.json({ error: "disabled" }, 403);
-  return c.json(step === "session" ? { ok: true } : { ok: true, step });
+  const result = await signIn(c, row.email, null);
+  if (!result) return c.json({ error: "disabled" }, 403);
+  return c.json(signedIn(result, null));
 });
 
 auth.post("/auth/logout", async (c) => {
