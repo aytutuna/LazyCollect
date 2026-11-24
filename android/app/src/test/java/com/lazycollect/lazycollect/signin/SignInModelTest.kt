@@ -9,6 +9,7 @@ import com.lazycollect.lazycollect.net.json
 import com.lazycollect.lazycollect.net.ok
 import java.security.GeneralSecurityException
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -38,6 +39,7 @@ class SignInModelTest {
     private val tokens = CopyOnWriteArrayList<String>()
     private var attesterFails = false
     private var passkeyFails: String? = null
+    private var passkeyGate: CompletableDeferred<Unit>? = null
 
     private val attester = Attester { hash ->
         if (attesterFails) throw IllegalStateException("no Play Services")
@@ -55,6 +57,7 @@ class SignInModelTest {
         }
 
         override suspend fun get(host: Context, options: JsonObject): JsonObject {
+            passkeyGate?.await()
             passkeyFails?.let { throw PasskeyFailed(it) }
             used += "get"
             return buildJsonObject { put("id", "known-credential") }
@@ -294,5 +297,58 @@ class SignInModelTest {
         assertEquals(Step.Email, state.step)
         assertTrue(tokens.isEmpty())
         assertEquals("Bearer session-1", server.calls("POST /api/auth/logout").single().headers["Authorization"])
+    }
+
+    private suspend fun toPasskeyStep() {
+        toCodeStep()
+        server.on("POST /api/app/auth/verify", ok("""{"ok":true,"step":"passkey","pending":"held-1"}"""))
+        server.on("GET /api/auth/pending", ok("""{"step":"passkey"}"""))
+        server.on("POST /api/auth/pending/options", ok("""{"kind":"authenticate","options":{}}"""))
+        server.on("POST /api/auth/pending/verify", ok("""{"ok":true,"token":"session-2"}"""))
+        model.verify("123456")
+        settled { it.step == Step.Passkey }
+    }
+
+    @Test
+    fun thePasskeyPromptStartsByItselfOnlyOncePerPendingLogin() = runBlocking {
+        toPasskeyStep()
+        passkeyFails = "cancelled"
+        model.autoPasskey(host)
+        assertEquals("passkey_cancelled", settled { it.error != null }.error)
+        // the screen was recreated: the closed prompt stays closed until the person asks again
+        model.autoPasskey(host)
+        settled()
+        assertEquals(1, server.calls("POST /api/auth/pending/options").size)
+        passkeyFails = null
+        model.usePasskey(host, "")
+        settled { tokens.isNotEmpty() }
+        assertEquals(listOf("session-2"), tokens.toList())
+    }
+
+    @Test
+    fun aSecondPromptCannotStartWhileOneIsRunning() = runBlocking {
+        toPasskeyStep()
+        passkeyGate = CompletableDeferred()
+        model.usePasskey(host, "")
+        model.usePasskey(host, "")
+        passkeyGate!!.complete(Unit)
+        settled { tokens.isNotEmpty() }
+        assertEquals(1, server.calls("POST /api/auth/pending/options").size)
+        assertEquals(listOf("session-2"), tokens.toList())
+    }
+
+    @Test
+    fun aPromptThatOutlivesItsPendingLoginChangesNothing() = runBlocking {
+        toPasskeyStep()
+        server.on("DELETE /api/auth/pending", ok())
+        passkeyGate = CompletableDeferred()
+        model.usePasskey(host, "")
+        model.back()
+        passkeyFails = "cancelled"
+        passkeyGate!!.complete(Unit)
+        settled()
+        assertEquals(Step.Email, model.state.value.step)
+        assertNull(model.state.value.error)
+        assertTrue(tokens.isEmpty())
     }
 }

@@ -38,10 +38,12 @@ class SignInModel(
 ) {
     private val flow = MutableStateFlow(SignInState())
     private var pending: String? = null
+    private var autoPasskey = false
 
     val state: StateFlow<SignInState> get() = flow
 
     private fun run(block: suspend () -> Unit) {
+        val held = pending
         flow.update { it.copy(busy = true, error = null) }
         scope.launch {
             try {
@@ -49,9 +51,10 @@ class SignInModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ApiError) {
-                fail(e.code)
+                // a ceremony that outlived its pending login must not touch what the person has moved on to
+                if (pending == held) fail(e.code)
             } catch (e: PasskeyFailed) {
-                fail("passkey_${e.reason}")
+                if (pending == held) fail("passkey_${e.reason}")
             } finally {
                 flow.update { it.copy(busy = false) }
             }
@@ -101,6 +104,7 @@ class SignInModel(
                 done(token)
             } else if (held != null && (result.step == "passkey" || result.step == "enrol")) {
                 pending = held
+                autoPasskey = result.step == "passkey"
                 val role = runCatching { api.pending(held).role }.getOrNull()
                 flow.update { it.copy(step = if (result.step == "enrol") Step.Enrol else Step.Passkey, owner = role == "owner") }
             } else {
@@ -109,18 +113,28 @@ class SignInModel(
         }
     }
 
+    /** Starts the passkey prompt once for each pending login, so a recreated screen does not open it again. */
+    fun autoPasskey(host: Context) {
+        if (!autoPasskey) return
+        autoPasskey = false
+        usePasskey(host, "")
+    }
+
     fun usePasskey(host: Context, name: String) {
         val held = pending ?: return
+        if (flow.value.busy) return
         run {
             val options = api.passkeyOptions(held)
             val response = if (options.kind == "register") passkeys.create(host, options.options) else passkeys.get(host, options.options)
-            done(api.passkeyVerify(held, response, name.trim()))
+            val token = api.passkeyVerify(held, response, name.trim())
+            if (pending == held) done(token)
         }
     }
 
     fun back() {
         pending?.let { held -> scope.launch { runCatching { api.endPending(held) } } }
         pending = null
+        autoPasskey = false
         flow.update { it.copy(step = Step.Email, error = null) }
     }
 

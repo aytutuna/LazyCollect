@@ -40,6 +40,7 @@ class SignInActions(
     val sendCode: (String) -> Unit = {},
     val verify: (String) -> Unit = {},
     val passkey: (Context, String) -> Unit = { _, _ -> },
+    val autoPasskey: (Context) -> Unit = {},
     val back: () -> Unit = {},
 )
 
@@ -114,7 +115,7 @@ private fun PasskeyStep(state: SignInState, actions: SignInActions) {
     val host = LocalContext.current
     var name by rememberSaveable { mutableStateOf("") }
     // a passkey that is asked for starts by itself; adding one waits until the person has named it and pressed the button
-    LaunchedEffect(state.step) { if (!enrol) actions.passkey(host, "") }
+    LaunchedEffect(state.step) { if (!enrol) actions.autoPasskey(host) }
     Text(stringResource(if (enrol) R.string.signin_enrol_title else R.string.signin_passkey_title), style = MaterialTheme.typography.titleLarge)
     Text(stringResource(if (enrol) R.string.signin_enrol_intro else R.string.signin_passkey_intro))
     if (enrol) {

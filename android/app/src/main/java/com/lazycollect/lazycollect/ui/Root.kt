@@ -28,7 +28,7 @@ fun Root(vm: AppViewModel) {
     val token by vm.session.token.collectAsStateWithLifecycle()
     if (token == null) {
         val state by vm.signIn.state.collectAsStateWithLifecycle()
-        SignInScreen(state, SignInActions(vm.signIn::sendCode, vm.signIn::verify, vm.signIn::usePasskey, vm.signIn::back))
+        SignInScreen(state, SignInActions(vm.signIn::sendCode, vm.signIn::verify, vm.signIn::usePasskey, vm.signIn::autoPasskey, vm.signIn::back))
         return
     }
     val me by vm.account.me.collectAsStateWithLifecycle()
