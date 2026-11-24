@@ -5,3 +5,6 @@ server/test/dev.vars
 .dev.vars
 web/public/models/**/*.onnx
 web/.cache
+
+ios/.build
+ios/*.xcodeproj
