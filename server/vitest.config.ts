@@ -4,6 +4,11 @@ import { defineConfig } from "vitest/config";
 export default defineConfig(async () => {
   const migrations = await readD1Migrations("./migrations/control");
   const naMigrations = await readD1Migrations("./migrations/na");
+  const pair = (await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign"])) as CryptoKeyPair;
+  const pkcs8 = btoa(String.fromCharCode(...new Uint8Array((await crypto.subtle.exportKey("pkcs8", pair.privateKey)) as ArrayBuffer)));
+  const privateKey = `-----BEGIN PRIVATE KEY-----
+${pkcs8}
+-----END PRIVATE KEY-----`;
   return {
     plugins: [
       cloudflareTest({
@@ -22,6 +27,8 @@ export default defineConfig(async () => {
             STRIPE_WEBHOOK_SECRET: "whsec_test",
             STRIPE_PRICE_ID: "price_test",
             TURNSTILE_BASE: "https://turnstile.test",
+            PLAY_INTEGRITY_SA: JSON.stringify({ client_email: "checker@play.test", private_key: privateKey, token_uri: "https://oauth.test/token" }),
+            PLAY_INTEGRITY_BASE: "https://play.test",
           },
         },
       }),

@@ -10,7 +10,7 @@ beforeEach(async () => {
   vi.restoreAllMocks();
   stripeFake.reset();
   await env.CONTROL.batch(
-    ["sessions", "passkeys", "passkey_challenges", "pending_logins", "login_codes", "invites", "users", "firms", "stripe_events"].map((t) => env.CONTROL.prepare(`DELETE FROM ${t}`)),
+    ["sessions", "passkeys", "passkey_challenges", "pending_logins", "login_codes", "app_challenges", "app_keys", "invites", "users", "firms", "stripe_events"].map((t) => env.CONTROL.prepare(`DELETE FROM ${t}`)),
   );
   const { objects } = await env.FILES_NA.list();
   await env.FILES_NA.delete(objects.map((o) => o.key));

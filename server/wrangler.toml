@@ -1,6 +1,8 @@
 # Secrets (wrangler secret put): RESEND_API_KEY, TURNSTILE_SECRET, HASH_KEY,
 # MASTER_KEY_NA (32 random bytes, base64: openssl rand -base64 32; losing it makes every NA file unreadable)
 # STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET (billing; STRIPE_PRICE_ID below is a plain var, not a secret)
+# PLAY_INTEGRITY_SA (the service account JSON that may call Play Integrity's decodeIntegrityToken): the Android check
+# in the app endpoints stays off until it is set
 # For wrangler dev put the same names in .dev.vars (gitignored), plus
 # APP_URL=http://localhost:8787 so the origin check and email links match.
 
