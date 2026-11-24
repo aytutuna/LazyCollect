@@ -54,7 +54,7 @@ auth.post("/auth/start", async (c) => {
 });
 
 // the part of signing in that follows the bot check, shared with the apps
-export async function sendCode(c: Context<AppEnv>, email: string): Promise<Response> {
+export async function sendCode(c: Context<AppEnv>, email: string, app: App | null = null): Promise<Response> {
   const db = c.env.CONTROL;
   const now = Date.now();
   const id = randomId();
@@ -65,11 +65,11 @@ export async function sendCode(c: Context<AppEnv>, email: string): Promise<Respo
   const [inserted] = await db.batch([
     db
       .prepare(
-        `INSERT INTO login_codes (id, email, email_hash, code_hash, link_hash, expires_at, created_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?
+        `INSERT INTO login_codes (id, email, email_hash, code_hash, link_hash, expires_at, created_at, platform)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?
          WHERE (SELECT COUNT(*) FROM login_codes WHERE email_hash = ? AND created_at > ?) < ?`,
       )
-      .bind(id, email, emailHash, await hmac(c.env.HASH_KEY, `${emailHash}:${code}`), await sha256(linkToken), now + CODE_TTL, now, emailHash, now - CODE_TTL, MAX_CODES),
+      .bind(id, email, emailHash, await hmac(c.env.HASH_KEY, `${emailHash}:${code}`), await sha256(linkToken), now + CODE_TTL, now, app, emailHash, now - CODE_TTL, MAX_CODES),
     db
       .prepare(
         `UPDATE login_codes SET used_at = COALESCE(used_at, ?), link_used_at = COALESCE(link_used_at, ?)
@@ -223,10 +223,10 @@ export async function verifyCode(c: Context<AppEnv>, app: App | null): Promise<R
   const row = await db
     .prepare(
       `SELECT id, email, code_hash FROM login_codes
-       WHERE email_hash = ? AND used_at IS NULL AND expires_at > ? AND attempts < ?
+       WHERE email_hash = ? AND platform IS ? AND used_at IS NULL AND expires_at > ? AND attempts < ?
        ORDER BY created_at DESC LIMIT 1`,
     )
-    .bind(emailHash, now, MAX_ATTEMPTS)
+    .bind(emailHash, app, now, MAX_ATTEMPTS)
     .first<{ id: string; email: string; code_hash: string }>();
   if (!row) return c.json({ error: "invalid" }, 400);
   // count the try before comparing so parallel guesses can't exceed the limit

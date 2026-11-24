@@ -37,12 +37,13 @@ native.post("/app/auth/start", async (c) => {
   need(c.env, "RESEND_API_KEY", "HASH_KEY");
   if (await rateLimited(c.env, c.env.LOGIN, c.req.header("CF-Connecting-IP"))) return c.json({ error: "rate_limited" }, 429);
   if (!(await attested(c.env, body.platform, body.attestation, email))) return c.json({ error: "attestation" }, 400);
-  return sendCode(c, email);
+  return sendCode(c, email, body.platform);
 });
 
 native.post("/app/auth/verify", async (c) => {
   const body = await readBody(c);
   if (!isApp(body?.platform)) return invalid(c);
+  if (!usable(c.env, body.platform)) return notReady(c);
   return verifyCode(c, body.platform);
 });
 

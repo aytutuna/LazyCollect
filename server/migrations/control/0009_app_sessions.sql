@@ -5,6 +5,9 @@ CREATE INDEX idx_sessions_push ON sessions (push_token) WHERE push_token IS NOT 
 
 ALTER TABLE pending_logins ADD COLUMN app TEXT CHECK (app IN ('android', 'ios'));
 
+-- a login code works only where it was asked for: an app's platform, or NULL for the web
+ALTER TABLE login_codes ADD COLUMN platform TEXT CHECK (platform IN ('android', 'ios'));
+
 -- single-use values handed to an app so its attestation can't be replayed
 CREATE TABLE app_challenges (
   challenge TEXT PRIMARY KEY,

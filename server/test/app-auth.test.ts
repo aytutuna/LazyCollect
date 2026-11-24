@@ -114,10 +114,34 @@ describe("app sign-in", () => {
     }
   });
 
+  it("does not verify for a platform that is unavailable", async () => {
+    expect((await post("/api/app/auth/verify", { email: EMAIL, code: "123456", platform: "ios" })).status).toBe(503);
+  });
+
   it("rejects a wrong code", async () => {
     await startCode();
     const res = await post("/api/app/auth/verify", { email: EMAIL, code: "000000", platform: "android" });
     expect(res.status).toBe(400);
+  });
+
+  it("verifies only where the code was asked for", async () => {
+    env.APP_URL = "http://localhost:8787";
+    env.APP_ATTEST_OFF = "ios";
+    try {
+      const android = await startCode();
+      expect((await post("/api/app/auth/verify", { email: EMAIL, code: android, platform: "ios" })).status).toBe(400);
+      expect((await post("/api/auth/verify", { email: EMAIL, code: android })).status).toBe(400);
+      expect((await post("/api/app/auth/verify", { email: EMAIL, code: android, platform: "android" })).status).toBe(200);
+
+      const sent = mockOutbound();
+      await api("/api/auth/start", { method: "POST", body: { email: EMAIL, turnstile: "t" } });
+      const web = codeFrom(sent[0]);
+      expect((await post("/api/app/auth/verify", { email: EMAIL, code: web, platform: "android" })).status).toBe(400);
+      expect((await post("/api/auth/verify", { email: EMAIL, code: web })).status).toBe(200);
+    } finally {
+      env.APP_URL = "https://collect.alazy.app";
+      env.APP_ATTEST_OFF = undefined;
+    }
   });
 
   it("leaves the web sign-in on cookies", async () => {
