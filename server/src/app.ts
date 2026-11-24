@@ -77,12 +77,9 @@ async function setPush(c: Context<AppEnv>, push: string | null) {
     c.env.CONTROL.prepare("UPDATE client_sessions SET push_token = ? WHERE token_hash = ? AND expires_at > ? AND ?").bind(push, hash, now, live ? 1 : 0),
   ]);
   if (staff.meta.changes + client.meta.changes === 0) return c.json({ error: "unauthorized" }, 401);
-  // a device that signs in as someone else keeps its token, so the old session must stop receiving it
-  if (push) {
-    await c.env.CONTROL.batch([
-      c.env.CONTROL.prepare("UPDATE sessions SET push_token = NULL WHERE push_token = ? AND token_hash != ?").bind(push, hash),
-      c.env.CONTROL.prepare("UPDATE client_sessions SET push_token = NULL WHERE push_token = ? AND token_hash != ?").bind(push, hash),
-    ]);
+  // An install has one token shared by all its sessions, so only a staff session of someone else is made to give it up.
+  if (push && staff.meta.changes) {
+    await c.env.CONTROL.prepare("UPDATE sessions SET push_token = NULL WHERE push_token = ? AND user_id != (SELECT user_id FROM sessions WHERE token_hash = ?)").bind(push, hash).run();
   }
   return c.json({ ok: true });
 }

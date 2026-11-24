@@ -61,17 +61,29 @@ describe("push registration", () => {
     expect((await env.CONTROL.prepare("SELECT COUNT(*) AS n FROM client_sessions WHERE push_token IS NOT NULL").first<any>()).n).toBe(0);
   });
 
-  it("moves a token to the newest session that registers it", async () => {
+  it("moves a token to the other user's staff session that registers it", async () => {
     const first = await staffApp("a@firm.test");
     const second = await staffApp("b@firm.test");
     await register(first, "shared");
     await register(second, "shared");
     expect(await stored("sessions", first)).toBeNull();
     expect(await stored("sessions", second)).toBe("shared");
-    const client = await clientApp("c@firm.test");
-    await register(client, "shared");
-    expect(await stored("sessions", second)).toBeNull();
-    expect(await stored("client_sessions", client)).toBe("shared");
+  });
+
+  it("lets one install's sessions share a token", async () => {
+    const one = await clientApp("a@firm.test");
+    const two = await clientApp("b@firm.test");
+    await register(one, "shared");
+    await register(two, "shared");
+    expect(await stored("client_sessions", one)).toBe("shared");
+    expect(await stored("client_sessions", two)).toBe("shared");
+
+    const staff = await staffApp("c@firm.test");
+    await register(staff, "shared");
+    expect(await stored("client_sessions", one)).toBe("shared");
+    expect(await stored("sessions", staff)).toBe("shared");
+    await register(one, "shared");
+    expect(await stored("sessions", staff)).toBe("shared");
   });
 
   it("leaves other users' tokens alone", async () => {
