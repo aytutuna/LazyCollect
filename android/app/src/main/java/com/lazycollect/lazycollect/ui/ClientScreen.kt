@@ -40,6 +40,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -88,7 +89,7 @@ class ClientActions(
 )
 
 @Composable
-fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions, progress: Map<String, Float> = emptyMap(), offline: Boolean = false) {
+fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions, progress: Map<String, Float> = emptyMap(), offline: Boolean = false, notesSent: Int = 0) {
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         when (state) {
             ClientState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -102,7 +103,7 @@ fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int
                 Button(onClick = actions.reload) { Text(stringResource(R.string.retry)) }
                 OutlinedButton(onClick = actions.leave) { Text(stringResource(R.string.client_leave)) }
             }
-            is ClientState.Ready -> Checklist(state.view, state.stale, action, jobs, dropped, actions, progress, offline)
+            is ClientState.Ready -> Checklist(state.view, state.stale, action, jobs, dropped, actions, progress, offline, notesSent)
         }
     }
 }
@@ -110,7 +111,7 @@ fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int
 private fun scopeOf(items: List<ClientItem>) = items.filter { it.required }.ifEmpty { items }
 
 @Composable
-private fun Checklist(view: ClientView, stale: Boolean, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions, progress: Map<String, Float>, offline: Boolean) {
+private fun Checklist(view: ClientView, stale: Boolean, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions, progress: Map<String, Float>, offline: Boolean, notesSent: Int) {
     val scope = scopeOf(view.items)
     val received = scope.count { it.received }
     val unavailable = scope.count { it.status == "unavailable" }
@@ -149,7 +150,7 @@ private fun Checklist(view: ClientView, stale: Boolean, action: Action, jobs: Li
             if (optional.isNotEmpty() && required.isNotEmpty()) item { Text(stringResource(R.string.client_optional), style = MaterialTheme.typography.titleSmall) }
             items(optional, key = { it.id }) { ItemCard(it, view, action.busy, actions) }
         }
-        item { Notes(view, action.busy, actions) }
+        item { Notes(view, action.busy, actions, notesSent) }
         item { Trust(view) }
         item { OutlinedButton(onClick = actions.leave, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.client_leave)) } }
     }
@@ -494,8 +495,18 @@ private fun TypedAnswer(item: ClientItem, locked: Boolean, actions: ClientAction
 }
 
 @Composable
-private fun Notes(view: ClientView, busy: Boolean, actions: ClientActions) {
+private fun Notes(view: ClientView, busy: Boolean, actions: ClientActions, notesSent: Int) {
     var text by rememberSaveable { mutableStateOf("") }
+    var sending by rememberSaveable { mutableStateOf<String?>(null) }
+    var counted by rememberSaveable { mutableIntStateOf(notesSent) }
+    // emptied once the server has the note, and only if nothing else was typed meanwhile
+    LaunchedEffect(notesSent) {
+        if (notesSent != counted) {
+            counted = notesSent
+            if (text == sending) text = ""
+            sending = null
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         HorizontalDivider()
         Text(stringResource(R.string.client_notes_title, view.firmName), style = MaterialTheme.typography.titleMedium)
@@ -512,7 +523,7 @@ private fun Notes(view: ClientView, busy: Boolean, actions: ClientActions) {
             }
         }
         OutlinedTextField(value = text, onValueChange = { text = it.take(2000) }, label = { Text(stringResource(R.string.client_notes_label)) }, modifier = Modifier.fillMaxWidth())
-        Button(enabled = !busy && text.isNotBlank(), onClick = { actions.sendNote(text); text = "" }) { Text(stringResource(R.string.client_notes_send)) }
+        Button(enabled = !busy && text.isNotBlank(), onClick = { sending = text; actions.sendNote(text) }) { Text(stringResource(R.string.client_notes_send)) }
     }
 }
 

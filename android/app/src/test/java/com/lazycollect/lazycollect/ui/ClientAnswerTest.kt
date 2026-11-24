@@ -2,7 +2,9 @@ package com.lazycollect.lazycollect.ui
 
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -44,6 +46,19 @@ class ClientAnswerTest {
         compose.onNodeWithText("Your answer").performImeAction()
         compose.waitForIdle()
         assertEquals(listOf<Pair<String, JsonElement?>>("q1" to JsonPrimitive("Acme")), sent)
+    }
+
+    @Test
+    fun theNoteStaysUntilTheServerHasIt() {
+        val count = androidx.compose.runtime.mutableIntStateOf(0)
+        compose.setContent { ClientRoot(ClientState.Ready(view), Action(), emptyList(), 0, actions, notesSent = count.intValue) }
+        compose.onNodeWithText("Your message").performScrollTo().performTextInput("Hello")
+        compose.onNodeWithText("Send message").performScrollTo().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("Hello").assertExists()
+        compose.runOnUiThread { count.intValue = 1 }
+        compose.waitForIdle()
+        compose.onNodeWithText("Hello").assertDoesNotExist()
     }
 
     @Test

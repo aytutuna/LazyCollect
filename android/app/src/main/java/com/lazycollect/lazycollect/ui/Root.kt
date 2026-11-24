@@ -100,6 +100,7 @@ private fun ClientHost(vm: AppViewModel) {
     val dropped by vm.client.dropped.collectAsStateWithLifecycle()
     val progress by vm.client.progress.collectAsStateWithLifecycle()
     val online by vm.client.connected.collectAsStateWithLifecycle()
+    val notesSent by vm.client.notesSent.collectAsStateWithLifecycle()
     val take = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture(), vm::cameraDone)
     val client = vm.client
     val actions = remember {
@@ -121,6 +122,6 @@ private fun ClientHost(vm: AppViewModel) {
         )
     }
     LaunchedEffect(dropped) { if (dropped > 0) vm.client.acknowledgeDropped() }
-    ClientRoot(state, action, jobs, dropped, actions, progress, !online)
+    ClientRoot(state, action, jobs, dropped, actions, progress, !online, notesSent)
     vm.scanning?.let { (item, scan) -> ScanScreen(item.label, scan, vm::closeScan) }
 }

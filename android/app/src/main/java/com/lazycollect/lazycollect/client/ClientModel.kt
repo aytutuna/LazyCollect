@@ -48,12 +48,16 @@ class ClientModel(
     private val flow = MutableStateFlow<ClientState>(ClientState.Loading)
     private val acting = MutableStateFlow(Action())
     private val gone = MutableStateFlow(0)
+    private val notes = MutableStateFlow(0)
 
     val state: StateFlow<ClientState> get() = flow
     val action: StateFlow<Action> get() = acting
     val jobs get() = queue.jobs
     val progress get() = queue.progress
     val connected: StateFlow<Boolean> get() = online
+
+    /** Counts the notes the server has taken, so the box they were typed in can be emptied only then. */
+    val notesSent: StateFlow<Int> get() = notes
 
     /** How many waiting files were dropped because their item left the list; shown once. */
     val dropped: StateFlow<Int> get() = gone
@@ -185,7 +189,11 @@ class ClientModel(
     /** The professional's example for an item, or null when it cannot be had; nothing is kept. */
     suspend fun example(item: String): ByteArray? = try { api.example(item) } catch (e: ApiError) { null }
 
-    fun send(note: String) = act { api.note(note.trim()); load() }
+    fun send(note: String) = act {
+        api.note(note.trim())
+        notes.value++
+        load()
+    }
 
     fun removeFile(id: String) = act { api.deleteFile(id); load() }
 
