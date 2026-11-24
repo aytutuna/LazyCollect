@@ -1,8 +1,9 @@
 import { env, exports } from "cloudflare:workers";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Authenticator } from "./authenticator";
 import { codeStep, pendingOptions, pendingVerify, addPasskey, PENDING } from "./passkey-flow";
 import { api, login } from "./helpers";
+import { androidCerts } from "../src/wellknown";
 
 const get = (path: string) => exports.default.fetch(`https://collect.alazy.app${path}`, { redirect: "manual" });
 const FP = "14:6D:E9:83:C5:73:06:50:D8:EE:B9:95:2F:34:FC:64:16:A0:83:42:E6:1D:BE:A8:8A:04:96:B2:3F:CF:44:E5";
@@ -23,6 +24,17 @@ describe("assetlinks.json", () => {
     const [entry] = await res.json<any[]>();
     expect(entry.relation).toContain("delegate_permission/common.get_login_creds");
     expect(entry.target).toEqual({ namespace: "android_app", package_name: "com.lazycollect.lazycollect", sha256_cert_fingerprints: [FP] });
+  });
+
+  it("warns about a bad entry once, not on every request", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      env.ANDROID_CERT_SHA256 = `${FP}, nonsense`;
+      for (let i = 0; i < 3; i++) expect(androidCerts(env)).toEqual([FP]);
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("is valid with no fingerprint until the release key is known", async () => {

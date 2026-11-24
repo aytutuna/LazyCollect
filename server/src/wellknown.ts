@@ -9,14 +9,20 @@ export const wellKnown = new Hono<AppEnv>();
 
 // the signing certificate fingerprints of the Android app, comma separated, with or without colons (apksigner prints
 // them without); an entry that is not 32 bytes of hex is dropped
+let parsed: { raw: string; certs: string[] } | null = null;
+
 export function androidCerts(env: Env): string[] {
+  const raw = env.ANDROID_CERT_SHA256 ?? "";
+  // parsed once per isolate, so a bad entry is warned about once and not on every request
+  if (parsed?.raw === raw) return parsed.certs;
   const certs: string[] = [];
-  for (const entry of (env.ANDROID_CERT_SHA256 ?? "").split(",")) {
+  for (const entry of raw.split(",")) {
     const hex = entry.replace(/[:\s]/g, "").toUpperCase();
     if (!hex) continue;
     if (/^[0-9A-F]{64}$/.test(hex)) certs.push(hex.match(/../g)!.join(":"));
     else console.warn("ANDROID_CERT_SHA256 has an entry that is not a SHA-256 fingerprint; ignored");
   }
+  parsed = { raw, certs };
   return certs;
 }
 
