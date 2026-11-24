@@ -158,6 +158,18 @@ class ClientModelTest {
     }
 
     @Test
+    fun anAnswerThatFailsIsCounted() = runBlocking {
+        session.start("client-session")
+        server.on("GET /api/c/me", view("""{"id":"q1","label":"Name","required":true,"status":"empty","kind":"text","files":[]}"""))
+        server.on("PUT /api/c/me/items/q1/answer", MockResponse.Builder().code(500).body("{}").build())
+        val model = model()
+        ready(model)
+        model.answer("q1", JsonPrimitive("x"))
+        withTimeout(10_000) { model.answersFailed.first { it == 1 } }
+        assertEquals(0, model.notesSent.value)
+    }
+
+    @Test
     fun clearingAnAnswerSendsNull() = runBlocking {
         session.start("client-session")
         server.on("GET /api/c/me", view("""{"id":"q1","label":"Name","required":true,"status":"submitted","kind":"text","answer":"x","files":[]}"""))
@@ -205,6 +217,7 @@ class ClientModelTest {
 
     @Test
     fun addingFilesStartsTheUploads() {
+        session.start("client-session")
         val prepared = File(dir, "p.jpg").apply { writeText("abc") }
         val model = model()
         model.add("i1", listOf(Prepared("a.jpg", prepared, true)))

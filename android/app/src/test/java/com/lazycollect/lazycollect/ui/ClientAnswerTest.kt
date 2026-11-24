@@ -79,4 +79,18 @@ class ClientAnswerTest {
         compose.waitForIdle()
         assertEquals(1, sent.size)
     }
+
+    @Test
+    fun aFailedSaveIsSentAgainOnTheNextBlurEvenWhenItFailedAtOnce() {
+        val failures = androidx.compose.runtime.mutableIntStateOf(0)
+        compose.setContent { ClientRoot(ClientState.Ready(view), Action(), emptyList(), 0, actions, answersFailed = failures.intValue) }
+        compose.onNodeWithText("Your answer").performTextInput("Acme")
+        compose.onNodeWithText("Your answer").performImeAction()
+        compose.waitForIdle()
+        assertEquals(1, sent.size)
+        compose.runOnUiThread { failures.intValue = 1 }
+        compose.onNodeWithText("Your answer").performImeAction()
+        compose.waitForIdle()
+        assertEquals(2, sent.size)
+    }
 }

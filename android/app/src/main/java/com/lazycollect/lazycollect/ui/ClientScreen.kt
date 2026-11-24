@@ -89,7 +89,7 @@ class ClientActions(
 )
 
 @Composable
-fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions, progress: Map<String, Float> = emptyMap(), offline: Boolean = false, notesSent: Int = 0) {
+fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions, progress: Map<String, Float> = emptyMap(), offline: Boolean = false, notesSent: Int = 0, answersFailed: Int = 0) {
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         when (state) {
             ClientState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -103,7 +103,7 @@ fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int
                 Button(onClick = actions.reload) { Text(stringResource(R.string.retry)) }
                 OutlinedButton(onClick = actions.leave) { Text(stringResource(R.string.client_leave)) }
             }
-            is ClientState.Ready -> Checklist(state.view, state.stale, action, jobs, dropped, actions, progress, offline, notesSent)
+            is ClientState.Ready -> Checklist(state.view, state.stale, action, jobs, dropped, actions, progress, offline, notesSent, answersFailed)
         }
     }
 }
@@ -111,7 +111,7 @@ fun ClientRoot(state: ClientState, action: Action, jobs: List<Job>, dropped: Int
 private fun scopeOf(items: List<ClientItem>) = items.filter { it.required }.ifEmpty { items }
 
 @Composable
-private fun Checklist(view: ClientView, stale: Boolean, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions, progress: Map<String, Float>, offline: Boolean, notesSent: Int) {
+private fun Checklist(view: ClientView, stale: Boolean, action: Action, jobs: List<Job>, dropped: Int, actions: ClientActions, progress: Map<String, Float>, offline: Boolean, notesSent: Int, answersFailed: Int) {
     val scope = scopeOf(view.items)
     val received = scope.count { it.received }
     val unavailable = scope.count { it.status == "unavailable" }
@@ -146,9 +146,9 @@ private fun Checklist(view: ClientView, stale: Boolean, action: Action, jobs: Li
         for (group in groups) {
             if (groups.size > 1 || group.person != null) item(key = "g${group.person?.position}") { GroupHeader(group.person, group.items) }
             val (required, optional) = group.items.partition { it.required }
-            items(required, key = { it.id }) { ItemCard(it, view, action.busy, actions) }
+            items(required, key = { it.id }) { ItemCard(it, view, action.busy, actions, answersFailed) }
             if (optional.isNotEmpty() && required.isNotEmpty()) item { Text(stringResource(R.string.client_optional), style = MaterialTheme.typography.titleSmall) }
-            items(optional, key = { it.id }) { ItemCard(it, view, action.busy, actions) }
+            items(optional, key = { it.id }) { ItemCard(it, view, action.busy, actions, answersFailed) }
         }
         item { Notes(view, action.busy, actions, notesSent) }
         item { Trust(view) }
@@ -233,7 +233,7 @@ private fun badge(status: String): Pair<String, Int> = when (status) {
 }
 
 @Composable
-private fun ItemCard(item: ClientItem, view: ClientView, busy: Boolean, actions: ClientActions) {
+private fun ItemCard(item: ClientItem, view: ClientView, busy: Boolean, actions: ClientActions, answersFailed: Int) {
     val (mark, word) = badge(item.status)
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -245,7 +245,7 @@ private fun ItemCard(item: ClientItem, view: ClientView, busy: Boolean, actions:
             Example(item, actions)
             if (item.status == "rejected") Rejected(item, actions)
             else if (item.status == "submitted" && !item.rejectNote.isNullOrBlank()) Text(stringResource(R.string.client_earlier_note, item.rejectNote), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (item.kind == "file") FileBody(item, view, busy, actions) else Question(item, busy, actions)
+            if (item.kind == "file") FileBody(item, view, busy, actions) else Question(item, busy, actions, answersFailed)
         }
     }
 }
@@ -400,7 +400,7 @@ private val NUMBER = Regex("^-?\\d{1,15}(\\.\\d{1,6}|,\\d{1,2})?$")
 fun numberAnswer(text: String): String? = text.trim().takeIf { NUMBER.matches(it) }?.replace(',', '.')
 
 @Composable
-private fun Question(item: ClientItem, busy: Boolean, actions: ClientActions) {
+private fun Question(item: ClientItem, busy: Boolean, actions: ClientActions, answersFailed: Int) {
     val locked = busy || item.approved
     when (item.kind) {
         "yesno" -> Choices(item, listOf("yes" to stringResource(R.string.client_yes), "no" to stringResource(R.string.client_no)), locked, actions)
@@ -421,7 +421,7 @@ private fun Question(item: ClientItem, busy: Boolean, actions: ClientActions) {
                 }
             }
         }
-        else -> TypedAnswer(item, locked, actions)
+        else -> TypedAnswer(item, locked, actions, answersFailed)
     }
 }
 
@@ -440,7 +440,7 @@ private fun Choices(item: ClientItem, options: List<Pair<String, String>>, locke
 }
 
 @Composable
-private fun TypedAnswer(item: ClientItem, locked: Boolean, actions: ClientActions) {
+private fun TypedAnswer(item: ClientItem, locked: Boolean, actions: ClientActions, answersFailed: Int) {
     val saved = item.answerText
     var text by rememberSaveable(item.id, saved) { mutableStateOf(saved) }
     var bad by rememberSaveable(item.id) { mutableStateOf(false) }
@@ -471,8 +471,8 @@ private fun TypedAnswer(item: ClientItem, locked: Boolean, actions: ClientAction
         }
         sent = value
     }
-    // once the call is over, what the server holds is what was saved; a failed save is tried again on the next blur
-    LaunchedEffect(locked) { if (!locked) sent = saved }
+    // a save the server did not take is tried again on the next blur; the count does not depend on how long the call was out
+    LaunchedEffect(answersFailed) { sent = saved }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { if (!locked) commit() }
     val focus = LocalFocusManager.current
     OutlinedTextField(

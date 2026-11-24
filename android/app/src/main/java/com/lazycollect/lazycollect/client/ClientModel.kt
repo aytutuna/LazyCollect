@@ -49,6 +49,7 @@ class ClientModel(
     private val acting = MutableStateFlow(Action())
     private val gone = MutableStateFlow(0)
     private val notes = MutableStateFlow(0)
+    private val answerFails = MutableStateFlow(0)
 
     val state: StateFlow<ClientState> get() = flow
     val action: StateFlow<Action> get() = acting
@@ -58,6 +59,9 @@ class ClientModel(
 
     /** Counts the notes the server has taken, so the box they were typed in can be emptied only then. */
     val notesSent: StateFlow<Int> get() = notes
+
+    /** How many typed answers the server did not take; the field sends its text again on the next blur. */
+    val answersFailed: StateFlow<Int> get() = answerFails
 
     /** How many waiting files were dropped because their item left the list; shown once. */
     val dropped: StateFlow<Int> get() = gone
@@ -180,7 +184,14 @@ class ClientModel(
         flow.value = now.copy(view = now.view.copy(items = items), stale = false)
     }
 
-    fun answer(item: String, answer: JsonElement?) = act { replaceItems(api.answer(item, answer ?: JsonNull)) }
+    fun answer(item: String, answer: JsonElement?) = act {
+        try {
+            replaceItems(api.answer(item, answer ?: JsonNull))
+        } catch (e: ApiError) {
+            answerFails.value++
+            throw e
+        }
+    }
 
     fun dates(item: String, expiresOn: String?, issuedOn: String?, setExpires: Boolean, setIssued: Boolean) =
         act { replaceItems(api.dates(item, expiresOn, issuedOn, setExpires, setIssued)) }
