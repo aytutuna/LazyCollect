@@ -214,7 +214,7 @@ function statusText(item: ClientItem, firm: string): string {
   }
 }
 
-function Item({ item, firm, jobs, online, paused, onChange }: { item: ClientItem; firm: string; jobs: Job[]; online: boolean; paused: boolean; onChange: () => void }) {
+function Item({ item, firm, jobs, online, paused, accept, onChange }: { item: ClientItem; firm: string; jobs: Job[]; online: boolean; paused: boolean; accept: string; onChange: () => void }) {
   const [preparing, setPreparing] = useState(false);
   const [combined, setCombined] = useState(0);
   const [asking, setAsking] = useState(false);
@@ -385,7 +385,7 @@ function Item({ item, firm, jobs, online, paused, onChange }: { item: ClientItem
               )}
             </div>
             <input ref={camera} type="file" accept="image/*" capture="environment" hidden tabIndex={-1} onChange={(e) => pick(e.currentTarget)} />
-            <input ref={picker} type="file" accept="image/*,application/pdf" multiple hidden tabIndex={-1} onChange={(e) => pick(e.currentTarget)} />
+            <input ref={picker} type="file" accept={accept} multiple hidden tabIndex={-1} onChange={(e) => pick(e.currentTarget)} />
           </>
         )}
         {Scanner && (
@@ -556,12 +556,12 @@ function Question({ item, firm, save }: { item: ClientItem; firm: string; save: 
   );
 }
 
-function ItemList({ items, firm, jobs, online, paused, onChange, save }: { items: ClientItem[]; firm: string; jobs: Job[]; online: boolean; paused: boolean; onChange: () => void; save: Save }) {
+function ItemList({ items, firm, jobs, online, paused, accept, onChange, save }: { items: ClientItem[]; firm: string; jobs: Job[]; online: boolean; paused: boolean; accept: string; onChange: () => void; save: Save }) {
   return (
     <ul class="items">
       {items.map((item) =>
         item.kind === "file" ? (
-          <Item key={item.id} item={item} firm={firm} jobs={jobs} online={online} paused={paused} onChange={onChange} />
+          <Item key={item.id} item={item} firm={firm} jobs={jobs} online={online} paused={paused} accept={accept} onChange={onChange} />
         ) : (
           <Question key={item.id} item={item} firm={firm} save={save} />
         ),
@@ -571,16 +571,16 @@ function ItemList({ items, firm, jobs, online, paused, onChange, save }: { items
 }
 
 // what is asked of each person under their name, with how far they have got
-function Checklist({ items, firm, jobs, online, paused, onChange, save, people }: { items: ClientItem[]; firm: string; jobs: Job[]; online: boolean; paused: boolean; onChange: () => void; save: Save; people: ClientView["people"] }) {
+function Checklist({ items, firm, jobs, online, paused, accept, onChange, save, people }: { items: ClientItem[]; firm: string; jobs: Job[]; online: boolean; paused: boolean; accept: string; onChange: () => void; save: Save; people: ClientView["people"] }) {
   const list = (of: ClientItem[], nested: boolean) => {
     const optional = of.filter((i) => !i.required);
     return (
       <>
-        <ItemList items={of.filter((i) => i.required)} firm={firm} jobs={jobs} online={online} paused={paused} onChange={onChange} save={save} />
+        <ItemList items={of.filter((i) => i.required)} firm={firm} jobs={jobs} online={online} paused={paused} accept={accept} onChange={onChange} save={save} />
         {optional.length > 0 && (
           <>
             {nested ? <h4 class="optional">{t("client.optional")}</h4> : <h3 class="optional">{t("client.optional")}</h3>}
-            <ItemList items={optional} firm={firm} jobs={jobs} online={online} paused={paused} onChange={onChange} save={save} />
+            <ItemList items={optional} firm={firm} jobs={jobs} online={online} paused={paused} accept={accept} onChange={onChange} save={save} />
           </>
         )}
       </>
@@ -781,6 +781,8 @@ function Page() {
   };
 
   const firm = data.firm_name;
+  // an older server sends no list: pictures and PDF, as before
+  const accept = (data.accept ?? ["image/*", "application/pdf"]).join(",");
   const contact = data.contact && (data.contact.email || data.contact.phone || data.contact.address) ? data.contact : null;
   return (
     <main class="client-page">
@@ -835,7 +837,7 @@ function Page() {
 
       <section aria-labelledby="checklist-title">
         <h2 id="checklist-title">{t("client.checklist")}</h2>
-        <Checklist items={data.items} people={data.people ?? []} firm={firm} jobs={jobs} online={online} paused={data.paused} onChange={reload} save={save} />
+        <Checklist items={data.items} people={data.people ?? []} firm={firm} jobs={jobs} online={online} paused={data.paused} accept={accept} onChange={reload} save={save} />
       </section>
 
       <Thread firm={firm} notes={data.notes} onChange={reload} />

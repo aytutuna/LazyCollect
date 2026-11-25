@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { rateLimited } from "./auth";
 import { usable } from "./firm";
+import { acceptFor, parseKinds } from "./kinds";
 import { isRegion, regionOf, type Region } from "./regions";
 import { NEWEST } from "./notes";
 import { presentItem, visible } from "./questions";
@@ -81,6 +82,7 @@ client.get("/c/:token", async (c) => {
   const now = Date.now();
 
   const items = await clientItems(db, req.firm_id, req.id);
+  const settings = await db.prepare("SELECT file_kinds FROM firm_settings WHERE firm_id = ?").bind(req.firm_id).first<{ file_kinds: string | null }>();
   const { results: notes } = await db
     .prepare(NEWEST)
     .bind(req.firm_id, req.id)
@@ -114,6 +116,8 @@ client.get("/c/:token", async (c) => {
     expires_at: req.expires_at,
     // the account's plan has ended: answers and messages still go through, new files do not
     paused: Boolean(sender && !usable(sender, now)),
+    // what the file picker offers, from the kinds the account takes
+    accept: acceptFor(parseKinds(settings?.file_kinds)),
     contact: canSend(sender, now) ? { name: sender.legal_name ?? sender.name, email: sender.owner_email, phone: sender.phone, address: sender.address } : null,
     notes,
     people,

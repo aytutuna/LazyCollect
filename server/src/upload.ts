@@ -5,6 +5,7 @@ import { linkOf } from "./client";
 import { ByteSource, CHUNK, cipherLength, encryptStream, fileKey } from "./crypt";
 import { planUsable } from "./firm";
 import { holdFiles, type FileRow as HeldFile } from "./held";
+import { TYPES, familyOf, inspect, kindOf, parseKinds } from "./kinds";
 import { firmDek } from "./keys";
 import { regionOf } from "./regions";
 import type { AppEnv } from "./session";
@@ -20,15 +21,6 @@ const MAX_PER_REQUEST = 300;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HEIC_BRANDS = ["heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs"];
 
-const EXT: Record<string, string> = {
-  "application/pdf": "pdf",
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/heic": "heic",
-  "image/heif": "heif",
-};
-
 export function sniff(b: Uint8Array): string | null {
   const at = (from: number, to: number) => String.fromCharCode(...b.subarray(from, to));
   if (at(0, 5) === "%PDF-") return "application/pdf";
@@ -43,15 +35,6 @@ export function sniff(b: Uint8Array): string | null {
   return null;
 }
 
-const NAME_EXT: Record<string, string[]> = {
-  "application/pdf": ["pdf"],
-  "image/jpeg": ["jpg", "jpeg"],
-  "image/png": ["png"],
-  "image/webp": ["webp"],
-  "image/heic": ["heic", "heif"],
-  "image/heif": ["heif", "heic"],
-};
-
 // a display name only: it never becomes a path, and its extension always matches the sniffed type
 function cleanName(raw: string, mime: string): string {
   let name = raw
@@ -61,15 +44,15 @@ function cleanName(raw: string, mime: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^\.+/, "");
-  const fitting = (n: string) => n.lastIndexOf(".") > 0 && NAME_EXT[mime].includes(n.slice(n.lastIndexOf(".") + 1).toLowerCase());
+  const fitting = (n: string) => n.lastIndexOf(".") > 0 && TYPES[mime].includes(n.slice(n.lastIndexOf(".") + 1).toLowerCase());
   // "T4.pdf.html" sniffed as a pdf loses ".html"; a name still without a fitting extension gets one
   if (!fitting(name)) name = name.replace(/\.[A-Za-z0-9]{1,5}$/, "");
   const fits = fitting(name);
   const dot = name.lastIndexOf(".");
-  const ext = fits ? name.slice(dot) : `.${EXT[mime]}`;
+  const ext = fits ? name.slice(dot) : `.${TYPES[mime][0]}`;
   const stem = fits ? name.slice(0, dot) : name;
   const base = Array.from(stem).slice(0, 200 - ext.length).join("").trim();
-  return base ? `${base}${ext}` : `file.${EXT[mime]}`;
+  return base ? `${base}${ext}` : `file.${TYPES[mime][0]}`;
 }
 
 type FileRow = { id: string; name: string; size: number; uploaded_at: number };
@@ -130,10 +113,28 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
   // nothing is written until the first bytes have been looked at
   const body = c.req.raw.body;
   if (!body) return c.json({ error: "unsupported_type" }, 415);
-  const source = new ByteSource(body);
-  const first = await source.read(Math.min(CHUNK, length));
-  const mime = sniff(first);
-  if (!mime) return c.json({ error: "unsupported_type" }, 415);
+  const settings = await db.prepare("SELECT file_kinds FROM firm_settings WHERE firm_id = ?").bind(req.firm_id).first<{ file_kinds: string | null }>();
+  let source = new ByteSource(body);
+  let first = await source.read(Math.min(CHUNK, length));
+  let mime = sniff(first);
+  if (!mime) {
+    const family = familyOf(first, rawName);
+    if (!family) return c.json({ error: "unsupported_type" }, 415);
+    // office, open document and text files are read whole: a zip lists its parts at the end, and macros hide inside
+    const rest = await source.read(length - first.length);
+    if (first.length + rest.length !== length) return invalid(c);
+    const whole = new Uint8Array(length);
+    whole.set(first);
+    whole.set(rest, first.length);
+    const found = await inspect(family, whole, rawName);
+    if (found === "macros") return c.json({ error: "macros" }, 415);
+    if (!found) return c.json({ error: "unsupported_type" }, 415);
+    mime = found;
+    first = whole.subarray(0, Math.min(CHUNK, length));
+    const tail = whole.subarray(first.length);
+    source = new ByteSource(new ReadableStream({ start: (s) => (s.enqueue(tail), s.close()) }));
+  }
+  if (!parseKinds(settings?.file_kinds).includes(kindOf(mime)!)) return c.json({ error: "type_off" }, 415);
 
   const fileId = randomId();
   const key = await fileKey(await firmDek(c.env, region, req.firm_id, true), fileId);
