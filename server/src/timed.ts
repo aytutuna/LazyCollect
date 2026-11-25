@@ -64,10 +64,13 @@ export async function runTimed(env: Env, now = Date.now(), list: Step[] = steps)
 // one failing step must not stop the others; only the message is logged
 async function runSteps(env: Env, now: number, list: Step[]) {
   const failed: { name: string; error: string }[] = [];
-  const minute = Math.floor(now / MINUTE);
   const ran: string[] = [];
+  // a slower step runs once its last good run is that old, so a missed minute or a failure delays it by a minute, not by hours
+  const { results: last } = await env.CONTROL.prepare("SELECT step, ok_at FROM timed_status").all<{ step: string; ok_at: number | null }>();
+  const done = new Map(last.map((r) => [r.step, r.ok_at]));
   for (const [name, run, every = 1] of list) {
-    if (minute % every !== 0) continue;
+    const before = done.get(name);
+    if (every > 1 && before && now - before < every * MINUTE - 20_000) continue;
     ran.push(name);
     collect();
     let error: string | null = null;
@@ -111,7 +114,12 @@ async function record(env: Env, now: number, ran: string[], failed: { name: stri
 }
 
 // the answer for the watch job: when every step last worked
-export async function lastGoodRun(env: Env, now = Date.now()) {
-  const row = await env.CONTROL.prepare("SELECT ok_at FROM timed_status WHERE step = 'run'").first<{ ok_at: number }>();
-  return { last_good_run: row?.ok_at ?? null, age_minutes: row ? Math.floor((now - row.ok_at) / 60_000) : null };
+// the slower steps count too: a pass is only as recent as the oldest of them, and one that has only ever failed counts as never
+export async function lastGoodRun(env: Env, now = Date.now(), list: Step[] = steps) {
+  const { results } = await env.CONTROL.prepare("SELECT step, ok_at FROM timed_status").all<{ step: string; ok_at: number | null }>();
+  const at = new Map(results.map((r) => [r.step, r.ok_at]));
+  const run = at.get("run");
+  if (!run) return { last_good_run: null, age_minutes: null };
+  const ok = Math.min(run, ...list.filter(([name, , every = 1]) => every > 1 && at.has(name)).map(([name]) => at.get(name) ?? 0));
+  return { last_good_run: ok, age_minutes: Math.floor((now - ok) / 60_000) };
 }

@@ -27,7 +27,7 @@ const MAX_BATCH = 1000;
 const MAX_BATCH_PER_DAY = 2000;
 const MAX_SEND_AHEAD = 90 * DAY;
 // sends per cron run, so one run stays short
-const PER_TICK = 30;
+const PER_TICK = 20;
 const MAX_TRIES = 3;
 // rows per statement, so a bound list stays small
 const CHUNK = 200;

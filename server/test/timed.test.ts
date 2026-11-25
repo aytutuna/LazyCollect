@@ -25,15 +25,26 @@ describe("timed run watch", () => {
     expect(await res.json<any>()).toMatchObject({ ok: true, last_good_run: expect.any(Number) });
   });
 
-  it("runs a step with a longer period only on its minutes, and records only the steps that ran", async () => {
+  it("runs a slower step once its last good run is old enough, and records only the steps that ran", async () => {
     const ran: string[] = [];
     const every10: Step = ["slow", async () => void ran.push("slow"), 10];
     const each: Step = ["fast", async () => void ran.push("fast")];
-    await runTimed(env, 7 * 10 * MINUTE + 3 * MINUTE, [every10, each]);
-    expect(ran).toEqual(["fast"]);
-    expect((await status()).slow).toBeUndefined();
-    await runTimed(env, 8 * 10 * MINUTE, [every10, each]);
-    expect(ran).toEqual(["fast", "slow", "fast"]);
+    const t = Date.now();
+    await runTimed(env, t, [every10, each]);
+    await runTimed(env, t + 3 * MINUTE, [every10, each]);
+    expect(ran).toEqual(["slow", "fast", "fast"]);
+    expect((await status()).slow.ok_at).toBe(t);
+    // a run that was missed does not leave the step waiting for the next tenth minute
+    await runTimed(env, t + 13 * MINUTE, [every10, each]);
+    expect(ran).toEqual(["slow", "fast", "fast", "slow", "fast"]);
+  });
+
+  it("calls the pass as old as its slowest step, so the watch sees housekeeping that stopped", async () => {
+    const t = Date.now();
+    const slow: Step = ["slow", async () => {}, 10];
+    await runTimed(env, t, [slow]);
+    await runTimed(env, t + 40 * MINUTE, [["fast", async () => {}]]);
+    expect(await lastGoodRun(env, t + 41 * MINUTE, [slow])).toEqual({ last_good_run: t, age_minutes: 41 });
   });
 
   it("does nothing while the last run is still working, and takes over from one that died", async () => {
@@ -88,7 +99,7 @@ describe("timed run watch", () => {
     const now = Date.now();
     await runTimed(env, now, [ok]);
     await runTimed(env, now + 10 * MINUTE, [broken]);
-    expect((await lastGoodRun(env, now + 20 * MINUTE)).last_good_run).toBe(now);
+    expect((await lastGoodRun(env, now + 20 * MINUTE, [ok])).last_good_run).toBe(now);
   });
 
   it("mails again when a step fails after it has recovered", async () => {

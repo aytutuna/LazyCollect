@@ -17,5 +17,5 @@ jobs:
         run: |
           age=$(curl -fsS --retry 2 --max-time 20 https://collect.alazy.app/api/health/timed | jq -r '.age_minutes')
           echo "minutes since the last good timed run: $age"
-          # the run starts every 10 minutes
+          # the run starts every minute
           test "$age" != null && test "$age" -le 30

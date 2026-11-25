@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 import { runTimed } from "../src/timed";
 import { atHour } from "../src/tz";
-import { MINUTE, hmac, randomId } from "../src/util";
+import { DAY, HOUR, MINUTE, hmac, randomId } from "../src/util";
 import { api, codeFrom, cookieFrom, linkFrom, mockOutbound, start } from "./helpers";
 
 const EMAIL = "owner@firm.test";
@@ -150,10 +150,9 @@ function counting(env: Env, tally: { calls: number }): Env {
 
 describe("a busy January", () => {
   const ACCOUNTS = 10;
-  const CLIENTS = 1000;
   const TZ = "America/Toronto";
 
-  async function seed() {
+  async function seed(CLIENTS = 1000) {
     const now = Date.now();
     const day = { y: 2027, m: 1, d: 12 };
     const nine = atHour(day, 9, TZ);
@@ -194,23 +193,60 @@ describe("a busy January", () => {
       tally.calls = 0;
       await runTimed(counted, nine + m * MINUTE);
       worst = Math.max(worst, tally.calls);
-      if (sent.length === ACCOUNTS * CLIENTS) break;
+      if (sent.length === ACCOUNTS * 1000) break;
     }
     console.log(`reminders ${sent.length}, most calls in one run ${worst}`);
-    expect(sent).toHaveLength(ACCOUNTS * CLIENTS);
+    expect(sent).toHaveLength(ACCOUNTS * 1000);
     expect(worst).toBeLessThanOrEqual(800);
     const left = await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM requests WHERE reminder_seq = 0").first<{ n: number }>();
     expect(left!.n).toBe(0);
   }, 900_000);
+
+  it("keeps a run that has notices, reminders and batch invitations all due to 800 database calls", async () => {
+    quietTimers();
+    const sent = mockOutbound();
+    const nine = await seed(100);
+    const firm = (1).toString(16).padStart(32, "0");
+    const hex = (kind: number, f: number, i: number) => (kind * 1_000_000 + f * 10_000 + i).toString(16).padStart(32, "0");
+    // 100 requests with a note from the client waiting to be told about
+    const noted = Array.from({ length: 10 }, (_, f) => Array.from({ length: 10 }, (_, i) => [f + 1, i + 1])).flat();
+    await env.DB_NA.batch(
+      noted.flatMap(([f, i]) => [
+        env.DB_NA.prepare("UPDATE requests SET notice_due_at = 1 WHERE id = ?").bind(hex(2, f, i)),
+        env.DB_NA.prepare("INSERT INTO notes (id, firm_id, request_id, author, body, created_at) VALUES (?, ?, ?, 'client', 'hi', ?)").bind(randomId(), f.toString(16).padStart(32, "0"), hex(2, f, i), nine - HOUR),
+      ]),
+    );
+    // a batch of 40 invitations for the first account
+    const batchId = randomId();
+    await env.DB_NA.batch([
+      env.DB_NA.prepare("INSERT INTO batches (id, firm_id, title, source_kind, deadline, reminders_on, send_at, next_try_at, total, created_by, created_at) VALUES (?, ?, 'Batch', 'template', ?, 0, ?, ?, 40, 'u', ?)").bind(batchId, firm, nine + 30 * DAY, nine, nine, nine),
+      ...Array.from({ length: 40 }, (_, i) => {
+        const req = hex(4, 1, i + 1);
+        return [
+          env.DB_NA.prepare("INSERT INTO requests (id, firm_id, client_id, title, deadline, status, created_by, created_at) VALUES (?, ?, ?, 'Batch', ?, 'draft', 'u', ?)").bind(req, firm, hex(1, 1, i + 1), nine + 30 * DAY, nine),
+          env.DB_NA.prepare("INSERT INTO items (id, firm_id, request_id, position, label, status) VALUES (?, ?, ?, 0, 'Passport', 'empty')").bind(hex(5, 1, i + 1), firm, req),
+          env.DB_NA.prepare("INSERT INTO batch_items (firm_id, batch_id, request_id, client_id, position, state) VALUES (?, ?, ?, ?, ?, 'pending')").bind(firm, batchId, req, hex(1, 1, i + 1), i),
+        ];
+      }).flat(),
+    ]);
+    const tally = { calls: 0 };
+    await runTimed(counting(env, tally), nine);
+    const invites = sent.filter((m: any) => m.subject.startsWith("Documents requested")).length;
+    const notices = sent.filter((m: any) => m.subject.includes(" on ") || m.subject.includes(" to ")).length;
+    console.warn(`one full run: ${sent.length} emails (${invites} invitations, ${notices} notices), ${tally.calls} database calls`);
+    expect(invites).toBe(20);
+    expect(sent.length).toBeGreaterThan(20 + 40);
+    expect(tally.calls).toBeLessThanOrEqual(800);
+  });
 
   it("sends nothing twice when two runs overlap", async () => {
     quietTimers();
     const sent = mockOutbound();
     const nine = await seed();
     await Promise.all([runTimed(env, nine), runTimed(env, nine)]);
-    expect(sent).toHaveLength(60);
-    expect(new Set(sent.map((m: any) => m.to[0])).size).toBe(60);
+    expect(sent).toHaveLength(50);
+    expect(new Set(sent.map((m: any) => m.to[0])).size).toBe(50);
     const claims = await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM messages WHERE kind = 'reminder'").first<{ n: number }>();
-    expect(claims!.n).toBe(60);
+    expect(claims!.n).toBe(50);
   });
 });

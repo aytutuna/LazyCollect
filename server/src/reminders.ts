@@ -11,9 +11,10 @@ import { DAY, HOUR, MINUTE } from "./util";
 
 const MAX_NOTICE_TRIES = 3;
 
-const BATCH = 100;
+// notices to the account's own people one run may send; they go first, so they are kept few
+const NOTICES = 30;
 // reminders and sent-back emails one run may send; the run starts every minute, and the rest wait for the next one
-export const PER_RUN = 60;
+export const PER_RUN = 50;
 const REJECT_QUIET = 10 * MINUTE;
 
 export type Sender = {
@@ -297,7 +298,7 @@ async function noticePass(env: Env, db: D1Database, now: number) {
          (SELECT COUNT(*) FROM items i WHERE i.firm_id = r.firm_id AND i.request_id = r.id AND i.status = 'unavailable' AND i.unavailable_at > COALESCE(r.notified_at, 0)) AS u,
          (SELECT COUNT(*) FROM items i WHERE i.firm_id = r.firm_id AND i.request_id = r.id AND i.kind != 'file' AND i.answer IS NOT NULL AND ${visible("i")} AND i.answer_at > COALESCE(r.notified_at, 0)) AS a
        ${JOIN} WHERE r.notice_due_at IS NOT NULL AND (r.notified_at IS NULL OR r.notified_at <= ?) AND r.deleted_at IS NULL
-       ORDER BY r.notice_due_at LIMIT ${BATCH}`,
+       ORDER BY r.notice_due_at LIMIT ${NOTICES}`,
     )
     .bind(now - HOUR)
     .all<{ id: string; firm_id: string; title: string; notified_at: number | null; due: number; tries: number; client_name: string; n: number; q: number; u: number; a: number }>();

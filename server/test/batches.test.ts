@@ -231,9 +231,10 @@ describe("sending a batch", () => {
     await env.CONTROL.prepare("UPDATE firms SET stripe_subscription_id = 'sub_1'").run();
     const batch = await (await create(cookie, body(ids))).json<any>();
     await runBatches(env, NOW);
-    expect(invites(sent)).toHaveLength(30);
-    expect(await one(batch.id, cookie)).toMatchObject({ status: "sending", sent: 30, pending: 30 });
+    expect(invites(sent)).toHaveLength(20);
+    expect(await one(batch.id, cookie)).toMatchObject({ status: "sending", sent: 20, pending: 40 });
     await runBatches(env, NOW + 10 * MINUTE);
+    await runBatches(env, NOW + 20 * MINUTE);
     expect(invites(sent)).toHaveLength(60);
     expect((await one(batch.id, cookie)).status).toBe("done");
   });
@@ -333,10 +334,10 @@ describe("cancelling a batch", () => {
     const batch = await (await create(cookie, body(ids))).json<any>();
     await runBatches(env, NOW);
     const res = await (await api(`/api/batches/${batch.id}/cancel`, { method: "POST", cookie })).json<any>();
-    expect(res.unsent).toBe(10);
+    expect(res.unsent).toBe(20);
     await runBatches(env, NOW + 10 * MINUTE);
-    expect(sent.filter((m) => m.subject.startsWith("Documents requested"))).toHaveLength(30);
-    expect(await one(batch.id, cookie)).toMatchObject({ status: "cancelled", sent: 30, cancelled: 10 });
+    expect(sent.filter((m) => m.subject.startsWith("Documents requested"))).toHaveLength(20);
+    expect(await one(batch.id, cookie)).toMatchObject({ status: "cancelled", sent: 20, cancelled: 20 });
   });
 
   it("is not available across accounts", async () => {
