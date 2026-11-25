@@ -305,11 +305,17 @@ describe("Apple plans over time and in the rest of the app", () => {
     expect((await api("/api/account/close", { method: "POST", cookie, body: { confirm: "Tuna Tax" } })).status).toBe(200);
   });
 
+  it("still refuses to close while Apple retries a payment past our grace", async () => {
+    const { cookie } = await bought();
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'past_due', past_due_since = ?").bind(Date.now() - 20 * 86_400_000).run();
+    expect((await api("/api/account/close", { method: "POST", cookie, body: { confirm: "Tuna Tax" } })).status).toBe(409);
+  });
+
   it("keeps a paying App Store plan through close and reopen", async () => {
     const { cookie } = await bought();
     await env.CONTROL.prepare("UPDATE firms SET cancel_at_period_end = 1, stripe_subscription_id = 'sub_old'").run();
     expect((await api("/api/account/close", { method: "POST", cookie, body: { confirm: "Tuna Tax" } })).status).toBe(200);
-    expect(await env.CONTROL.prepare("SELECT plan_status, plan_source FROM firms").first()).toMatchObject({ plan_status: "active", plan_source: "apple" });
+    expect(await env.CONTROL.prepare("SELECT plan_status, plan_source, cancel_at_period_end FROM firms").first()).toMatchObject({ plan_status: "active", plan_source: "apple", cancel_at_period_end: 1 });
   });
 
   it("does not let a second, expired transaction replace a live plan", async () => {
@@ -349,6 +355,16 @@ describe("Apple plans that Apple stops vouching for", () => {
     appleFake.calls.length = 0;
     await refreshApple(env, Date.now(), 1);
     expect(appleFake.calls.map((c) => c.url)).toEqual([expect.stringContaining("1000000000001")]);
+  });
+
+  it("finds a firm by transaction id after a web plan took over, and leaves the web plan alone", async () => {
+    const { cookie, token } = await owner();
+    appleFake.subs["2000000000001"] = { status: 1, original: "1000000000001", token };
+    await buy(cookie);
+    await env.CONTROL.prepare("UPDATE firms SET plan_source = 'stripe', stripe_subscription_id = 'sub_1', plan_status = 'active'").run();
+    const signed = await ca.sign({ notificationType: "DID_RENEW", data: { signedTransactionInfo: await appleFake.transaction({ status: 1, original: "1000000000001", token }, "2000000000001") } });
+    expect((await notify(signed)).status).toBe(200);
+    expect(await firmRow(cookie)).toMatchObject({ plan_source: "stripe", stripe_subscription_id: "sub_1" });
   });
 
   it("attaches a purchase from its SUBSCRIBED notice and takes a body without a length", async () => {

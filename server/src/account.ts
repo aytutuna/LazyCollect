@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { deleteCookie } from "hono/cookie";
 import { audit } from "./audit";
 import { endSubscription } from "./billing";
-import { isOwner, usable } from "./firm";
+import { isOwner } from "./firm";
 import { emptyPrefix, purgeRequest, reasonOf } from "./purge";
 import { regionIds, regionOf, type Region } from "./regions";
 import type { AppEnv } from "./session";
@@ -38,7 +38,7 @@ account.post("/account/close", async (c) => {
   const at = firm.closed_at ?? now;
   // Apple bills until the owner cancels in the App Store; the Worker cannot do that, so the account stays open until it is
   // set to end there
-  if (!firm.closed_at && firm.plan_source === "apple" && (firm.plan_status === "active" || firm.plan_status === "past_due") && !firm.cancel_at_period_end && usable(firm, now)) {
+  if (!firm.closed_at && firm.plan_source === "apple" && (firm.plan_status === "active" || firm.plan_status === "past_due") && !firm.cancel_at_period_end) {
     return c.json({ error: "store_subscription", store_subscription: { source: "apple", manage_url: APPLE_MANAGE_URL } }, 409);
   }
   if (!firm.closed_at && firm.stripe_subscription_id && firm.plan_source !== "apple") {
@@ -61,7 +61,7 @@ account.post("/account/close", async (c) => {
     ...(firm.closed_at ? [] : [audit(c, "account.close", "firm", firm.id)]),
   ]);
   await c.env.CONTROL.prepare(
-    `UPDATE firms SET closed_at = ?, cancel_at_period_end = 0,
+    `UPDATE firms SET closed_at = ?, cancel_at_period_end = CASE WHEN plan_source IS 'apple' THEN cancel_at_period_end ELSE 0 END,
        plan_status = CASE WHEN stripe_subscription_id IS NOT NULL AND plan_source IS NOT 'apple' THEN 'canceled' ELSE plan_status END
      WHERE id = ? AND closed_at IS NULL`,
   )

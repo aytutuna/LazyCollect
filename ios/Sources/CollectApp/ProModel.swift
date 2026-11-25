@@ -46,6 +46,7 @@ final class ProSession: ObservableObject {
     }
 
     func signOut() async {
+        PlanStore.shared.message = nil
         await app.signOutStaff()
     }
 }

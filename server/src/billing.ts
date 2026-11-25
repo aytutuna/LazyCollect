@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { audit } from "./audit";
-import { isOwner, usable } from "./firm";
+import { isOwner } from "./firm";
 import type { AppEnv, Firm } from "./session";
 import { StripeError, stripe } from "./stripe";
 import { DAY, MINUTE, sha256 } from "./util";
@@ -84,9 +84,7 @@ billing.post("/billing/checkout", async (c) => {
   const firm = c.get("firm");
   const now = Date.now();
   // anyone with a live subscription changes it in the portal
-  // an App Store plan Apple no longer vouches for is over, whatever its status still says
-  const lapsed = firm.plan_source === "apple" && !usable(firm, now);
-  if (!lapsed && (firm.plan_status === "active" || firm.plan_status === "past_due" || (firm.plan_status === "trialing" && firm.stripe_subscription_id))) {
+  if (firm.plan_status === "active" || firm.plan_status === "past_due" || (firm.plan_status === "trialing" && firm.stripe_subscription_id)) {
     return c.json({ error: "subscribed" }, 409);
   }
   try {
@@ -230,7 +228,7 @@ async function sync(env: Env, event: Event) {
   // a subscription must not outlive the account it was bought for, nor sit beside another live one
   const other = firm.stripe_subscription_id && firm.stripe_subscription_id !== sub.id && firm.plan_status !== "canceled";
   // a plan bought in the App Store counts as the other one too: checkout may have been opened before the purchase
-  const store = firm.plan_source === "apple" && (firm.plan_status === "active" || firm.plan_status === "past_due") && usable(firm, Date.now());
+  const store = firm.plan_source === "apple" && (firm.plan_status === "active" || firm.plan_status === "past_due");
   if (plan !== "canceled" && (firm.closed_at || other || store)) {
     await cancelAndRefund(env, sub);
     return;

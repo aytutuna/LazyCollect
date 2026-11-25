@@ -244,7 +244,7 @@ appleWebhook.post("/apple/notifications", async (c) => {
   if (!payload) return c.json({ error: "invalid" }, 400);
   const tx = await verifyJws(c.env, payload.data?.signedTransactionInfo);
   if (!tx || tx.bundleId !== BUNDLE_ID || typeof tx.originalTransactionId !== "string" || typeof tx.transactionId !== "string") return c.json({ ok: true });
-  const holder = await c.env.CONTROL.prepare("SELECT id FROM firms WHERE apple_original_transaction_id = ? AND plan_source = 'apple'").bind(tx.originalTransactionId).first<{ id: string }>();
+  const holder = await c.env.CONTROL.prepare("SELECT id, plan_source, plan_status, stripe_subscription_id FROM firms WHERE apple_original_transaction_id = ?").bind(tx.originalTransactionId).first<{ id: string; plan_source: string | null; plan_status: string; stripe_subscription_id: string | null }>();
   // a purchase whose notice came before the app could say so: the account token names the firm, as in the purchase route
   const named = payload.notificationType === "SUBSCRIBED" && typeof tx.appAccountToken === "string" ? tx.appAccountToken.replaceAll("-", "").toLowerCase() : null;
   const firmId = named && /^[0-9a-f]{32}$/.test(named) ? named : holder?.id;
@@ -255,7 +255,10 @@ appleWebhook.post("/apple/notifications", async (c) => {
       if (holder) await lose(c.env, holder.id);
     } else if (found.original === tx.originalTransactionId) {
       if (named) await attach(c.env, firmId, found);
-      else if (found.token === accountToken(firmId)) await apply(c.env, firmId, found);
+      else if (holder && holder.plan_source !== "apple" && (holder.plan_status === "active" || holder.plan_status === "past_due" || (holder.plan_status === "trialing" && holder.stripe_subscription_id))) {
+        // the account has a web plan now, which Apple's word must not undo; a payment Apple still takes is for a person to see
+        if (found.plan !== "canceled") console.error("App Store plan renewed beside a web plan");
+      } else if (found.token === accountToken(firmId)) await apply(c.env, firmId, found);
     }
   } catch (e) {
     console.error(e instanceof Error ? e.message : "error");

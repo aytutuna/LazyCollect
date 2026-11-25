@@ -279,11 +279,11 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func planActions(_ me: Me) -> some View {
-        // Apple's word is final for its own plans: one it no longer reports shows Subscribe and Restore like no plan at all
-        let live = (me.firm.planStatus == "active" || me.firm.planStatus == "past_due") && me.firm.usable
+        // Apple's word is final for its own plans: only one it has ended shows Subscribe and Restore like no plan at all
+        let live = me.firm.planStatus == "active" || me.firm.planStatus == "past_due"
         if me.firm.planSource == "apple" && live {
             Button("Manage subscription") { managing = true }
-        } else if me.firm.subscribed && me.firm.planSource != "apple" {
+        } else if me.firm.subscribed && me.firm.planSource != "apple" && me.firm.planStatus != "canceled" {
             Text("This plan is managed on the website.").font(.footnote).foregroundStyle(.secondary)
         } else if me.user.role != "owner" {
             Text("Only the owner can start the plan.").font(.footnote).foregroundStyle(.secondary)

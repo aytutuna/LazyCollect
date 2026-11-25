@@ -21,9 +21,27 @@ final class PlanStore: ObservableObject {
     /// Purchases that finish outside the buy button (Ask to Buy approvals, renewals, one the Worker could not be told about last
     /// time) arrive here. A transaction is finished only once the Worker has taken it, so one that failed comes again at the next launch.
     func watch(_ session: ProSession) async {
+        message = nil
         for await result in StoreKit.Transaction.updates {
-            guard let firmId = session.me?.firm.id else { continue }
+            // only the owner can start the plan; a team member's phone leaves the transaction for the owner's
+            guard let me = session.me, me.user.role == "owner" else { continue }
+            let firmId = me.firm.id
             if await attach(result, firmId: firmId, api: session.api) { await session.loadMe() }
+        }
+    }
+
+    private static let permanent: Set<String> = ["not_found", "not_active", "other_account", "subscribed"]
+
+    private static func words(_ e: APIError) -> String {
+        switch e.code {
+        case "unavailable": return "The plan cannot be activated yet. Try again later."
+        case "not_found": return "The App Store plan could not be found. If you subscribed, tap Restore purchases."
+        case "not_active": return "That App Store plan has already ended."
+        case "other_account": return "That purchase belongs to another account."
+        case "subscribed": return "This account already has a plan."
+        case "forbidden": return "Only the owner can start the plan."
+        case "billing": return "The App Store could not be reached. Try again later."
+        default: return AppModel.words(e)
         }
     }
 
@@ -40,8 +58,9 @@ final class PlanStore: ObservableObject {
             message = nil
             return true
         } catch let e as APIError {
-            // the purchase went through at Apple; what failed is telling the Worker, which the next launch or Restore tries again
-            message = e.code == "unavailable" ? "The plan cannot be activated yet. Try again later." : AppModel.words(e)
+            message = Self.words(e)
+            // a refusal that will not change is finished, or it would come back at every launch; the rest is tried again then
+            if Self.permanent.contains(e.code) { await transaction.finish() }
         } catch {
             message = "That did not work. Try again."
         }

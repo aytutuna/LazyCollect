@@ -66,7 +66,7 @@ export function Plan({ me, onRefresh }: { me: Me; onRefresh: () => Promise<Me | 
   }
 
   // the App Store runs this plan: no payment page of ours can change it
-  const apple = firm.plan_source === "apple" && firm.usable && (firm.plan_status === "active" || firm.plan_status === "past_due");
+  const apple = firm.plan_source === "apple" && (firm.plan_status === "active" || firm.plan_status === "past_due");
   const live = firm.plan_status !== "canceled" && (firm.subscribed || firm.plan_status === "past_due");
   const label = firm.plan_status === "past_due" ? t("settings.update_payment") : t("settings.manage_billing");
   return (
