@@ -207,7 +207,7 @@ function FileKinds({ canEdit }: { canEdit: boolean }) {
             <label class="check">
               <input type="checkbox" disabled={!canEdit} checked={on.includes(k.id)} onChange={() => toggle(k.id)} />
               <span>
-                {t(`kind.${k.id}`)} <span class="muted">({k.extensions.map((e) => `.${e}`).join(" ")})</span>
+                {t(`filekind.${k.id}`)} <span class="muted">({k.extensions.map((e) => `.${e}`).join(" ")})</span>
               </span>
             </label>
           ))}
