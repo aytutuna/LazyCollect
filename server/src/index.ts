@@ -1,9 +1,9 @@
 import { Hono } from "hono";
-import { account, purgeClosed } from "./account";
+import { account } from "./account";
 import { activity } from "./activity";
 import { native } from "./app";
 import { auth } from "./auth";
-import { batches, runBatches } from "./batches";
+import { batches } from "./batches";
 import { billing, stripeWebhook } from "./billing";
 import { answers } from "./answers";
 import { client } from "./client";
@@ -19,23 +19,19 @@ import { passkeys } from "./passkeys";
 import { people } from "./people";
 import { notes } from "./notes";
 import { pending } from "./pending";
-import { purgeExpired } from "./purge";
 import { remind } from "./remind";
 import { repeat } from "./repeat";
 import { requests } from "./requests";
 import { retention } from "./retention";
-import { runReminders } from "./reminders";
 import { staff } from "./staff";
-import { sweepFiles } from "./sweep";
 import { templates } from "./templates";
+import { runTimed, lastGoodRun } from "./timed";
 import { trash } from "./trash";
-import { runTrialNotices } from "./trial";
 import { unavailable } from "./unavailable";
 import { unsubscribe } from "./unsubscribe";
 import { uploads } from "./upload";
 import { csrf } from "./csrf";
 import { htmlHeaders } from "./headers";
-import { DAY } from "./util";
 import { loadSession, type AppEnv } from "./session";
 import { wellKnown } from "./wellknown";
 
@@ -101,6 +97,7 @@ app.route("/api", passkeys);
 app.route("/api", activity);
 app.route("/api", files);
 app.route("/api", examples);
+app.get("/api/health/timed", async (c) => c.json({ ok: true, ...(await lastGoodRun(c.env)) }));
 
 app.route("/u", unsubscribe);
 
@@ -115,32 +112,5 @@ app.get("/c/*", async (c) => {
 
 export default {
   fetch: app.fetch,
-  async scheduled(_event: ScheduledController, env: Env) {
-    const now = Date.now();
-    // one failing step must not stop the others; only the message is logged
-    const step = async (run: () => Promise<unknown>) => {
-      try {
-        await run();
-      } catch (e) {
-        console.error(e instanceof Error ? e.message : "error");
-      }
-    };
-    await step(() =>
-      env.CONTROL.batch([
-        env.CONTROL.prepare("DELETE FROM login_codes WHERE created_at < ?").bind(now - DAY),
-        env.CONTROL.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
-        env.CONTROL.prepare("DELETE FROM client_sessions WHERE expires_at < ?").bind(now),
-        env.CONTROL.prepare("DELETE FROM app_challenges WHERE expires_at < ?").bind(now),
-        env.CONTROL.prepare("DELETE FROM pending_logins WHERE expires_at < ?").bind(now),
-        env.CONTROL.prepare("DELETE FROM passkey_challenges WHERE expires_at < ?").bind(now),
-        env.CONTROL.prepare("DELETE FROM stripe_events WHERE received_at < ?").bind(now - 30 * DAY),
-      ]),
-    );
-    await step(() => sweepFiles(env, now));
-    await step(() => purgeExpired(env, now));
-    await step(() => purgeClosed(env, now));
-    await step(() => runBatches(env, now));
-    await step(() => runReminders(env, now));
-    await step(() => runTrialNotices(env, now));
-  },
+  scheduled: (_event: ScheduledController, env: Env) => runTimed(env),
 };
