@@ -99,13 +99,13 @@ batches.post("/batches", async (c) => {
   const plans: Omit<Plan, "position" | "state" | "reason">[] = [];
   const mailable = new Map<string, boolean>();
 
-  type ClientRow = { id: string; name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null };
+  type ClientRow = { id: string; name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null; email_bounced_at: number | null };
   const loadClients = async (list: string[]) => {
     const { results } = await db
-      .prepare("SELECT id, name, email, email_ok_at, email_stop_at FROM clients WHERE firm_id = ? AND deleted_at IS NULL AND id IN (SELECT value FROM json_each(?)) ORDER BY name COLLATE NOCASE, id")
+      .prepare("SELECT id, name, email, email_ok_at, email_stop_at, email_bounced_at FROM clients WHERE firm_id = ? AND deleted_at IS NULL AND id IN (SELECT value FROM json_each(?)) ORDER BY name COLLATE NOCASE, id")
       .bind(firm.id, JSON.stringify(list))
       .all<ClientRow>();
-    for (const cl of results) mailable.set(cl.id, Boolean(cl.email && cl.email_ok_at && !cl.email_stop_at));
+    for (const cl of results) mailable.set(cl.id, Boolean(cl.email && cl.email_ok_at && !cl.email_stop_at && !cl.email_bounced_at));
     return results;
   };
 
