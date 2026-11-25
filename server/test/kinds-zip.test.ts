@@ -424,3 +424,72 @@ describe("markup that hides a tag from the reader", () => {
     accepted(await fetched("My%20Templates/Normal.dotm"));
   });
 });
+
+describe("one strict reader for the small xml parts", () => {
+  const XNS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+  const EXT = `${XNS}/externalLink`;
+  const EXTPATH = `${XNS}/externalLinkPath`;
+  const RNS = "http://schemas.openxmlformats.org/package/2006/relationships";
+  const XL_EXT_CT = ov("/xl/externalLinks/externalLink1.xml", `${OFFICE}.spreadsheetml.externalLink+xml`);
+  const linkXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<externalLink xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><externalBook xmlns:r="${XNS}" r:id="rId1"/></externalLink>`;
+
+  it("takes a workbook linked to another one the way Excel saves it, with the link's own relationships", async () => {
+    const withRels = await zip([
+      { name: "[Content_Types].xml", body: types(XLSX_CT, XL_EXT_CT) },
+      { name: "xl/workbook.xml", body: "<w/>" },
+      { name: "xl/_rels/workbook.xml.rels", body: rels(rel("rId4", EXT, "externalLinks/externalLink1.xml")) },
+      { name: "xl/externalLinks/externalLink1.xml", body: linkXml },
+      { name: "xl/externalLinks/_rels/externalLink1.xml.rels", body: rels(rel("rId1", EXTPATH, `file:///C:${BS}Users${BS}a${BS}Book2.xlsx`, true)) },
+    ]);
+    accepted(await run(withRels, "a.xlsx"));
+  });
+
+  it("is not fooled by an attribute spelled in another case, or by a processing instruction that starts like the declaration", async () => {
+    refused(await run(await tplDoc(`<?xml version="1.0"?><Relationships xmlns="${RNS}"><Relationship Id="rId1" Type="${TPL}" target="Normal.dotm" Target="https://evil.example/t.dotm" TargetMode="External"/></Relationships>`)));
+    refused(await run(await tplDoc(`<?xml version="1.0"?><Relationships xmlns="${RNS}"><Relationship Id="rId1" type="urn:x" Type="${TPL}" Target="https://evil.example/t.dotm" TargetMode="External"/></Relationships>`)));
+    refused(await run(await tplDoc(`<?xml-stylesheet <Relationship a='?><Relationships xmlns="${RNS}"><Relationship Id="rId1" Type="${TPL}" Target="https://evil.example/t.dotm" TargetMode="External"/><Relationship Id="rZ" Type="urn:x" Target="y'/>"/></Relationships>`)));
+    refused(await run(await tplDoc(rels(rel("rId1", TPL, "https://evil.example/t.dotm", true)))));
+  });
+
+  it("refuses anything that is not plain elements with quoted attributes", async () => {
+    const wrap = (inner: string, head = '<?xml version="1.0"?>') => `${head}<Relationships xmlns="${RNS}">${inner}</Relationships>`;
+    const ok = rel("rId1", TPL, "Normal.dotm");
+    accepted(await run(await tplDoc(wrap(ok))));
+    accepted(await run(await tplDoc(wrap(`\n  ${ok}\r\n`))));
+    for (const bad of [
+      wrap(`<!-- x -->${ok}`),
+      wrap(`<?pi x?>${ok}`),
+      wrap(`<![CDATA[x]]>${ok}`),
+      wrap(`text${ok}`),
+      wrap(`${ok} & more`),
+      wrap(`<Relationship Id="a" Id="b" Type="x" Target="y"/>`),
+      wrap(`<Relationship Id=a Type="x" Target="y"/>`),
+      wrap(`<Relationship Id="a&bogus;" Type="x" Target="y"/>`),
+      wrap(`<Relationship Id="a" Type="x" Target="y"></Other>`),
+      wrap(`<Relationship Id="a" Type="x" Target="y"/`),
+      wrap(`<Relationship Id="a"Type="x" Target="y"/>`),
+      wrap(ok, " <?xml version=\"1.0\"?>"),
+      wrap(ok, "<!DOCTYPE x>"),
+      wrap(`<Relationship Id="a" Type="x" Target="y"><Relationship Id="b" Type="x" Target="z"/></Relationship>`),
+      `<Other xmlns="${RNS}">${ok}</Other>`,
+    ]) refused(await run(await tplDoc(bad)));
+  });
+
+  it("reads the five predefined entities and numeric references in a value", async () => {
+    accepted(await run(await tplDoc(rels(rel("rId1", TPL, "Normal&amp;1&#46;dotm", true)))));
+    refused(await run(await tplDoc(rels(rel("rId1", TPL, "https&#x3a;//evil.example/t.dotm", true)))));
+  });
+
+  it("takes the first child of an external link from its start tag alone, with the rest of the part not read", async () => {
+    const link = (body: string) =>
+      zip([
+        { name: "[Content_Types].xml", body: types(XLSX_CT, XL_EXT_CT) },
+        { name: "xl/workbook.xml", body: "<w/>" },
+        { name: "xl/_rels/workbook.xml.rels", body: rels(rel("rId4", EXT, "externalLinks/externalLink1.xml")) },
+        { name: "xl/externalLinks/externalLink1.xml", body },
+      ]);
+    accepted(await run(await link(linkXml + " ".repeat(20000)), "a.xlsx"));
+    refused(await run(await link(`<externalLink><!-- c --><externalBook/></externalLink>`), "a.xlsx"));
+    refused(await run(await link(`<externalLink><ddeLink/></externalLink>`), "a.xlsx"));
+  });
+});

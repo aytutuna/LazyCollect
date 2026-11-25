@@ -237,76 +237,107 @@ function xmlText(bytes: Uint8Array, partial = false): string | null {
   }
   const declared = /<\?xml[^>]*\bencoding\s*=\s*["']([^"']+)["']/i.exec(text)?.[1];
   if (text.includes("\0") || (declared && !/^utf-?(8|16)(le|be)?$/i.test(declared))) return null;
-  // comments, CDATA, entity and type declarations and processing instructions other than the xml declaration are how a start tag
-  // gets hidden or faked; Office never writes them in these parts
-  if (/<!--|<!\[CDATA\[|<!DOCTYPE|<!ENTITY/i.test(text) || text.replace(/^\s*<\?xml[^>]*\?>/i, "").includes("<?")) return null;
   return text;
 }
 
-// an attribute value with its references decoded and look-alike letters folded
-const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
-const value = (raw: string) =>
-  raw
-    .replace(/&(?:#x([0-9a-f]+)|#(\d+)|([a-z]+));/gi, (whole, hex, dec, name) => {
-      if (name) return NAMED[name.toLowerCase()] ?? whole;
-      const n = hex ? parseInt(hex, 16) : Number(dec);
-      return n <= 0x10ffff ? String.fromCodePoint(n) : "";
-    })
-    .normalize("NFKC");
+// A strict reader for the small xml parts of a package. It takes only what Office writes there: an optional declaration at the very
+// start, elements with quoted attributes (case-sensitive names, none repeated), whitespace between them, and matching end tags.
+// Comments, processing instructions, declarations, CDATA, text, stray "<" or "&" and unbalanced tags make the part unreadable,
+// so the check and Office can't see different relationships in it.
+type XNode = { name: string; attrs: Map<string, string>; children: XNode[] };
 
-// The elements of this name, each with its attributes read one by one with the quotes respected, so a ">" or a look-alike
-// attribute inside a value can't hide or pass for another. null when the markup can't be followed.
-function elements(text: string, name: string): Map<string, string>[] | null {
-  const out: Map<string, string>[] = [];
-  const start = new RegExp(`<(?:[^\\s<>/:=!?]+:)?${name}(?=[\\s/>])`, "giu");
-  for (let m = start.exec(text); m; m = start.exec(text)) {
-    const attrs = new Map<string, string>();
-    let at = start.lastIndex;
+const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+// an attribute value with its references decoded and look-alike letters folded; null for a stray "&" or a bad character
+function value(raw: string): string | null {
+  if (raw.includes("<")) return null;
+  let bad = false;
+  const swapped = raw.replace(/&[^;&<]*;?/g, (ref) => {
+    const m = /^&(amp|lt|gt|quot|apos|#(\d+)|#x([0-9a-fA-F]+));$/.exec(ref);
+    if (!m) {
+      bad = true;
+      return "";
+    }
+    if (m[1] in NAMED) return NAMED[m[1]];
+    const n = m[2] ? Number(m[2]) : parseInt(m[3], 16);
+    if (n > 0x10ffff || (n < 0x20 && n !== 9 && n !== 10 && n !== 13) || (n >= 0xd800 && n < 0xe000)) bad = true;
+    return bad ? "" : String.fromCodePoint(n);
+  });
+  return bad ? null : swapped.normalize("NFKC");
+}
+
+const XML_SPACE = /[ \t\r\n]/;
+const NAME = /[^\s<>/=!?"'&;:][^\s<>/=!?"'&;]*/y;
+export const localName = (n: string) => n.slice(n.lastIndexOf(":") + 1);
+
+// With firstChildOnly the part may be cut short: reading stops once the root's first child has been read, and its tag is the last
+// thing that has to be well formed.
+function parseXml(text: string, firstChildOnly = false): XNode | null {
+  let at = 0;
+  const decl = /^<\?xml[ \t\r\n][^<>]*\?>/.exec(text);
+  if (decl) at = decl[0].length;
+  const top: XNode = { name: "", attrs: new Map(), children: [] };
+  const stack: XNode[] = [top];
+  const skip = () => {
+    const from = at;
+    while (at < text.length && XML_SPACE.test(text[at])) at++;
+    return at > from;
+  };
+  const name = () => {
+    NAME.lastIndex = at;
+    const m = NAME.exec(text);
+    if (!m) return null;
+    at += m[0].length;
+    return m[0];
+  };
+  for (;;) {
+    skip();
+    if (at >= text.length) break;
+    if (text[at++] !== "<") return null;
+    if (text[at] === "/") {
+      at++;
+      const n = name();
+      if (!n || stack.length < 2 || stack[stack.length - 1].name !== n) return null;
+      skip();
+      if (text[at++] !== ">") return null;
+      stack.pop();
+      continue;
+    }
+    if (text[at] === "!" || text[at] === "?") return null;
+    const n = name();
+    if (!n) return null;
+    const node: XNode = { name: n, attrs: new Map(), children: [] };
+    let empty = false;
     for (;;) {
-      while (/\s/.test(text[at] ?? "")) at++;
-      if (at >= text.length) return null;
-      if (text[at] === ">" || (text[at] === "/" && text[at + 1] === ">")) break;
-      const n = /^[^\s=/>"']+/.exec(text.slice(at, at + 200))?.[0];
-      if (!n) return null;
-      at += n.length;
-      while (/\s/.test(text[at] ?? "")) at++;
+      const spaced = skip();
+      if (text[at] === ">") {
+        at++;
+        break;
+      }
+      if (text[at] === "/" && text[at + 1] === ">") {
+        at += 2;
+        empty = true;
+        break;
+      }
+      const key = spaced ? name() : null;
+      if (!key || node.attrs.has(key)) return null;
+      skip();
       if (text[at++] !== "=") return null;
-      while (/\s/.test(text[at] ?? "")) at++;
+      skip();
       const quote = text[at++];
       if (quote !== '"' && quote !== "'") return null;
       const close = text.indexOf(quote, at);
       if (close < 0) return null;
-      if (!attrs.has(n.toLowerCase())) attrs.set(n.toLowerCase(), value(text.slice(at, close)));
+      const v = value(text.slice(at, close));
+      if (v === null) return null;
+      node.attrs.set(key, v);
       at = close + 1;
     }
-    out.push(attrs);
-    start.lastIndex = at;
+    stack[stack.length - 1].children.push(node);
+    if (firstChildOnly && stack.length === 2) return top.children[0];
+    if (!empty) stack.push(node);
   }
-  return out;
-}
-
-// the local name of the first element inside the root, from the start of a part; null when the tags can't be followed in it
-function firstChild(text: string): string | null {
-  const body = text.replace(/^\s*<\?xml[^>]*\?>/i, "");
-  const tag = (from: number) => {
-    if (from < 0) return null;
-    const open = /<(?:[^\s<>/:=!?]+:)?([^\s<>/:=!?]+)/y;
-    open.lastIndex = from;
-    const m = open.exec(body);
-    if (!m) return null;
-    let quote = "";
-    for (let at = open.lastIndex; at < body.length; at++) {
-      const c = body[at];
-      if (quote) quote = c === quote ? "" : quote;
-      else if (c === '"' || c === "'") quote = c;
-      else if (c === ">") return { name: m[1].toLowerCase(), end: at + 1, empty: body[at - 1] === "/" };
-    }
-    return null;
-  };
-  const root = tag(body.indexOf("<"));
-  if (!root || root.empty) return null;
-  const next = body.indexOf("<", root.end);
-  return next >= 0 && body.slice(root.end, next).trim() === "" ? (tag(next)?.name ?? null) : null;
+  return !firstChildOnly && stack.length === 1 && top.children.length === 1 ? top.children[0] : null;
 }
 
 // parts that carry or can start code
@@ -397,34 +428,38 @@ async function check(b: Uint8Array, depth: number, budget: Budget): Promise<Verd
     if ((budget.xml -= e.size) < 0) return BAD;
     const bytes = await bytesOf(b, e, XML_PART, budget);
     const text = bytes && xmlText(bytes);
-    if (!text) return BAD;
+    const tree = text ? parseXml(text) : null;
     const isTypes = e === types;
-    const list = elements(text, isTypes ? "(?:Default|Override)" : "Relationship");
-    if (!list) return BAD;
-    for (const attrs of list) {
-      const kind = (isTypes ? attrs.get("contenttype") : attrs.get("type")) ?? "";
+    if (!tree || localName(tree.name) !== (isTypes ? "Types" : "Relationships")) return BAD;
+    for (const item of tree.children) {
+      const tag = localName(item.name);
+      if (item.children.length || !(isTypes ? tag === "Default" || tag === "Override" : tag === "Relationship")) return BAD;
+      const attrs = item.attrs;
+      const kind = (isTypes ? attrs.get("ContentType") : attrs.get("Type")) ?? "";
       if (CHUNK.test(kind)) chunk = true;
       if (MACRO_TYPE.test(kind)) return MACROS;
-      if (!isTypes && FETCHING.test(kind) && !isLocal(attrs.get("target") ?? "")) return MACROS;
-      if (/externalLink|oleLink/iu.test(kind)) {
-        const part = isTypes ? attrs.get("partname")?.replace(/^\//, "") : attrs.get("target") && resolve(e.name, attrs.get("target")!);
+      if (!isTypes && FETCHING.test(kind) && !isLocal(attrs.get("Target") ?? "")) return MACROS;
+      const links = isTypes ? /externalLink|oleLink/iu.test(kind) : /\/(externalLink|oleLink)$/iu.test(kind);
+      if (links) {
+        const part = isTypes ? attrs.get("PartName")?.replace(/^\//, "") : attrs.get("Target") && resolve(e.name, attrs.get("Target")!);
         if (part) linked.add(part.toLowerCase());
-        if (part && !isTypes && /externalLink$/iu.test(kind) && !/^external$/iu.test(attrs.get("targetmode") ?? "")) mustExist.add(part.toLowerCase());
+        if (part && !isTypes && /externalLink$/iu.test(kind) && !/^external$/iu.test(attrs.get("TargetMode") ?? "")) mustExist.add(part.toLowerCase());
       }
     }
   }
   if (chunk) return CHUNKS;
   // an external link that names no part in the package could be a part under a name the check did not resolve
   for (const part of mustExist) if (!named.has(part)) return BAD;
-  // an external link part may hold a DDE or OLE link, wherever it sits; the link is the first thing in it
+  // an external link part may hold a DDE or OLE link, wherever it sits; the link is the first thing in it, and only an external
+  // workbook is taken
   for (const e of entries) {
-    if (!linked.has(e.name.toLowerCase()) && !/(^|\/)externalLinks\//iu.test(e.name)) continue;
+    if (!linked.has(e.name.toLowerCase()) && !/(^|\/)externalLinks\/[^/]+\.xml$/iu.test(e.name)) continue;
     const bytes = await peek(b, e, Math.min(e.size, PEEK));
     const text = bytes && xmlText(bytes, true);
-    if (text === null || !bytes) return BAD;
-    if (/<(?:[^\s<>/:=!?]+:)?(ddeLink|oleLink)\b/iu.test(text)) return MACROS;
-    // the root's first child tells what kind of link this is, and only an external workbook is taken
-    if (firstChild(text) !== "externalbook") return BAD;
+    const root = text === null || !bytes ? null : parseXml(text, true);
+    const child = localName(root?.children[0]?.name ?? "");
+    if (child === "ddeLink" || child === "oleLink") return MACROS;
+    if (!root || localName(root.name) !== "externalLink" || child !== "externalBook") return BAD;
   }
 
   for (const e of entries) {

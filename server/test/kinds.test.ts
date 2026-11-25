@@ -94,7 +94,7 @@ describe("file kinds", () => {
       ["e.docm", await zip([["[Content_Types].xml", types("application/vnd.ms-word.document.macroEnabled.main+xml")], ["word/document.xml", "<d/>"]])],
       ["h.ods", await ods([["Basic/Standard/Module1.xml", "x"]])],
       ["j.xlsx", await xlsx([["xl/blob.bin", "x"]], "application/vnd.ms-office.vbaProject")],
-      ["k.xlsx", await xlsx([["xl/_rels/workbook.xml.rels", '<Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" Target="x"/>']])],
+      ["k.xlsx", await xlsx([["xl/_rels/workbook.xml.rels", REL("oleObject")]])],
       ["m.xlsx", await xlsx([["xl/activeX/activeX1.xml", "x"]])],
       // a workbook held as an old compound file, whatever the part is called
       ["n.docx", await docxWithChart(ole())],
