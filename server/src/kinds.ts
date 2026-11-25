@@ -236,7 +236,10 @@ function xmlText(bytes: Uint8Array, partial = false): string | null {
     return null;
   }
   const declared = /<\?xml[^>]*\bencoding\s*=\s*["']([^"']+)["']/i.exec(text)?.[1];
-  if (text.includes("\0") || /<!DOCTYPE/i.test(text) || (declared && !/^utf-?(8|16)(le|be)?$/i.test(declared))) return null;
+  if (text.includes("\0") || (declared && !/^utf-?(8|16)(le|be)?$/i.test(declared))) return null;
+  // comments, CDATA, entity and type declarations and processing instructions other than the xml declaration are how a start tag
+  // gets hidden or faked; Office never writes them in these parts
+  if (/<!--|<!\[CDATA\[|<!DOCTYPE|<!ENTITY/i.test(text) || text.replace(/^\s*<\?xml[^>]*\?>/i, "").includes("<?")) return null;
   return text;
 }
 
@@ -255,7 +258,7 @@ const value = (raw: string) =>
 // attribute inside a value can't hide or pass for another. null when the markup can't be followed.
 function elements(text: string, name: string): Map<string, string>[] | null {
   const out: Map<string, string>[] = [];
-  const start = new RegExp(`<(?:[\\w.-]+:)?${name}(?=[\\s/>])`, "giu");
+  const start = new RegExp(`<(?:[^\\s<>/:=!?]+:)?${name}(?=[\\s/>])`, "giu");
   for (let m = start.exec(text); m; m = start.exec(text)) {
     const attrs = new Map<string, string>();
     let at = start.lastIndex;
@@ -282,6 +285,30 @@ function elements(text: string, name: string): Map<string, string>[] | null {
   return out;
 }
 
+// the local name of the first element inside the root, from the start of a part; null when the tags can't be followed in it
+function firstChild(text: string): string | null {
+  const body = text.replace(/^\s*<\?xml[^>]*\?>/i, "");
+  const tag = (from: number) => {
+    if (from < 0) return null;
+    const open = /<(?:[^\s<>/:=!?]+:)?([^\s<>/:=!?]+)/y;
+    open.lastIndex = from;
+    const m = open.exec(body);
+    if (!m) return null;
+    let quote = "";
+    for (let at = open.lastIndex; at < body.length; at++) {
+      const c = body[at];
+      if (quote) quote = c === quote ? "" : quote;
+      else if (c === '"' || c === "'") quote = c;
+      else if (c === ">") return { name: m[1].toLowerCase(), end: at + 1, empty: body[at - 1] === "/" };
+    }
+    return null;
+  };
+  const root = tag(body.indexOf("<"));
+  if (!root || root.empty) return null;
+  const next = body.indexOf("<", root.end);
+  return next >= 0 && body.slice(root.end, next).trim() === "" ? (tag(next)?.name ?? null) : null;
+}
+
 // parts that carry or can start code
 const MACRO_PART = /(^|\/)vbaProject\.bin$|(^|\/)vbaData\.xml$|^xl\/macrosheets\/|^xl\/dialogsheets\/|(^|\/)activeX\//iu;
 // the type of a part or a relationship that names a macro-enabled document, a VBA project, an ActiveX control or an embedded object
@@ -293,7 +320,28 @@ const OLE_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 const startsWith = (b: Uint8Array, magic: number[]) => magic.every((x, i) => b[i] === x);
 
 // only a path inside the package or on this computer is local; every other spelling, scheme or share is taken as remote
-const isLocal = (target: string) => /^(file:\/\/\/)?[a-z]:[\\/]/iu.test(target.trim()) || /^[^/\\:\s][^:]*$/u.test(target.trim());
+const localForm = (t: string) => {
+  if (/^(file:\/\/\/)?[a-z]:[\\/]/iu.test(t)) {
+    const path = t.replace(/^file:\/\/\//i, "");
+    return !/(^|[\\/])\.\.([\\/]|$)/.test(path) && !/[\\/]{2}/.test(path);
+  }
+  return /^[^/\\:\s][^:]*$/u.test(t);
+};
+const isLocal = (target: string) => {
+  // every form it takes when percent-decoded is looked at, and invisible or control characters are never local
+  const forms = [target.trim()];
+  for (let i = 0; i < 5; i++) {
+    let next: string;
+    try {
+      next = decodeURIComponent(forms[forms.length - 1]);
+    } catch {
+      return false;
+    }
+    if (next === forms[forms.length - 1]) break;
+    forms.push(next);
+  }
+  return forms.every((f) => !/[\p{Cf}\p{Cc}]/u.test(f) && localForm(f.trim()));
+};
 
 type Verdict = { v: "ok"; mime: string | null } | { v: "macros" } | { v: "chunk" } | { v: "bad" };
 const BAD: Verdict = { v: "bad" };
@@ -301,7 +349,13 @@ const MACROS: Verdict = { v: "macros" };
 const CHUNKS: Verdict = { v: "chunk" };
 
 // the path a relationship's target names, from the part the relationships belong to
-function resolve(relsName: string, target: string): string {
+function resolve(relsName: string, raw: string): string {
+  let target = raw.replace(/\\/g, "/");
+  try {
+    target = decodeURIComponent(target);
+  } catch {
+    // left as it is; it will not match a part
+  }
   if (target.startsWith("/")) return target.slice(1);
   const owner = relsName.replace(/(^|\/)_rels\/([^/]*)\.rels$/i, "$1");
   const parts = owner.split("/").slice(0, -1).concat(target.split("/"));
@@ -336,6 +390,7 @@ async function check(b: Uint8Array, depth: number, budget: Budget): Promise<Verd
 
   // a part can be renamed, so the types and every relationship are read for what they say each part is
   const linked = new Set<string>();
+  const mustExist = new Set<string>();
   let chunk = false;
   const xml = entries.filter((e) => e === types || /\.rels$/iu.test(e.name));
   for (const e of xml) {
@@ -354,17 +409,22 @@ async function check(b: Uint8Array, depth: number, budget: Budget): Promise<Verd
       if (/externalLink|oleLink/iu.test(kind)) {
         const part = isTypes ? attrs.get("partname")?.replace(/^\//, "") : attrs.get("target") && resolve(e.name, attrs.get("target")!);
         if (part) linked.add(part.toLowerCase());
+        if (part && !isTypes && /externalLink$/iu.test(kind) && !/^external$/iu.test(attrs.get("targetmode") ?? "")) mustExist.add(part.toLowerCase());
       }
     }
   }
   if (chunk) return CHUNKS;
+  // an external link that names no part in the package could be a part under a name the check did not resolve
+  for (const part of mustExist) if (!named.has(part)) return BAD;
   // an external link part may hold a DDE or OLE link, wherever it sits; the link is the first thing in it
   for (const e of entries) {
     if (!linked.has(e.name.toLowerCase()) && !/(^|\/)externalLinks\//iu.test(e.name)) continue;
     const bytes = await peek(b, e, Math.min(e.size, PEEK));
     const text = bytes && xmlText(bytes, true);
     if (text === null || !bytes) return BAD;
-    if (/<(\w+:)?(ddeLink|oleLink)\b/iu.test(text)) return MACROS;
+    if (/<(?:[^\s<>/:=!?]+:)?(ddeLink|oleLink)\b/iu.test(text)) return MACROS;
+    // the root's first child tells what kind of link this is, and only an external workbook is taken
+    if (firstChild(text) !== "externalbook") return BAD;
   }
 
   for (const e of entries) {

