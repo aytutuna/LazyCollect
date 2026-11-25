@@ -14,7 +14,7 @@ beforeEach(async () => {
   playFake.reset();
   appleFake.reset();
   await env.CONTROL.batch(
-    ["sessions", "client_sessions", "passkeys", "passkey_challenges", "pending_logins", "login_codes", "app_challenges", "app_keys", "invites", "users", "firms", "stripe_events"].map((t) => env.CONTROL.prepare(`DELETE FROM ${t}`)),
+    ["sessions", "client_sessions", "passkeys", "passkey_challenges", "pending_logins", "login_codes", "app_challenges", "app_keys", "invites", "users", "firms", "stripe_events", "timed_status", "trial_notices"].map((t) => env.CONTROL.prepare(`DELETE FROM ${t}`)),
   );
   const { objects } = await env.FILES_NA.list();
   await env.FILES_NA.delete(objects.map((o) => o.key));

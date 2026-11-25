@@ -1,3 +1,4 @@
+import { classOf, itemFailed } from "./pulse";
 import { LINK_GRACE } from "./links";
 import { regionIds, regionOf } from "./regions";
 import { DEFAULT_YEARS, YEAR } from "./status";
@@ -17,7 +18,10 @@ export const reasonOf = (r: Target): Reason => (r.deleted_reason === "retention"
 export const FINISHED = `ended_at IS NOT NULL AND hold_at IS NULL AND deleted_at IS NULL AND purging_at IS NULL
   AND (status = 'closed' OR deadline + ${LINK_GRACE} <= ?)`;
 
-const log = (e: unknown) => console.error(e instanceof Error ? e.message : "error");
+const log = (e: unknown) => {
+  console.error(e instanceof Error ? e.message : "error");
+  itemFailed(classOf(e));
+};
 
 export async function emptyPrefix(bucket: R2Bucket, prefix: string, onDelete?: () => void) {
   let cursor: string | undefined;

@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { rateLimited } from "./auth";
+import { usable } from "./firm";
 import { isRegion, regionOf, type Region } from "./regions";
 import { NEWEST } from "./notes";
 import { presentItem, visible } from "./questions";
@@ -111,6 +112,8 @@ client.get("/c/:token", async (c) => {
     deadline: req.deadline,
     status: req.status,
     expires_at: req.expires_at,
+    // the account's plan has ended: answers and messages still go through, new files do not
+    paused: Boolean(sender && !usable(sender, now)),
     contact: canSend(sender, now) ? { name: sender.legal_name ?? sender.name, email: sender.owner_email, phone: sender.phone, address: sender.address } : null,
     notes,
     people,

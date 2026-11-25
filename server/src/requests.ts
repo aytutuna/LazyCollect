@@ -590,10 +590,11 @@ requests.post("/requests/:id/link", async (c) => {
     if (!firm.address) return c.json({ error: "address_needed" }, 400);
     if (![...(await sendersOf(c.env, firm.region as Region, [firm.id])).values()][0]?.owner_email) return c.json({ error: "sender_needed" }, 400);
     const client = await db
-      .prepare("SELECT name, email, email_ok_at, email_stop_at FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
+      .prepare("SELECT name, email, email_ok_at, email_stop_at, email_bounced_at FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
       .bind(firm.id, req.client_id)
-      .first<{ name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null }>();
+      .first<{ name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null; email_bounced_at: number | null }>();
     if (!client?.email || !client.email_ok_at) return c.json({ error: "client_email_needed" }, 400);
+    if (client.email_bounced_at) return c.json({ error: "client_bounced" }, 400);
     if (client.email_stop_at) return c.json({ error: "client_unsubscribed" }, 400);
     if (await addressStopped(c.env, db, firm.id, client.email)) return c.json({ error: "client_unsubscribed" }, 400);
     // before the link is rotated, so a refusal leaves the client's working link alone
@@ -665,7 +666,7 @@ requests.get("/requests/:id/messages", async (c) => {
   const req = await findRequest(c);
   if (!req) return notFound(c);
   const { results } = await c.get("db")
-    .prepare("SELECT id, kind, seq, status, sent_at, seq >= ? AS manual FROM messages WHERE firm_id = ? AND request_id = ? ORDER BY sent_at DESC, rowid DESC LIMIT 100")
+    .prepare("SELECT id, kind, seq, status, sent_at, bounced_at, seq >= ? AS manual FROM messages WHERE firm_id = ? AND request_id = ? ORDER BY sent_at DESC, rowid DESC LIMIT 100")
     .bind(MANUAL_SEQ, c.get("firm").id, req.id)
     .all();
   return c.json(results);

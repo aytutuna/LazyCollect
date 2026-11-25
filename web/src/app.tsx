@@ -101,10 +101,14 @@ export function App() {
   const ended = blocked || !me.firm.usable;
   const pastDue = me.firm.plan_status === "past_due";
   const isOwner = me.user.role === "owner";
+  const trialEnd = me.firm.plan_status === "trialing" && !me.firm.subscribed ? me.firm.trial_ends_at : null;
+  const trialSoon = trialEnd !== null && trialEnd - Date.now() <= 3 * 86_400_000;
   const banner = !pastDue
     ? ended
       ? t(isOwner ? "plan.ended" : "plan.ended_member")
-      : null
+      : trialSoon
+        ? t(isOwner ? "plan.trial_soon" : "plan.trial_soon_member", { date: fmtDate(trialEnd) })
+        : null
     : ended
       ? t(isOwner ? "plan.past_due_ended" : "plan.past_due_ended_member")
       : t(isOwner ? "plan.past_due" : "plan.past_due_member", { date: fmtDate((me.firm.past_due_since ?? 0) + 7 * 86_400_000) });

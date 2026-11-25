@@ -1,3 +1,4 @@
+import { itemFailed } from "./pulse";
 import { Transient, escapeHtml, sendMail } from "./email";
 import { reasonLabels } from "./reasons";
 import { isRegion, type Region } from "./regions";
@@ -237,6 +238,7 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
     console.error(error);
     // a busy provider does not use up one of the attempts
     const later = e instanceof Transient;
+    itemFailed(later ? "EmailDeferred" : "EmailRefused");
     await db
       .prepare("UPDATE messages SET status = 'failed', error = ?, attempts = attempts - ? WHERE id = ?")
       .bind(error.slice(0, 200), later ? 1 : 0, messageId)

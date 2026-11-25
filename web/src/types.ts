@@ -36,6 +36,7 @@ export type Client = {
   reference: string | null;
   email_ok_at: number | null;
   email_stop_at: number | null;
+  email_bounced_at: number | null;
   sms_ok_at: number | null;
 };
 
@@ -168,7 +169,7 @@ export type SessionRow = { id: string | null; label: string | null; created_at: 
 
 export type PendingInvite = { id: string; email: string; name: string | null; created_at: number; expires_at: number };
 
-export type Message = { id: string; kind: "invite" | "reminder" | "deadline" | "rejected" | "answer"; seq: number; status: "sending" | "sent" | "failed"; sent_at: number; manual: 0 | 1 };
+export type Message = { id: string; kind: "invite" | "reminder" | "deadline" | "rejected" | "answer"; seq: number; status: "sending" | "sent" | "failed"; sent_at: number; bounced_at: number | null; manual: 0 | 1 };
 
 export type LinkResult = { url: string; emailed?: true; email_failed?: true };
 
@@ -186,6 +187,7 @@ export type ClientView = {
   deadline: number;
   status: string;
   expires_at: number;
+  paused: boolean;
   contact: { name: string | null; email: string | null; phone: string | null; address: string | null } | null;
   notes: Note[];
   people: { position: number; role: Role; name: string }[];

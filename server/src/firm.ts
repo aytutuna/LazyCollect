@@ -14,19 +14,26 @@ const PROVINCES = ["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "
 // since Stripe has already moved current_period_end a month ahead by then
 export const PAST_DUE_GRACE = 7 * DAY;
 
-export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at" | "past_due_since" | "closed_at"> & { plan_source?: string | null; current_period_end?: number | null }, now: number): boolean {
+export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at" | "past_due_since" | "closed_at"> & { plan_source?: string | null; current_period_end?: number | null; stripe_subscription_id?: string | null }, now: number): boolean {
   if (f.closed_at) return false;
   switch (f.plan_status) {
     case "active":
       // Apple tells us when a subscription ends; if that word was lost, the plan lapses once its period and a grace have passed
       return !(f.plan_source === "apple" && f.current_period_end != null && now > f.current_period_end + PAST_DUE_GRACE);
     case "trialing":
-      return f.trial_ends_at !== null && f.trial_ends_at > now;
+      // a paying account stays open while Stripe's webhook turns the trial into an active plan
+      return f.trial_ends_at !== null && now < f.trial_ends_at + (f.stripe_subscription_id ? PAST_DUE_GRACE : 0);
     case "past_due":
       return f.past_due_since !== null && now < f.past_due_since + PAST_DUE_GRACE;
     default:
       return false;
   }
+}
+
+// TODO: when the iPhone branch lands, usable() also has to count plan_source and current_period_end (a plan bought in the store)
+export async function planUsable(env: Env, firmId: string, now: number): Promise<boolean> {
+  const f = await env.CONTROL.prepare("SELECT plan_status, trial_ends_at, past_due_since, closed_at, stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<Parameters<typeof usable>[0]>();
+  return Boolean(f && usable(f, now));
 }
 
 // An owner who signed in once and did nothing: alone in the account, no clients, requests or templates, no billing, no passkeys, nothing pending.

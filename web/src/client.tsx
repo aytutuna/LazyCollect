@@ -99,6 +99,18 @@ function JobRow({ job, online }: { job: Job; online: boolean }) {
       </div>
     );
   }
+  if (job.state === "paused") {
+    return (
+      <div class="job">
+        <p class="muted">{t("client.job_paused", { name })}</p>
+        <div class="row-actions">
+          <button class="small" onClick={() => queue.remove(job.id)}>
+            {t("client.remove")}
+          </button>
+        </div>
+      </div>
+    );
+  }
   const text =
     job.state === "retrying" && job.retryIn
       ? t("client.job_retry", { name, seconds: job.retryIn })
@@ -202,7 +214,7 @@ function statusText(item: ClientItem, firm: string): string {
   }
 }
 
-function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: string; jobs: Job[]; online: boolean; onChange: () => void }) {
+function Item({ item, firm, jobs, online, paused, onChange }: { item: ClientItem; firm: string; jobs: Job[]; online: boolean; paused: boolean; onChange: () => void }) {
   const [preparing, setPreparing] = useState(false);
   const [combined, setCombined] = useState(0);
   const [asking, setAsking] = useState(false);
@@ -347,13 +359,18 @@ function Item({ item, firm, jobs, online, onChange }: { item: ClientItem; firm: 
 
         {open && (
           <>
+            {paused && <p class="muted">{t("client.item_paused")}</p>}
             <div class="row-actions buttons">
-              <button class="primary" disabled={preparing} aria-describedby={`label-${item.id}`} onClick={openScanner}>
-                {t("scan.open")}
-              </button>
-              <button disabled={preparing} aria-describedby={`label-${item.id}`} onClick={() => picker.current?.click()}>
-                {t("client.choose_file")}
-              </button>
+              {!paused && (
+                <>
+                  <button class="primary" disabled={preparing} aria-describedby={`label-${item.id}`} onClick={openScanner}>
+                    {t("scan.open")}
+                  </button>
+                  <button disabled={preparing} aria-describedby={`label-${item.id}`} onClick={() => picker.current?.click()}>
+                    {t("client.choose_file")}
+                  </button>
+                </>
+              )}
               {item.status === "unavailable" ? (
                 <button class="quiet-link" disabled={action.busy} aria-describedby={`label-${item.id}`} onClick={found}>
                   {t("client.found_it")}
@@ -539,12 +556,12 @@ function Question({ item, firm, save }: { item: ClientItem; firm: string; save: 
   );
 }
 
-function ItemList({ items, firm, jobs, online, onChange, save }: { items: ClientItem[]; firm: string; jobs: Job[]; online: boolean; onChange: () => void; save: Save }) {
+function ItemList({ items, firm, jobs, online, paused, onChange, save }: { items: ClientItem[]; firm: string; jobs: Job[]; online: boolean; paused: boolean; onChange: () => void; save: Save }) {
   return (
     <ul class="items">
       {items.map((item) =>
         item.kind === "file" ? (
-          <Item key={item.id} item={item} firm={firm} jobs={jobs} online={online} onChange={onChange} />
+          <Item key={item.id} item={item} firm={firm} jobs={jobs} online={online} paused={paused} onChange={onChange} />
         ) : (
           <Question key={item.id} item={item} firm={firm} save={save} />
         ),
@@ -554,16 +571,16 @@ function ItemList({ items, firm, jobs, online, onChange, save }: { items: Client
 }
 
 // what is asked of each person under their name, with how far they have got
-function Checklist({ items, firm, jobs, online, onChange, save, people }: { items: ClientItem[]; firm: string; jobs: Job[]; online: boolean; onChange: () => void; save: Save; people: ClientView["people"] }) {
+function Checklist({ items, firm, jobs, online, paused, onChange, save, people }: { items: ClientItem[]; firm: string; jobs: Job[]; online: boolean; paused: boolean; onChange: () => void; save: Save; people: ClientView["people"] }) {
   const list = (of: ClientItem[], nested: boolean) => {
     const optional = of.filter((i) => !i.required);
     return (
       <>
-        <ItemList items={of.filter((i) => i.required)} firm={firm} jobs={jobs} online={online} onChange={onChange} save={save} />
+        <ItemList items={of.filter((i) => i.required)} firm={firm} jobs={jobs} online={online} paused={paused} onChange={onChange} save={save} />
         {optional.length > 0 && (
           <>
             {nested ? <h4 class="optional">{t("client.optional")}</h4> : <h3 class="optional">{t("client.optional")}</h3>}
-            <ItemList items={optional} firm={firm} jobs={jobs} online={online} onChange={onChange} save={save} />
+            <ItemList items={optional} firm={firm} jobs={jobs} online={online} paused={paused} onChange={onChange} save={save} />
           </>
         )}
       </>
@@ -674,6 +691,19 @@ function Page() {
     };
   }, []);
 
+  // files that waited on a paused account go up once the page says it takes files again
+  useEffect(() => {
+    if (data && !data.paused) queue.resume();
+  }, [data?.paused]);
+
+  // an upload met a paused account the page did not know about: look again
+  useEffect(() => {
+    if (data && !data.paused && jobs.some((j) => j.state === "paused") && !checked.current.has("paused")) {
+      checked.current.add("paused");
+      reload();
+    }
+  }, [jobs]);
+
   // the link is gone: nothing stored for it can ever be sent
   useEffect(() => {
     if (error && isGone(error)) queue.forget().then(setRemoved);
@@ -771,6 +801,13 @@ function Page() {
         </p>
       )}
 
+      {data.paused && (
+        <div class="banner" role="status">
+          <strong>{t("client.paused_title")}</strong>
+          <p>{t("client.paused", { firm })}</p>
+        </div>
+      )}
+
       {(jobs.length > 0 || !online) && (
         <div class="banner">
           {jobs.length > 0 && <strong>{t("client.waiting", { n: jobs.length })}</strong>}
@@ -798,7 +835,7 @@ function Page() {
 
       <section aria-labelledby="checklist-title">
         <h2 id="checklist-title">{t("client.checklist")}</h2>
-        <Checklist items={data.items} people={data.people ?? []} firm={firm} jobs={jobs} online={online} onChange={reload} save={save} />
+        <Checklist items={data.items} people={data.people ?? []} firm={firm} jobs={jobs} online={online} paused={data.paused} onChange={reload} save={save} />
       </section>
 
       <Thread firm={firm} notes={data.notes} onChange={reload} />
