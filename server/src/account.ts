@@ -1,3 +1,4 @@
+import { APPLE_MANAGE_URL } from "./apple";
 import { classOf, itemFailed } from "./pulse";
 import { Hono } from "hono";
 import { deleteCookie } from "hono/cookie";
@@ -35,7 +36,12 @@ account.post("/account/close", async (c) => {
 
   // a retry after a failure further down finds the account closed already and carries on from the stored time
   const at = firm.closed_at ?? now;
-  if (!firm.closed_at && firm.stripe_subscription_id) {
+  // Apple bills until the owner cancels in the App Store; the Worker cannot do that, so the account stays open until it is
+  // set to end there
+  if (!firm.closed_at && firm.plan_source === "apple" && (firm.plan_status === "active" || firm.plan_status === "past_due") && !firm.cancel_at_period_end) {
+    return c.json({ error: "store_subscription", store_subscription: { source: "apple", manage_url: APPLE_MANAGE_URL } }, 409);
+  }
+  if (!firm.closed_at && firm.stripe_subscription_id && firm.plan_source !== "apple") {
     // first, so a failure here leaves the account open instead of closed and still billed
     try {
       await endSubscription(c.env, firm.stripe_subscription_id);
@@ -55,8 +61,8 @@ account.post("/account/close", async (c) => {
     ...(firm.closed_at ? [] : [audit(c, "account.close", "firm", firm.id)]),
   ]);
   await c.env.CONTROL.prepare(
-    `UPDATE firms SET closed_at = ?, cancel_at_period_end = 0,
-       plan_status = CASE WHEN stripe_subscription_id IS NOT NULL THEN 'canceled' ELSE plan_status END
+    `UPDATE firms SET closed_at = ?, cancel_at_period_end = CASE WHEN plan_source IS 'apple' THEN cancel_at_period_end ELSE 0 END,
+       plan_status = CASE WHEN stripe_subscription_id IS NOT NULL AND plan_source IS NOT 'apple' THEN 'canceled' ELSE plan_status END
      WHERE id = ? AND closed_at IS NULL`,
   )
     .bind(at, firm.id)

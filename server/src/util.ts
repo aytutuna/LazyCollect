@@ -49,3 +49,6 @@ export async function keyLimited(limiter: RateLimit | undefined, key: string): P
   const { success } = await limiter.limit({ key });
   return !success;
 }
+
+// A firm that holds a subscription, bought on the web or in the iPhone app; the one place that decides "paying" in SQL.
+export const PAYING = "(stripe_subscription_id IS NOT NULL OR apple_original_transaction_id IS NOT NULL)";

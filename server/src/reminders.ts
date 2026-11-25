@@ -25,6 +25,8 @@ export type Sender = {
   phone: string | null;
   tz: string;
   plan_status: string;
+  plan_source: string | null;
+  current_period_end: number | null;
   trial_ends_at: number | null;
   past_due_since: number | null;
   closed_at: number | null;
@@ -34,7 +36,7 @@ export type Sender = {
 
 export async function sendersOf(env: Env, region: Region, ids: string[]): Promise<Map<string, Sender>> {
   const { results } = await env.CONTROL.prepare(
-    `SELECT f.id, f.name, f.legal_name, f.address, f.phone, f.tz, f.plan_status, f.trial_ends_at, f.past_due_since, f.closed_at, f.stripe_subscription_id,
+    `SELECT f.id, f.name, f.legal_name, f.address, f.phone, f.tz, f.plan_status, f.plan_source, f.current_period_end, f.trial_ends_at, f.past_due_since, f.closed_at, f.stripe_subscription_id,
        (SELECT email FROM users WHERE firm_id = f.id AND role = 'owner' AND disabled_at IS NULL ORDER BY created_at LIMIT 1) AS owner_email
      FROM firms f WHERE f.region = ? AND f.id IN (SELECT value FROM json_each(?))`,
   )
@@ -140,7 +142,7 @@ async function each<T>(rows: T[], fn: (row: T) => Promise<unknown>) {
 
 // the sender list was read before the loop; a close or a lapse in between must still stop the email
 async function stillUsable(env: Env, firmId: string, now: number) {
-  const f = await env.CONTROL.prepare("SELECT plan_status, trial_ends_at, past_due_since, closed_at, stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<Parameters<typeof usable>[0]>();
+  const f = await env.CONTROL.prepare("SELECT plan_status, plan_source, current_period_end, trial_ends_at, past_due_since, closed_at, stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<Parameters<typeof usable>[0]>();
   return Boolean(f && usable(f, now));
 }
 

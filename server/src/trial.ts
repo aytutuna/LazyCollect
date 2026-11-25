@@ -1,6 +1,6 @@
 import { classOf, itemFailed } from "./pulse";
 import { Transient, escapeHtml, sendMail } from "./email";
-import { DAY } from "./util";
+import { DAY, PAYING } from "./util";
 
 export type TrialKind = "start" | "soon" | "end";
 
@@ -81,7 +81,7 @@ export async function runTrialNotices(env: Env, now = Date.now()) {
   const due = (kind: TrialKind, from: number, to: number) =>
     env.CONTROL.prepare(
       `SELECT id, tz, trial_ends_at FROM firms
-       WHERE plan_status = 'trialing' AND stripe_subscription_id IS NULL AND closed_at IS NULL AND trial_ends_at > ? AND trial_ends_at <= ?
+       WHERE plan_status = 'trialing' AND NOT ${PAYING} AND closed_at IS NULL AND trial_ends_at > ? AND trial_ends_at <= ?
        AND EXISTS (SELECT 1 FROM users u WHERE u.firm_id = firms.id AND u.role = 'owner' AND u.disabled_at IS NULL
          AND NOT EXISTS (SELECT 1 FROM trial_notices n WHERE n.firm_id = firms.id AND n.user_id = u.id AND n.kind = ? AND n.trial_ends_at = firms.trial_ends_at))
        ORDER BY trial_ends_at LIMIT ?`,

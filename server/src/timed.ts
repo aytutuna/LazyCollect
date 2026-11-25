@@ -1,4 +1,5 @@
 import { purgeClosed } from "./account";
+import { refreshApple } from "./apple";
 import { runBatches } from "./batches";
 import { sendMail } from "./email";
 import { purgeExpired } from "./purge";
@@ -34,6 +35,7 @@ export const steps: Step[] = [
       ]),
     10,
   ],
+  ["apple", refreshApple, 10],
   ["files", sweepFiles, 10],
   ["purge", purgeExpired, 10],
   ["closed", purgeClosed, 10],

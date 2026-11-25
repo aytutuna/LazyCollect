@@ -23,6 +23,8 @@ export type Firm = {
   cancel_at_period_end: number;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
+  plan_source: string | null;
+  apple_original_transaction_id: string | null;
   closed_at: number | null;
   require_passkeys: number;
 };

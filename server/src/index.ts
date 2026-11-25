@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { account } from "./account";
 import { activity } from "./activity";
+import { appleBilling, appleWebhook } from "./apple";
 import { native } from "./app";
 import { auth } from "./auth";
 import { batches } from "./batches";
@@ -52,6 +53,7 @@ app.use("/api/*", async (c, next) => {
 });
 // Stripe's calls carry no cookie or X-Collect header, so this goes in before the csrf check and is verified by its signature
 app.route("/api", stripeWebhook);
+app.route("/api", appleWebhook);
 // the same for Resend's bounce notices, checked by their signature
 app.route("/api", resendWebhook);
 app.use("/api/*", csrf, loadSession);
@@ -87,6 +89,7 @@ app.use("/api/files/*", loadFirm);
 app.use("/api/examples/*", loadFirm);
 app.route("/api", firm);
 app.route("/api", billing);
+app.route("/api", appleBilling);
 app.route("/api", account);
 app.route("/api", clients);
 app.route("/api", importer);

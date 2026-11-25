@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import { post, useAction } from "../api";
+import { ApiError, post, useAction } from "../api";
 import { fmtDate } from "../format";
 import { t } from "../i18n";
 import type { Me } from "../types";
@@ -7,6 +7,8 @@ import { Confirm, ErrorNote, Field } from "../ui";
 
 // mirrors the server's grace for a failed renewal
 const GRACE = 7 * 86_400_000;
+
+const APPLE_MANAGE_URL = "https://apps.apple.com/account/subscriptions";
 
 type PlanFirm = Me["firm"];
 
@@ -63,6 +65,8 @@ export function Plan({ me, onRefresh }: { me: Me; onRefresh: () => Promise<Me | 
     });
   }
 
+  // the App Store runs this plan: no payment page of ours can change it
+  const apple = firm.plan_source === "apple" && (firm.plan_status === "active" || firm.plan_status === "past_due");
   const live = firm.plan_status !== "canceled" && (firm.subscribed || firm.plan_status === "past_due");
   const label = firm.plan_status === "past_due" ? t("settings.update_payment") : t("settings.manage_billing");
   return (
@@ -76,7 +80,15 @@ export function Plan({ me, onRefresh }: { me: Me; onRefresh: () => Promise<Me | 
       {slow && <p class="muted">{t("settings.confirming_slow")}</p>}
       {!owner && <p class="muted">{t("settings.plan_owner")}</p>}
       <ErrorNote error={error} />
-      {owner && !waiting && (
+      {apple && (
+        <p>
+          {t("settings.plan_apple")}{" "}
+          <a href={APPLE_MANAGE_URL} target="_blank" rel="noopener">
+            {t("settings.apple_manage")}
+          </a>
+        </p>
+      )}
+      {owner && !waiting && !apple && (
         <p>
           {live ? (
             <button type="button" class={firm.plan_status === "past_due" ? "primary" : ""} disabled={busy} onClick={() => go("/billing/portal")}>
@@ -128,6 +140,13 @@ export function CloseAccount({ name, onClosed }: { name: string; onClosed: () =>
           <Field label={t("settings.close_label")}>
             <input value={typed} autoComplete="off" onInput={(e) => setTyped(e.currentTarget.value)} />
           </Field>
+          {error instanceof ApiError && error.code === "store_subscription" && (
+            <p>
+              <a href={APPLE_MANAGE_URL} target="_blank" rel="noopener">
+                {t("settings.apple_manage")}
+              </a>
+            </p>
+          )}
         </Confirm>
       )}
     </section>

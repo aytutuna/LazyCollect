@@ -10,6 +10,7 @@ export type Me = {
     past_due_since: number | null;
     cancel_at_period_end: boolean;
     subscribed: boolean;
+    plan_source: string | null;
     closed_at: number | null;
     held: boolean;
     usable: boolean;

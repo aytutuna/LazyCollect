@@ -13,8 +13,13 @@ const control: [string, string, string][] = [
   ["clear old payment events", "DELETE FROM stripe_events WHERE received_at < 0", "idx_stripe_events_received"],
   [
     "trials about to end",
-    "SELECT id FROM firms WHERE plan_status = 'trialing' AND stripe_subscription_id IS NULL AND closed_at IS NULL AND trial_ends_at > 0 AND trial_ends_at <= 1",
+    "SELECT id FROM firms WHERE plan_status = 'trialing' AND NOT (stripe_subscription_id IS NOT NULL OR apple_original_transaction_id IS NOT NULL) AND closed_at IS NULL AND trial_ends_at > 0 AND trial_ends_at <= 1",
     "idx_firms_trialing",
+  ],
+  [
+    "App Store plans whose period is ending",
+    "SELECT id FROM firms WHERE plan_source = 'apple' AND plan_status IN ('active', 'past_due') AND apple_original_transaction_id IS NOT NULL AND current_period_end < 1 ORDER BY COALESCE(apple_checked_at, 0) LIMIT 5",
+    "idx_firms_apple_period",
   ],
   ["closed accounts due for purge", "SELECT id FROM firms WHERE closed_at IS NOT NULL AND closed_at <= 0 ORDER BY closed_at LIMIT 5", "idx_firms_closed"],
   ["an account's owner", "SELECT email FROM users WHERE firm_id = 'f' AND role = 'owner' ORDER BY created_at LIMIT 1", "idx_users_firm"],

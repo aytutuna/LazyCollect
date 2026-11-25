@@ -211,11 +211,11 @@ async function sync(env: Env, event: Event) {
   }
   if (!customer || !subscription) return;
 
-  type Row = { id: string; stripe_subscription_id: string | null; plan_status: string; closed_at: number | null };
-  let firm = await env.CONTROL.prepare("SELECT id, stripe_subscription_id, plan_status, closed_at FROM firms WHERE stripe_customer_id = ?").bind(customer).first<Row>();
+  type Row = { id: string; stripe_subscription_id: string | null; plan_source: string | null; plan_status: string; current_period_end: number | null; trial_ends_at: number | null; past_due_since: number | null; closed_at: number | null };
+  let firm = await env.CONTROL.prepare("SELECT id, stripe_subscription_id, plan_source, plan_status, current_period_end, trial_ends_at, past_due_since, closed_at FROM firms WHERE stripe_customer_id = ?").bind(customer).first<Row>();
   // a firm that never saved its customer id (the save after creating it failed) is matched by what we put on the session
   if (!firm && typeof firmId === "string") {
-    firm = await env.CONTROL.prepare("SELECT id, stripe_subscription_id, plan_status, closed_at FROM firms WHERE id = ? AND stripe_customer_id IS NULL").bind(firmId).first<Row>();
+    firm = await env.CONTROL.prepare("SELECT id, stripe_subscription_id, plan_source, plan_status, current_period_end, trial_ends_at, past_due_since, closed_at FROM firms WHERE id = ? AND stripe_customer_id IS NULL").bind(firmId).first<Row>();
   }
   if (!firm) return;
 
@@ -224,16 +224,18 @@ async function sync(env: Env, event: Event) {
   const plan = planOf(sub.status);
   if (!plan) return;
   // an ending counts only for the subscription we hold; a late or unknown one must not undo the current plan
-  if (plan === "canceled" && firm.stripe_subscription_id !== sub.id) return;
+  if (plan === "canceled" && (firm.stripe_subscription_id !== sub.id || firm.plan_source === "apple")) return;
   // a subscription must not outlive the account it was bought for, nor sit beside another live one
   const other = firm.stripe_subscription_id && firm.stripe_subscription_id !== sub.id && firm.plan_status !== "canceled";
-  if (plan !== "canceled" && (firm.closed_at || other)) {
+  // a plan bought in the App Store counts as the other one too: checkout may have been opened before the purchase
+  const store = firm.plan_source === "apple" && (firm.plan_status === "active" || firm.plan_status === "past_due");
+  if (plan !== "canceled" && (firm.closed_at || other || store)) {
     await cancelAndRefund(env, sub);
     return;
   }
   const end = sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
   await env.CONTROL.prepare(
-    `UPDATE firms SET stripe_customer_id = ?, stripe_subscription_id = ?, plan_status = ?, current_period_end = ?, cancel_at_period_end = ?,
+    `UPDATE firms SET plan_source = 'stripe', stripe_customer_id = ?, stripe_subscription_id = ?, plan_status = ?, current_period_end = ?, cancel_at_period_end = ?,
        past_due_since = CASE WHEN ? = 'past_due' THEN COALESCE(past_due_since, ?) ELSE NULL END,
        trial_ends_at = CASE WHEN ? = 'trialing' AND ? IS NOT NULL THEN ? ELSE trial_ends_at END WHERE id = ?`,
   )
