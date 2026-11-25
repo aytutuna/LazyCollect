@@ -201,6 +201,7 @@ export function Clients() {
                         {c.name}
                         {c.reference && <div class="muted">{c.reference}</div>}
                         {c.email_stop_at && <div class="muted">{t("clients.unsubscribed")}</div>}
+                        {c.email_bounced_at && <div class="error">{t("clients.bounced")}</div>}
                       </td>
                       <td class="wide">{c.email ?? "-"}</td>
                       <td class="wide">{c.phone ?? "-"}</td>

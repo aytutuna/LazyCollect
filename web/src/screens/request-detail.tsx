@@ -290,7 +290,7 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
             <ul class="files">
               {sent.data.map((m) => (
                 <li key={m.id}>
-                  {t(`message.${m.kind}`)} <span class="muted">{fmtDate(m.sent_at)}, {t(`message.${m.status}`)}</span>
+                  {t(`message.${m.kind}`)} <span class="muted">{fmtDate(m.sent_at)}, {t(m.bounced_at ? "message.bounced" : `message.${m.status}`)}</span>
                 </li>
               ))}
             </ul>
