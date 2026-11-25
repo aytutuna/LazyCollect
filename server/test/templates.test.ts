@@ -104,11 +104,19 @@ describe("built-in templates", () => {
     }
   });
 
+  it("asks the personal checklist about tax year 2026 and no other", () => {
+    const t = builtinTemplates.find((x) => x.id === "t1-personal")!;
+    const text = JSON.stringify(t);
+    expect(t.name).toContain("2026");
+    expect(text).not.toMatch(/2025 (tax|net|return)|in 2025|for 2024|, 2025|2024 notice/);
+    expect(text).toContain("March 3, 2026 to March 1, 2027");
+  });
+
   it("start a request with the conditions in place", async () => {
     const { cookie, client } = await setup();
     const req = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "t", deadline: inDays(5), template_id: "t1-personal" } })).json<any>();
     const rl = req.items.find((i: any) => i.label.startsWith("RL-1 "));
-    expect(req.items[rl.show_if_pos].label).toBe("Were you a resident of Quebec on December 31, 2025?");
+    expect(req.items[rl.show_if_pos].label).toBe("Were you a resident of Quebec on December 31, 2026?");
     expect(rl.show_if_value).toBe("yes");
     expect(rl.hidden).toBe(true);
   });
