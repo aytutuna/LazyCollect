@@ -16,7 +16,7 @@ import { missingItems, senderName, sendersOf } from "./reminders";
 import { endNow, syncStatus } from "./status";
 import { nextReminder } from "./tz";
 import type { AppEnv } from "./session";
-import { UnknownYear, hasMarkers, resolveItems, taxYears, validYear } from "./taxyear";
+import { UnknownYear, fillYear, hasMarkers, hasYear, resolveItems, taxYears, validYear } from "./taxyear";
 import { builtinTemplates, factsOf, parseItem, parseItems, type Item } from "./templates";
 import { DAY, hmac, randomId, randomToken } from "./util";
 import { exampleGone, invalid, maybe, notFound, readBody, setClause, text } from "./validate";
@@ -277,13 +277,25 @@ async function addTagged(c: Context<AppEnv>, req: Req, item: Item) {
   return c.json(await loadRequest(c, req.id), 201);
 }
 
+// a year marker typed into an item of a request is filled in with the request's tax year, so it never reaches a client as typed
+async function withYear<T extends { label?: unknown; help?: unknown }>(c: Context<AppEnv>, reqId: string, fields: T): Promise<T | null> {
+  const strings = [fields.label, fields.help].filter((v): v is string => typeof v === "string");
+  if (!strings.some(hasYear)) return fields;
+  const row = await c.get("db").prepare("SELECT tax_year FROM requests WHERE firm_id = ? AND id = ?").bind(c.get("firm").id, reqId).first<{ tax_year: number | null }>();
+  if (!row?.tax_year) return null;
+  const year = row.tax_year;
+  return { ...fields, ...(typeof fields.label === "string" ? { label: fillYear(fields.label, year) } : {}), ...(typeof fields.help === "string" ? { help: fillYear(fields.help, year) } : {}) };
+}
+
 requests.post("/requests/:id/items", async (c) => {
   const body = await readBody(c);
-  const item = body ? parseItem(body) : undefined;
-  if (!item) return invalid(c);
+  const parsed = body ? parseItem(body) : undefined;
+  if (!parsed) return invalid(c);
   const req = await findRequest(c);
   if (!req) return notFound(c);
   if (!editable(req)) return c.json({ error: "locked" }, 409);
+  const item = await withYear(c, req.id, parsed);
+  if (!item) return c.json({ error: "tax_year_needed" }, 400);
   const id = randomId();
   const firmId = c.get("firm").id;
   const db = c.get("db");
@@ -359,17 +371,22 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
   const req = await findRequest(c);
   if (!req) return notFound(c);
   if (!editable(req)) return c.json({ error: "locked" }, 409);
+  const typed = await withYear(c, req.id, fields as { label?: string; help?: string | null });
+  if (!typed) return c.json({ error: "tax_year_needed" }, 400);
+  Object.assign(fields, typed);
   const db = c.get("db");
   const firmId = c.get("firm").id;
   if (!(await ownsExamples(db, firmId, [fields.example as string | null]))) return exampleGone(c);
   const itemId = c.req.param("itemId");
   const cur = await db
-    .prepare("SELECT label, label_base, expiry_rule, blueprint FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
+    .prepare("SELECT label, help, label_base, expiry_rule, blueprint FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
     .bind(firmId, req.id, itemId)
-    .first<{ label: string; label_base: string | null; expiry_rule: string | null; blueprint: string | null }>();
+    .first<{ label: string; help: string | null; label_base: string | null; expiry_rule: string | null; blueprint: string | null }>();
   if (!cur) return notFound(c);
-  // a label sent back as it was is not a rename
+  // a label or help sent back as it was is not a change, and keeps the item's wording for Repeat
   if (fields.label === (cur.label_base ?? cur.label)) delete fields.label;
+  const sameHelp = "help" in fields && (fields.help ?? null) === cur.help;
+  if (sameHelp) delete fields.help;
   // the dates belong to documents that ask for them, and the months only to one counted from its issue date
   if (["expires_on", "issued_on", "valid_months"].some((k) => k in fields)) {
     if (!cur.expiry_rule || ("valid_months" in fields && cur.expiry_rule !== "issue")) return invalid(c);

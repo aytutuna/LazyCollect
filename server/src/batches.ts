@@ -194,7 +194,7 @@ batches.post("/batches", async (c) => {
 
   const columns = kind === "template" ? [] : await itemColumns(db);
   // a repeat moves on to the next tax year, or waits until that year's dates are known
-  const later = kind === "repeat" ? await yearOn(db, firm.id, plans.map((p) => ({ id: p.id, src: p.src! }))) : [];
+  const later = kind === "repeat" ? await yearOn(db, firm.id, plans.map((p) => ({ id: p.id, src: p.src! }))) : { statements: [], stale: [] };
   if (later === "unknown") return c.json({ error: "tax_year_unknown" }, 409);
   // a template's items for each person wait for people the new requests do not have yet
   const expanded = expandItems(items, [], today(now, firm.tz).today);
@@ -241,7 +241,7 @@ batches.post("/batches", async (c) => {
         .bind(firm.id, batchId, JSON.stringify(chunk)),
     );
   }
-  stmts.push(...later);
+  stmts.push(...later.statements);
   // what the new requests were made for
   if (kind === "template" && (taxYear !== null || templateRef)) {
     stmts.push(

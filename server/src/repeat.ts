@@ -34,9 +34,9 @@ repeat.post("/requests/:id/repeat", async (c) => {
       .bind(id, firm.id, src.client_id, nextYearTitle(src.title).slice(0, 200), row!.note, plusYear(src.deadline, firm.tz), src.reminders_on, c.get("session")!.userId, now, firm.id, src.id, firm.id, src.id, firm.id, src.client_id, firm.id, now - DAY, firm.id),
     peopleFromRequests(db, firm.id, [{ id, src: src.id }], now),
     itemsFromRequests(db, firm.id, await itemColumns(db), [{ id, src: src.id }], true),
-    ...later,
+    ...later.statements,
     audit(c, "request.repeat", "request", id, { from: src.id }, { sql: "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ?)", binds: [firm.id, id] }),
   ]);
   if (!res.meta.changes) return c.json({ error: "too_many_requests" }, 429);
-  return c.json(await loadRequest(c, id), 201);
+  return c.json({ ...(await loadRequest(c, id)), stale_years: later.stale }, 201);
 });

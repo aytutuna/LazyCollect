@@ -83,6 +83,7 @@
   "error.unauthorized": "Please sign in again.",
   "error.too_big": "That file is bigger than 25 MB. Try a smaller one or a lower quality photo.",
   "error.unsupported_type": "That kind of file can't be uploaded here. Send a PDF, a photo or an office document.",
+  "detail.stale_years": "These items were reworded and still name a year near the old one, so check them: {items}",
   "error.tax_year_needed": "Pick the tax year for this checklist.",
   "error.tax_year_unknown": "That tax year's dates and rules are not in this checklist yet. They are added when the Canada Revenue Agency publishes them.",
   "error.type_off": "This kind of file isn't accepted for this request. Send a PDF or a photo instead, or ask who sent you the link.",

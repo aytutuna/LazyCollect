@@ -55,7 +55,7 @@ export function NewRequest() {
         items: toPayload(items),
         people: toPeople(people),
         ...(templateId ? { template_ref: templateId } : {}),
-        ...(taxYear !== null ? { tax_year: taxYear } : {}),
+        ...(taxYear !== null || typed ? { tax_year: taxYear ?? new Date().getFullYear() - 1 } : {}),
         ...(validUntil ? { valid_until: validUntil } : {}),
       });
       go(`/requests/${created.id}`);
@@ -67,6 +67,9 @@ export function NewRequest() {
   const builtin = templates.data.filter((x) => x.builtin);
   const own = templates.data.filter((x) => !x.builtin);
   const chosen = templates.data.find((x) => x.id === templateId);
+  // a year marker typed into the checklist needs a tax year too, even without a template
+  const typed = items.some((i) => /\{year(?:[+-]\d{1,2})?\}/.test(`${i.label} ${i.help}`));
+  const taxInfo = chosen?.tax ?? (typed ? { years: Array.from({ length: 7 }, (_, i) => new Date().getFullYear() - 5 + i), suggested: new Date().getFullYear() - 1 } : null);
 
   // the year in a title that still has the suggested one follows the choice
   function changeYear(year: number) {
@@ -146,10 +149,10 @@ export function NewRequest() {
               </optgroup>
             </select>
           </Field>
-          {chosen?.tax && (
+          {taxInfo && (
             <Field label={t("new.tax_year")} hint={t("new.tax_year_hint")}>
-              <select value={taxYear ?? ""} onChange={(e) => changeYear(Number(e.currentTarget.value))}>
-                {chosen.tax.years.map((y) => (
+              <select value={taxYear ?? taxInfo.suggested} onChange={(e) => changeYear(Number(e.currentTarget.value))}>
+                {taxInfo.years.map((y) => (
                   <option value={y}>{y}</option>
                 ))}
               </select>

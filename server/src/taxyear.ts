@@ -5,6 +5,8 @@ import type { Item } from "./questions";
 export type Facts = Record<number, Record<string, string>>;
 
 const MARKER = /\{(year(?:[+-]\d{1,2})?|[a-z][a-z0-9_]*)\}/g;
+// only these exact forms are year markers; {years} or {year_end} are just text
+const YEAR = /^year(?:[+-]\d{1,2})?$/;
 const FIRST = 2000;
 const LAST = 2100;
 
@@ -14,7 +16,7 @@ export const validYear = (y: unknown): y is number => Number.isInteger(y) && (y 
 
 function fill(s: string, year: number, facts: Facts, known: Set<string>, used: Set<string>): string {
   return s.replace(MARKER, (whole, name: string) => {
-    if (name.startsWith("year")) return String(year + Number(name.slice(4) || 0));
+    if (YEAR.test(name)) return String(year + Number(name.slice(4) || 0));
     if (!known.has(name)) return whole;
     const fact = facts[year]?.[name];
     if (fact === undefined) throw new UnknownYear(name);
@@ -26,7 +28,11 @@ function fill(s: string, year: number, facts: Facts, known: Set<string>, used: S
 // every fact name any year of this table has; a marker with another name is left as it was typed
 const names = (facts: Facts) => new Set(Object.values(facts).flatMap((f) => Object.keys(f)));
 
-const used = (s: string, known: Set<string>) => [...s.matchAll(MARKER)].some((m) => m[1].startsWith("year") || known.has(m[1]));
+const used = (s: string, known: Set<string>) => [...s.matchAll(MARKER)].some((m) => YEAR.test(m[1]) || known.has(m[1]));
+
+// the year markers of a text filled in, for wording typed after a request was made; other markers stay as typed
+export const hasYear = (s: string) => [...s.matchAll(MARKER)].some((m) => YEAR.test(m[1]));
+export const fillYear = (s: string, year: number) => s.replace(MARKER, (whole, name: string) => (YEAR.test(name) ? String(year + Number(name.slice(4) || 0)) : whole));
 const texts = (i: Item) => [i.label, i.help ?? "", ...(i.options ?? [])];
 
 export const hasMarkers = (items: Item[], facts: Facts = {}) => items.some((i) => texts(i).some((s) => used(s, names(facts))));

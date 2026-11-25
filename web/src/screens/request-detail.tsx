@@ -1,5 +1,5 @@
 import { useState } from "preact/hooks";
-import { Link, useLocation } from "wouter-preact";
+import { Link, useLocation, useSearch } from "wouter-preact";
 import { ApiError, del, get, patch, post, put, useAction, useLoad } from "../api";
 import { fmtDate, fmtDateTime, fmtDay, fmtSize, fromInput, inDays, isLate, relative, toInput } from "../format";
 import { t } from "../i18n";
@@ -23,6 +23,7 @@ type Ask = "link" | "close" | "delete" | null;
 
 export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
   const [, go] = useLocation();
+  const stale = new URLSearchParams(useSearch()).get("stale");
   const { data: req, error, reload } = useLoad(() => get<RequestDetail>(`/requests/${id}`), [id]);
   const clients = useLoad(() => get<Client[]>("/clients"));
   const firm = useLoad(() => get<Firm>("/firm"));
@@ -111,8 +112,8 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
 
   async function repeatNextYear() {
     await act.run(async () => {
-      const made = await post<RequestDetail>(`/requests/${id}/repeat`);
-      go(`/requests/${made.id}`);
+      const made = await post<RequestDetail & { stale_years?: string[] }>(`/requests/${id}/repeat`);
+      go(`/requests/${made.id}${made.stale_years?.length ? `?stale=${encodeURIComponent(made.stale_years.join(" | "))}` : ""}`);
     });
   }
 
@@ -158,6 +159,7 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
     <>
       <div class="head">
         <h1>{req.title}</h1>
+        {stale && <p class="warn">{t("detail.stale_years", { items: stale })}</p>}
         <Badge tone={statusTone(req.status)}>{statusLabel(req.status)}</Badge>
       </div>
 

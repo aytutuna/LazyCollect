@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { UnknownYear, resolveItems, restate, suggestedYear, tax, taxYears } from "../src/taxyear";
-import { builtinTemplates } from "../src/templates";
+import { builtinTemplates, factsOf } from "../src/templates";
 import { randomId } from "../src/util";
 import { api, firmRow, inDays, login, setup } from "./helpers";
 
@@ -133,6 +133,8 @@ describe("repeating a request moves the tax year on", () => {
   it("waits until the next year's dates are known", async () => {
     const { cookie, client } = await setup();
     const first = await (await make(cookie, client.id, { template_id: "t1-personal", tax_year: 2026 })).json<any>();
+    const firmId = (await q("SELECT firm_id FROM requests"))[0].firm_id;
+    expect((await factsOf(env.DB_NA, firmId, copy.id))[2026].rrsp_window).toBe("March 3, 2026 to March 1, 2027");
     const res = await repeat(cookie, first.id);
     expect([res.status, (await res.json<any>()).error]).toEqual([409, "tax_year_unknown"]);
     expect((await q("SELECT COUNT(*) AS n FROM requests"))[0].n).toBe(1);
@@ -143,6 +145,71 @@ describe("repeating a request moves the tax year on", () => {
     const first = await (await make(cookie, client.id, { title: "2025 taxes", items: [item("Slip 2025")] })).json<any>();
     const next = await (await repeat(cookie, first.id)).json<any>();
     expect([next.title, labels(next)]).toEqual(["2026 taxes", ["Slip 2025"]]);
+  });
+});
+
+describe("what counts as a marker", () => {
+  it("is only the exact year forms and the known facts", () => {
+    const items = [item("{years} and {year_end} and {yearly}", "{client} {year-}")];
+    expect(resolveItems(items, 2026, facts)).toEqual(items);
+    expect(tax(items, facts)).toBeNull();
+  });
+
+  it("does not make a request ask for a tax year", async () => {
+    const { cookie, client } = await setup();
+    const res = await make(cookie, client.id, { items: [item("Slip for {year_end}")] });
+    expect(res.status).toBe(201);
+  });
+});
+
+describe("an item reworded after the request was made", () => {
+  async function made() {
+    const { cookie, client } = await setup();
+    const req = await (await make(cookie, client.id, { template_id: "t2-year-end", tax_year: Y })).json<any>();
+    const at = req.items.find((i: any) => i.label.startsWith("T2 return"));
+    return { cookie, req, at };
+  }
+  const edit = (cookie: string, req: any, at: any, body: unknown) => api(`/api/requests/${req.id}/items/${at.id}`, { method: "PATCH", cookie, body });
+
+  it("keeps its original wording when it is saved as it was", async () => {
+    const { cookie, req, at } = await made();
+    await edit(cookie, req, at, { label: at.label, help: at.help, required: false });
+    const next = await (await repeat(cookie, req.id)).json<any>();
+    expect(labels(next)).toContain(`T2 return and notice of assessment for ${Y}`);
+  });
+
+  it("fills in a year marker typed into it, and needs the request to have a tax year", async () => {
+    const { cookie, req, at } = await made();
+    expect((await edit(cookie, req, at, { label: "Return for {year-1}" })).status).toBe(200);
+    expect(labels(await (await api(`/api/requests/${req.id}`, { cookie })).json<any>())).toContain(`Return for ${Y - 1}`);
+    const added = await api(`/api/requests/${req.id}/items`, { method: "POST", cookie, body: { label: "Slip {year}", required: true } });
+    expect((await added.json<any>()).label).toBe(`Slip ${Y}`);
+    const plain = await (await make(cookie, (await q("SELECT client_id FROM requests"))[0].client_id, { items: [item("A")] })).json<any>();
+    const res = await api(`/api/requests/${plain.id}/items`, { method: "POST", cookie, body: { label: "Slip {year}", required: true } });
+    expect([res.status, (await res.json<any>()).error]).toEqual([400, "tax_year_needed"]);
+  });
+
+  it("is listed when Repeat finds it still names a year near the old one", async () => {
+    const { cookie, req, at } = await made();
+    await edit(cookie, req, at, { label: `Return for ${Y - 1} only` });
+    const next = await (await repeat(cookie, req.id)).json<any>();
+    expect(next.stale_years).toEqual([`Return for ${Y - 1} only`]);
+  });
+});
+
+describe("a request from a copy that was deleted", () => {
+  it("finds the built-in facts in its place", async () => {
+    const { cookie, client } = await setup();
+    const t1 = builtin("t1-personal");
+    const copy = await (await api("/api/templates", { method: "POST", cookie, body: { name: "Mine", items: t1.items, source: "t1-personal" } })).json<any>();
+    const first = await (await make(cookie, client.id, { template_id: copy.id, tax_year: 2026 })).json<any>();
+    await api(`/api/templates/${copy.id}`, { method: "DELETE", cookie });
+    const firmId = (await q("SELECT firm_id FROM requests"))[0].firm_id;
+    expect((await factsOf(env.DB_NA, firmId, copy.id))[2026].rrsp_window).toBe("March 3, 2026 to March 1, 2027");
+    const res = await repeat(cookie, first.id);
+    expect([res.status, (await res.json<any>()).error]).toEqual([409, "tax_year_unknown"]);
+    const t2 = await (await make(cookie, client.id, { items: [item("Slip {rrsp_window}")], template_ref: "t1-personal", tax_year: 2026 })).json<any>();
+    expect(labels(t2)).toEqual(["Slip March 3, 2026 to March 1, 2027"]);
   });
 });
 

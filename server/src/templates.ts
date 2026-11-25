@@ -49,7 +49,11 @@ export async function factsOf(db: D1Database, firmId: string, ref: string | null
   const built = builtinTemplates.find((t) => t.id === ref);
   if (built) return built.facts ?? {};
   const row = await db.prepare("SELECT facts_json FROM templates WHERE firm_id = ? AND id = ?").bind(firmId, ref).first<{ facts_json: string | null }>();
-  return row?.facts_json ? JSON.parse(row.facts_json) : {};
+  if (row) return row.facts_json ? JSON.parse(row.facts_json) : {};
+  // the account's copy is gone: the built-in checklists' facts stand in, so what came from it can still be repeated
+  const merged: Facts = {};
+  for (const t of builtinTemplates) for (const [year, f] of Object.entries(t.facts ?? {})) merged[Number(year)] = { ...merged[Number(year)], ...f };
+  return merged;
 }
 
 const MAX_ITEMS = 100;
