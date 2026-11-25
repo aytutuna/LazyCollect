@@ -49,7 +49,9 @@ describe("trial emails", () => {
     expect(sent.map((m) => m.to[0]).sort()).toEqual(["owner@firm.test", "second@firm.test"]);
     expect(sent[0].subject).toMatch(/^Your Lazy Collect trial ends on /);
     expect(sent[0].text).toContain("https://collect.alazy.app/settings");
-    expect(sent[0].text).toContain("stop taking new files");
+    expect(sent[0].text).toContain("new uploads from your clients pause");
+    expect(sent[0].text).toContain("we will email you when you can subscribe");
+    expect(sent[0].text).not.toMatch(/in 3 days|nothing changes|opened in full/);
     await runTrialNotices(env);
     await runTrialNotices(env);
     expect(sent).toHaveLength(2);
@@ -80,7 +82,7 @@ describe("trial emails", () => {
     await runTrialNotices(env);
     expect(sent).toHaveLength(1);
     expect(sent[0].subject).toBe("Your Lazy Collect trial has ended");
-    expect(sent[0].text).toContain("New files from your clients are paused");
+    expect(sent[0].text).toContain("New uploads from your clients are paused");
     expect(await notices()).toEqual(["end"]);
   });
 
@@ -93,6 +95,19 @@ describe("trial emails", () => {
     await trialEnds(Date.now() - HOUR);
     await runTrialNotices(env);
     expect(sent.map((m) => m.subject.includes("ended"))).toEqual([false, true]);
+  });
+
+  it("sends the emails again for a trial that was changed", async () => {
+    await login("owner@firm.test");
+    await env.CONTROL.prepare("DELETE FROM trial_notices").run();
+    await trialEnds(Date.now() + 2 * DAY);
+    const sent = mockOutbound();
+    await runTrialNotices(env);
+    await runTrialNotices(env);
+    expect(sent).toHaveLength(1);
+    await trialEnds(Date.now() + 2.5 * DAY);
+    await runTrialNotices(env);
+    expect(sent).toHaveLength(2);
   });
 
   it("never sends the welcome email to an account that already exists", async () => {

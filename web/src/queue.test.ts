@@ -31,7 +31,9 @@ describe("upload queue", () => {
     await vi.waitFor(() => expect(queue.jobs.map((j) => j.state)).toEqual(["paused", "paused"]));
     expect(send).toHaveBeenCalledTimes(2);
     queue.online();
-    await Promise.resolve();
+    // long enough for a wrong resend to reach the sender
+    await new Promise((r) => setTimeout(r, 50));
     expect(send).toHaveBeenCalledTimes(2);
+    expect(queue.jobs.map((j) => j.state)).toEqual(["paused", "paused"]);
   });
 });
