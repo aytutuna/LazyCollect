@@ -15,6 +15,7 @@ import { dates } from "./expiry";
 import { files } from "./files";
 import { firm, loadClosedFirm, loadFirm } from "./firm";
 import { importer } from "./import";
+import { fingerprint, keyCheckGate, linkCheck, masterCheck } from "./keycheck";
 import { passkeys } from "./passkeys";
 import { people } from "./people";
 import { notes } from "./notes";
@@ -53,7 +54,11 @@ app.use("/api/*", async (c, next) => {
 // Stripe's calls carry no cookie or X-Collect header, so this goes in before the csrf check and is verified by its signature
 app.route("/api", stripeWebhook);
 app.use("/api/*", csrf, loadSession);
-app.get("/api/health", (c) => c.json({ ok: true }));
+app.get("/api/health", (c) => c.json({ ok: true, commit: c.env.COMMIT ?? null }));
+app.get("/api/health/keys", async (c) => {
+  if (c.req.header("X-Key-Check") !== (await keyCheckGate(c.env))) return c.json({ error: "not_found" }, 404);
+  return c.json({ master: await masterCheck(c.env), masterFingerprint: await fingerprint(c.env.MASTER_KEY_NA), link: await linkCheck(c.env) });
+});
 app.route("/api", auth);
 app.route("/api", native);
 app.route("/api", pending);

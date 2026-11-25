@@ -14,6 +14,7 @@ interface Secrets {
   APP_ATTEST_ROOT?: string;
   APP_ATTEST_OFF?: string;
   ANDROID_CERT_SHA256?: string;
+  COMMIT?: string;
 }
 interface Env extends Secrets {}
 declare namespace Cloudflare {
