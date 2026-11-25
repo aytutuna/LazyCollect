@@ -10,7 +10,7 @@ import { blank, invalid, locale, maybe, notFound, readBody, setClause, text } fr
 
 export const clients = new Hono<AppEnv>();
 
-const COLS = "id, name, email, phone, reference, locale, email_ok_at, email_stop_at, sms_ok_at, consent_by, created_at";
+const COLS = "id, name, email, phone, reference, locale, email_ok_at, email_stop_at, email_bounced_at, sms_ok_at, consent_by, created_at";
 export const MAX_CLIENTS = 10000;
 const PHONE_RE = /^[\d\s()+.-]{7,40}$/;
 
@@ -147,6 +147,7 @@ clients.patch("/clients/:id", async (c) => {
     if (tel !== row.phone) fields.sms_ok_at = null;
   }
   // the stop belongs to the old address; the client row starts clean with the new one
+  if (email !== row.email) fields.email_bounced_at = null;
   const leaving = row.email_stop_at && row.email && email !== row.email ? await stopHash(c.env, row.email) : null;
   if (leaving) fields.email_stop_at = null;
   if (!Object.keys(fields).length) return invalid(c);
