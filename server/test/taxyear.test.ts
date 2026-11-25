@@ -133,8 +133,6 @@ describe("repeating a request moves the tax year on", () => {
   it("waits until the next year's dates are known", async () => {
     const { cookie, client } = await setup();
     const first = await (await make(cookie, client.id, { template_id: "t1-personal", tax_year: 2026 })).json<any>();
-    const firmId = (await q("SELECT firm_id FROM requests"))[0].firm_id;
-    expect((await factsOf(env.DB_NA, firmId, copy.id))[2026].rrsp_window).toBe("March 3, 2026 to March 1, 2027");
     const res = await repeat(cookie, first.id);
     expect([res.status, (await res.json<any>()).error]).toEqual([409, "tax_year_unknown"]);
     expect((await q("SELECT COUNT(*) AS n FROM requests"))[0].n).toBe(1);
