@@ -5,7 +5,7 @@ import { linkOf } from "./client";
 import { ByteSource, CHUNK, cipherLength, encryptStream, fileKey } from "./crypt";
 import { planUsable } from "./firm";
 import { holdFiles, type FileRow as HeldFile } from "./held";
-import { TYPES, familyOf, inspect, kindOf, parseKinds } from "./kinds";
+import { TYPES, familyOf, inspect, kindOf, parseKinds, passwordProtected } from "./kinds";
 import { firmDek } from "./keys";
 import { regionOf } from "./regions";
 import type { AppEnv } from "./session";
@@ -120,7 +120,6 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
   if (!mime) {
     const family = familyOf(first, rawName);
     if (!family) return c.json({ error: "unsupported_type" }, 415);
-    if (family === "old") return c.json({ error: "old_office" }, 415);
     // office, open document and text files are read whole: a zip lists its parts at the end, and macros hide inside
     const whole = new Uint8Array(length);
     whole.set(first);
@@ -130,6 +129,7 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
       whole.set(piece, at);
       at += piece.length;
     }
+    if (family === "old") return c.json({ error: passwordProtected(whole) ? "encrypted_office" : "old_office" }, 415);
     const found = await inspect(family, whole, rawName);
     if (found === "macros") return c.json({ error: "macros" }, 415);
     if (!found) return c.json({ error: "unsupported_type" }, 415);

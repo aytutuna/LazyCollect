@@ -87,6 +87,7 @@
   "error.tax_year_needed": "Pick the tax year for this checklist.",
   "error.tax_year_unknown": "That tax year's dates and rules are not in this checklist yet. They are added when the Canada Revenue Agency publishes them.",
   "error.type_off": "This kind of file isn't accepted for this request. Send a PDF or a photo instead, or ask who sent you the link.",
+  "error.encrypted_office": "This file is protected by a password. Remove the password and send it again, or send a PDF.",
   "error.old_office": "Old Word, Excel and PowerPoint files (.doc, .xls, .ppt) can't be uploaded. Save the file as .docx, .xlsx or .pptx, or send a PDF.",
   "error.tax_year_missing": "This request has no tax year, so a year marker like {year} can't be filled in. Type the year instead.",
   "error.macros": "Files that can run macros can't be uploaded. Save a copy without macros, or send a PDF.",

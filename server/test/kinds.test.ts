@@ -125,6 +125,27 @@ describe("file kinds", () => {
     expect(await fileCount()).toBe(0);
   });
 
+  it("says so when an Office file is kept under a password, which is a compound file with two named streams", async () => {
+    const o = await openRequest();
+    const b = new Uint8Array(1536);
+    b.set(OLE);
+    b.set([...u16(9)], 0x1e);
+    b.set(u32(1), 0x2c);
+    b.set(u32(1), 0x30);
+    b.fill(0xff, 0x4c, 512);
+    b.set(u32(0), 0x4c);
+    b.fill(0xff, 512, 1024);
+    b.set([...u32(0xfffffffd), ...u32(0xfffffffe)], 512);
+    ["Root Entry", "EncryptionInfo", "EncryptedPackage"].forEach((name, i) => {
+      const units = [...name].flatMap((ch) => u16(ch.charCodeAt(0)));
+      b.set(units, 1024 + i * 128);
+      b.set(u16(units.length + 2), 1024 + i * 128 + 64);
+      b[1024 + i * 128 + 66] = i === 0 ? 5 : 2;
+    });
+    const res = await put(o.path, o.req.items[0].id, b, "secret.docx");
+    expect([res.status, (await res.json<any>()).error]).toEqual([415, "encrypted_office"]);
+  });
+
   it("takes a Word file with a native chart, and a chart whose workbook is itself clean", async () => {
     const o = await openRequest();
     const item = o.req.items[0].id;
