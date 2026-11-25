@@ -2,12 +2,12 @@
 import { ask, doc, template, text } from "../build";
 
 const feb = "Votre payeur vous l'envoie d'ici la fin de février.";
-const marital = "Votre état civil a-t-il changé en 2025?";
+const marital = "Votre état civil a-t-il changé en 2026?";
 const dependants = "Avez-vous des personnes à charge?";
 const childcare = "Avez-vous eu des frais de garde d'enfants?";
 const moved = "Avez-vous déménagé de plus de 40 km pour le travail ou les études?";
 const home = "Avez-vous un compte d'épargne libre d'impôt pour l'achat d'une première propriété (CELIAPP), avez-vous acheté une première propriété, ou remboursez-vous un Régime d'accession à la propriété (RAP) de votre REER?";
-const sold = "Avez-vous vendu une maison, un autre bien ou des cryptomonnaies en 2025?";
+const sold = "Avez-vous vendu une maison, un autre bien ou des cryptomonnaies en 2026?";
 const selfEmployed = "Avez-vous eu des revenus de travail autonome?";
 const rental = "Avez-vous gagné des revenus de location?";
 const foreign = "Déteniez-vous des biens étrangers ayant coûté plus de 100 000 $ CA?";
@@ -15,10 +15,10 @@ const medical = "Avez-vous eu des frais médicaux?";
 const donations = "Avez-vous fait des dons de bienfaisance?";
 const tuition = "Avez-vous payé des frais de scolarité?";
 const wfh = "Avez-vous travaillé à domicile parce que votre employeur l'exigeait?";
-const quebec = "Étiez-vous résident du Québec le 31 décembre 2025?";
+const quebec = "Étiez-vous résident du Québec le 31 décembre 2026?";
 
-export default template("t1-personal", "Aide-mémoire T1 pour particuliers, 2025", [
-  doc("Avis de cotisation de 2024", "Ouvrez une session dans Mon dossier de l'ARC et allez à Déclarations de revenus, ou utilisez la copie reçue par la poste.", undefined, true, "noa"),
+export default template("t1-personal", "Aide-mémoire T1 pour particuliers, 2026", [
+  doc("Avis de cotisation de 2025", "Ouvrez une session dans Mon dossier de l'ARC et allez à Déclarations de revenus, ou utilisez la copie reçue par la poste.", undefined, true, "noa"),
   doc("Feuillets T4 (revenus d'emploi)", `${feb} Envoyez-en un pour chaque employeur.`, undefined, false, "t4"),
   doc("Feuillets T4A (pension, retraite, rente et autres revenus)", `${feb} Cela comprend les bourses d'études et certains revenus de travail autonome.`, undefined, false),
   doc("Feuillet T4A(P) (prestations du Régime de pensions du Canada)", `${feb} Résidents du Québec : le feuillet de pension de Retraite Québec.`, undefined, false),
@@ -30,11 +30,11 @@ export default template("t1-personal", "Aide-mémoire T1 pour particuliers, 2025
   doc("Feuillets T5008 (opérations sur titres)", "De votre courtier si vous avez vendu des placements. Ajoutez un relevé de fin d'année si vous en avez un.", undefined, false),
   doc("Feuillets T4RSP et T4RIF (revenus de REER et de FERR)", feb, undefined, false),
   doc("Feuillets T5007 (aide sociale et indemnités pour accident du travail)", feb, undefined, false),
-  doc("Reçus de cotisations au REER", "Les cotisations versées du 3 mars 2025 au 2 mars 2026 peuvent figurer dans la déclaration de 2025. Votre avis de cotisation de 2024 indique votre plafond de REER.", undefined, false),
-  doc("Relevés des acomptes provisionnels", "Les montants que vous avez versés à l'ARC et à Revenu Québec en 2025.", undefined, false),
+  doc("Reçus de cotisations au REER", "Les cotisations versées du 3 mars 2026 au 1er mars 2027 peuvent figurer dans la déclaration de 2026. Votre avis de cotisation de 2025 indique votre plafond de REER.", undefined, false),
+  doc("Relevés des acomptes provisionnels", "Les montants que vous avez versés à l'ARC et à Revenu Québec en 2026.", undefined, false),
 
   ask(marital, "Par exemple un mariage, un nouveau conjoint de fait, une séparation ou un décès."),
-  text("Qu'est-ce qui a changé, et à quelle date?", "Ajoutez le nom de votre nouveau conjoint ou de votre ex-conjoint et son revenu net de 2025 si vous le connaissez.", marital),
+  text("Qu'est-ce qui a changé, et à quelle date?", "Ajoutez le nom de votre nouveau conjoint ou de votre ex-conjoint et son revenu net de 2026 si vous le connaissez.", marital),
 
   ask(dependants, "Enfants, ou autres membres de la famille que vous soutenez."),
   text("Noms et dates de naissance de vos personnes à charge", undefined, dependants, true, "longtext"),
@@ -77,7 +77,7 @@ export default template("t1-personal", "Aide-mémoire T1 pour particuliers, 2025
   ask(tuition, "Collège, université ou autre établissement d'enseignement postsecondaire.", false),
   doc("Attestations de frais de scolarité (T2202)", "Votre établissement la publie habituellement en ligne en février. Envoyez-en une pour chaque établissement.", tuition),
 
-  ask(wfh, "Pour 2025, seule la méthode détaillée est offerte. Le taux fixe de 500 $ a pris fin après 2022.", false),
+  ask(wfh, "Pour 2026, seule la méthode détaillée est offerte. Le taux fixe a pris fin après 2022.", false),
   doc("Formulaire T2200 signé par votre employeur", "La Déclaration des conditions de travail. Demandez-le à votre employeur ou aux ressources humaines.", wfh),
   doc("Registres des dépenses de la maison", "Le loyer si vous êtes locataire, l'électricité, le chauffage, l'eau, l'entretien mineur et l'Internet résidentiel, ainsi que la superficie de votre espace de travail par rapport à l'ensemble du logement. Les employés ne peuvent pas déduire les intérêts hypothécaires, les taxes foncières ni l'assurance habitation (les employés à commission peuvent en déduire une partie).", wfh, false),
 
@@ -91,7 +91,7 @@ export default template("t1-personal", "Aide-mémoire T1 pour particuliers, 2025
   doc("Relevés 24 (RL-24) (frais de garde d'enfants)", "Votre prestataire de services de garde vous l'envoie.", quebec, false),
   doc("Relevé 31 (RL-31) (logement loué)", "Seulement si vous étiez locataire. Votre propriétaire vous en remet une copie d'ici la fin de février. Il est nécessaire pour le crédit d'impôt pour solidarité.", quebec, false),
   doc("Autres relevés Québec", "Par exemple RL-10, RL-11, RL-15, RL-16 ou RL-25.", quebec, false),
-  doc("Avis de cotisation du Québec pour 2024", undefined, quebec, false),
+  doc("Avis de cotisation du Québec pour 2025", undefined, quebec, false),
 
   text("Y a-t-il autre chose que nous devrions savoir?", "Changements dans votre vie, nouveaux revenus ou question sur votre déclaration.", undefined, false, "longtext"),
 ]);
