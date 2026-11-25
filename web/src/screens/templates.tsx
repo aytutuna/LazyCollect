@@ -14,9 +14,13 @@ export function Templates() {
 
   async function copy(tpl: Template) {
     await act.run(async () => {
-      const made = await post<Template>("/templates", { name: t("templates.copy_name", { name: tpl.name }), items: tpl.items });
+      const made = await post<Template>("/templates", { name: t("templates.copy_name", { name: tpl.name }), items: tpl.items, source: tpl.id });
       go(`/templates/${made.id}`);
     });
+  }
+
+  async function takeNewer(tpl: Template) {
+    if (await act.run(() => post(`/templates/${tpl.id}/facts`, {}))) reload();
   }
 
   async function remove() {
@@ -58,6 +62,11 @@ export function Templates() {
                 </button>
               ) : (
                 <>
+                  {tpl.newer && (
+                    <button class="small" disabled={act.busy} title={t("templates.newer_hint")} onClick={() => takeNewer(tpl)}>
+                      {t("templates.newer")}
+                    </button>
+                  )}
                   <Link href={`/templates/${tpl.id}`} class="button small">
                     {t("edit")}
                   </Link>

@@ -4,6 +4,7 @@ import { itemColumns, itemsFromRequests, nextYearTitle, peopleFromRequests } fro
 import { SINGLE_TODAY, findRequest, loadRequest } from "./requests";
 import type { AppEnv } from "./session";
 import { plusYear } from "./tz";
+import { yearOn } from "./yearon";
 import { DAY, randomId } from "./util";
 import { notFound } from "./validate";
 
@@ -20,6 +21,9 @@ repeat.post("/requests/:id/repeat", async (c) => {
   if (!(await db.prepare(`SELECT ${alive} AS ok`).bind(firm.id, src.client_id).first<{ ok: number }>())!.ok) return c.json({ error: "client_deleted" }, 409);
   const id = randomId();
   const now = Date.now();
+  // the checklist moves to the next tax year, or the repeat waits until that year's dates are known
+  const later = await yearOn(db, firm.id, [{ id, src: src.id }]);
+  if (later === "unknown") return c.json({ error: "tax_year_unknown" }, 409);
   const [res] = await db.batch([
     db
       .prepare(
@@ -30,6 +34,7 @@ repeat.post("/requests/:id/repeat", async (c) => {
       .bind(id, firm.id, src.client_id, nextYearTitle(src.title).slice(0, 200), row!.note, plusYear(src.deadline, firm.tz), src.reminders_on, c.get("session")!.userId, now, firm.id, src.id, firm.id, src.id, firm.id, src.client_id, firm.id, now - DAY, firm.id),
     peopleFromRequests(db, firm.id, [{ id, src: src.id }], now),
     itemsFromRequests(db, firm.id, await itemColumns(db), [{ id, src: src.id }], true),
+    ...later,
     audit(c, "request.repeat", "request", id, { from: src.id }, { sql: "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ?)", binds: [firm.id, id] }),
   ]);
   if (!res.meta.changes) return c.json({ error: "too_many_requests" }, 429);

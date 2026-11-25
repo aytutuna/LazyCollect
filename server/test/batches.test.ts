@@ -33,6 +33,7 @@ async function addClients(cookie: string, n: number, from = 0): Promise<string[]
 
 const body = (ids: string[], extra: Record<string, unknown> = {}) => ({
   template_id: "t1-personal",
+  tax_year: 2026,
   client_ids: ids,
   title: "{year} taxes for {client}",
   deadline: inDays(400),
@@ -60,7 +61,7 @@ describe("creating a batch", () => {
     expect(requests).toHaveLength(3);
     expect(requests.map((r) => r.status)).toEqual(["draft", "draft", "draft"]);
     expect(requests.every((r) => r.items > 3 && r.deadline === requests[0].deadline && r.reminders_on === 1)).toBe(true);
-    expect(requests[0].title).toBe(`${new Date(requests[0].deadline).getUTCFullYear()} taxes for Client 0`);
+    expect(requests[0].title).toBe("2026 taxes for Client 0");
     expect(await q("SELECT 1 FROM links")).toHaveLength(0);
     expect(sent.filter((m) => m.subject.startsWith("Documents requested"))).toHaveLength(0);
     const audit = await q("SELECT action, meta FROM audit WHERE action = 'batch.create'");

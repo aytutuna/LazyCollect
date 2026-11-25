@@ -13,7 +13,9 @@ import { deadline } from "./requests";
 import type { AppEnv } from "./session";
 import { PAGE, offsetOf } from "./search";
 import { visible } from "./questions";
-import { builtinTemplates, type Item } from "./templates";
+import { UnknownYear, hasMarkers, resolveItems, taxYears, validYear } from "./taxyear";
+import { builtinTemplates, factsOf, type Item } from "./templates";
+import { yearOn } from "./yearon";
 import { addDays, atHour, dayOf, inHours, nextOpening, nextReminder, plusYear } from "./tz";
 import { DAY, HOUR, MINUTE, randomId } from "./util";
 import { invalid, notFound, readBody, text } from "./validate";
@@ -77,6 +79,8 @@ batches.post("/batches", async (c) => {
   const kinds = [body.template_id !== undefined, body.request_id !== undefined, repeat].filter(Boolean).length;
   const note = body.note === undefined || body.note === null || body.note === "" ? null : text(body.note, 2000);
   if (kinds !== 1 || note === undefined) return invalid(c);
+  const taxYear = body.tax_year === undefined ? null : body.tax_year;
+  if (taxYear !== null && !validYear(taxYear)) return invalid(c);
   const list = repeat ? body.request_ids : body.client_ids;
   if (Array.isArray(list) && list.length > MAX_BATCH) return c.json({ error: "batch_too_big" }, 400);
   const ids = hexIds(list);
@@ -94,7 +98,8 @@ batches.post("/batches", async (c) => {
   let kind: "template" | "request" | "repeat" = "template";
   let sourceName: string | null = null;
   let due: number | null = null;
-  let items: Item[] = [];
+  let items: (Item & { tpl?: string })[] = [];
+  let templateRef: string | null = null;
   let sourceId: string | null = null;
   const plans: Omit<Plan, "position" | "state" | "reason">[] = [];
   const mailable = new Map<string, boolean>();
@@ -146,6 +151,19 @@ batches.post("/batches", async (c) => {
         items = JSON.parse(row.items_json);
         sourceName = row.name;
       }
+      templateRef = body.template_id;
+      // the checklist's markers are filled in for the tax year the account picked
+      const facts = await factsOf(db, firm.id, templateRef);
+      if (hasMarkers(items, facts)) {
+        if (taxYear === null) return c.json({ error: "tax_year_needed" }, 400);
+        if (!taxYears(items, facts).includes(taxYear)) return c.json({ error: "tax_year_unknown" }, 400);
+        try {
+          items = resolveItems(items, taxYear, facts);
+        } catch (e) {
+          if (e instanceof UnknownYear) return c.json({ error: "tax_year_unknown" }, 400);
+          throw e;
+        }
+      }
     } else {
       kind = "request";
       if (typeof body.request_id !== "string") return invalid(c);
@@ -155,7 +173,7 @@ batches.post("/batches", async (c) => {
       sourceName = src.title;
       sourceNote = src.note;
     }
-    const year = String(dayOf(due, firm.tz).y);
+    const year = String(taxYear ?? dayOf(due, firm.tz).y);
     for (const cl of clients) {
       plans.push({
         id: randomId(),
@@ -175,6 +193,9 @@ batches.post("/batches", async (c) => {
   if (made + plans.length > MAX_BATCH_PER_DAY) return c.json({ error: "batch_limit" }, 429);
 
   const columns = kind === "template" ? [] : await itemColumns(db);
+  // a repeat moves on to the next tax year, or waits until that year's dates are known
+  const later = kind === "repeat" ? await yearOn(db, firm.id, plans.map((p) => ({ id: p.id, src: p.src! }))) : [];
+  if (later === "unknown") return c.json({ error: "tax_year_unknown" }, 409);
   // a template's items for each person wait for people the new requests do not have yet
   const expanded = expandItems(items, [], today(now, firm.tz).today);
   if (expanded.rows.length > MAX_ITEMS) return invalid(c);
@@ -218,6 +239,25 @@ batches.post("/batches", async (c) => {
            FROM json_each(?3) WHERE EXISTS (SELECT 1 FROM batches WHERE firm_id = ?1 AND id = ?2)`,
         )
         .bind(firm.id, batchId, JSON.stringify(chunk)),
+    );
+  }
+  stmts.push(...later);
+  // what the new requests were made for
+  if (kind === "template" && (taxYear !== null || templateRef)) {
+    stmts.push(
+      db
+        .prepare("UPDATE requests SET tax_year = ?, template_ref = ? WHERE firm_id = ? AND id IN (SELECT request_id FROM batch_items WHERE firm_id = ? AND batch_id = ?)")
+        .bind(taxYear, templateRef, firm.id, firm.id, batchId),
+    );
+  }
+  if (kind === "request") {
+    stmts.push(
+      db
+        .prepare(
+          `UPDATE requests SET tax_year = (SELECT tax_year FROM requests s WHERE s.firm_id = ?1 AND s.id = ?3), template_ref = (SELECT template_ref FROM requests s WHERE s.firm_id = ?1 AND s.id = ?3)
+           WHERE firm_id = ?1 AND id IN (SELECT request_id FROM batch_items WHERE firm_id = ?1 AND batch_id = ?2)`,
+        )
+        .bind(firm.id, batchId, sourceId),
     );
   }
   stmts.push(

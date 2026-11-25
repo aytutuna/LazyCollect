@@ -62,7 +62,8 @@ export type Role = "principal" | "spouse" | "child" | "other";
 
 export type Applicant = { id: string; position: number; role: Role; name: string; dob: string | null };
 
-export type Template = { id: string; name: string; builtin: boolean; items: TemplateItem[] };
+// tax is set when the checklist has the tax year in its text: the years it can be made for, and the one to suggest
+export type Template = { id: string; name: string; builtin: boolean; items: TemplateItem[]; tax?: { years: number[]; suggested: number } | null; newer?: boolean };
 
 export type RequestRow = {
   id: string;

@@ -16,7 +16,8 @@ import { missingItems, senderName, sendersOf } from "./reminders";
 import { endNow, syncStatus } from "./status";
 import { nextReminder } from "./tz";
 import type { AppEnv } from "./session";
-import { builtinTemplates, parseItem, parseItems, type Item } from "./templates";
+import { UnknownYear, hasMarkers, resolveItems, taxYears, validYear } from "./taxyear";
+import { builtinTemplates, factsOf, parseItem, parseItems, type Item } from "./templates";
 import { DAY, hmac, randomId, randomToken } from "./util";
 import { exampleGone, invalid, maybe, notFound, readBody, setClause, text } from "./validate";
 
@@ -51,7 +52,10 @@ requests.post("/requests", async (c) => {
   if (body.template_id !== undefined && body.items !== undefined) return invalid(c);
   const people = body.people === undefined ? [] : parsePeople(body.people);
   const validUntil = "valid_until" in body ? parseDay(body.valid_until) : null;
+  const taxYear = body.tax_year === undefined ? null : body.tax_year;
+  const templateRef = body.template_ref === undefined ? (typeof body.template_id === "string" ? body.template_id : null) : body.template_ref;
   if (!people || validUntil === undefined) return invalid(c);
+  if ((taxYear !== null && !validYear(taxYear)) || (templateRef !== null && (typeof templateRef !== "string" || templateRef.length > 64))) return invalid(c);
   const db = c.get("db");
   const firmId = c.get("firm").id;
 
@@ -61,7 +65,7 @@ requests.post("/requests", async (c) => {
     .first();
   if (!client) return notFound(c);
 
-  let items: Item[] = [];
+  let items: (Item & { tpl?: string })[] = [];
   if (body.template_id !== undefined) {
     if (typeof body.template_id !== "string") return invalid(c);
     const built = builtinTemplates.find((t) => t.id === body.template_id);
@@ -81,6 +85,18 @@ requests.post("/requests", async (c) => {
     if (!(await ownsExamples(db, firmId, parsed.map((i) => i.example)))) return exampleGone(c);
     items = parsed;
   }
+  // the markers of a checklist are filled in for the tax year the account picked
+  const facts = await factsOf(db, firmId, templateRef);
+  if (hasMarkers(items, facts)) {
+    if (taxYear === null) return c.json({ error: "tax_year_needed" }, 400);
+    if (!taxYears(items, facts).includes(taxYear)) return c.json({ error: "tax_year_unknown" }, 400);
+    try {
+      items = resolveItems(items, taxYear, facts);
+    } catch (e) {
+      if (e instanceof UnknownYear) return c.json({ error: "tax_year_unknown" }, 400);
+      throw e;
+    }
+  }
 
   const id = randomId();
   const now = Date.now();
@@ -90,10 +106,10 @@ requests.post("/requests", async (c) => {
   const [res] = await db.batch([
     db
       .prepare(
-        `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, created_by, created_at, per_person_json, valid_until) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, created_by, created_at, per_person_json, valid_until, tax_year, template_ref) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
          WHERE ${SINGLE_TODAY}`,
       )
-      .bind(id, firmId, body.client_id, title, note, due, c.get("session")!.userId, now, perPerson.length ? JSON.stringify(perPerson) : null, validUntil, firmId, now - DAY, firmId),
+      .bind(id, firmId, body.client_id, title, note, due, c.get("session")!.userId, now, perPerson.length ? JSON.stringify(perPerson) : null, validUntil, taxYear, templateRef, firmId, now - DAY, firmId),
     db
       .prepare(
         `INSERT INTO people (id, firm_id, request_id, position, role, name, dob, created_at)
@@ -359,7 +375,9 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
     if (!cur.expiry_rule || ("valid_months" in fields && cur.expiry_rule !== "issue")) return invalid(c);
   }
   if (!Object.keys(fields).length) return c.json(presentItem((await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(itemId).first<any>())!));
-  const set = setClause(fields);
+  // wording the account changed is no longer a template's, so Repeat leaves it alone
+  const changed = Object.keys(fields);
+  const set = setClause("label" in fields || "help" in fields ? { ...fields, tpl_json: null } : fields);
   // the items still to be made for people added later follow what was changed
   let kept: string | null = null;
   if (cur.blueprint && ("label" in fields || "help" in fields || "required" in fields)) {
@@ -378,7 +396,7 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
     db
       .prepare(`UPDATE items SET ${set.sql} WHERE firm_id = ? AND request_id = ? AND id = ? AND ${LIVE}`)
       .bind(...set.values, firmId, req.id, itemId, firmId, req.id),
-    audit(c, "item.edit", "item", itemId, { request: req.id, fields: Object.keys(fields) }, {
+    audit(c, "item.edit", "item", itemId, { request: req.id, fields: changed }, {
       sql: `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ?) AND ${LIVE}`,
       binds: [firmId, req.id, itemId, firmId, req.id],
     }),
