@@ -3,8 +3,18 @@ import { openToken } from "./links";
 import { regionIds, regionOf, type Region } from "./regions";
 import { hmac, sha256 } from "./util";
 
+const encoder = new TextEncoder();
+
 // scripts/deploy.mjs sends this header; the check answers nobody else
-export const keyCheckGate = (env: Env) => hmac(env.HASH_KEY, "key-check");
+export const keyCheckGate = (env: Env) => hmac(env.HASH_KEY, "lazycollect:key-check:v1");
+
+export function sameText(a: string, b: string): boolean {
+  const x = encoder.encode(a);
+  const y = encoder.encode(b);
+  let diff = x.length ^ y.length;
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ (y[i] ?? 0);
+  return diff === 0;
+}
 
 // a short hash of a key, enough to tell two keys apart and useless for finding one
 export const fingerprint = async (key: string) => (await sha256(`fingerprint:${key}`)).slice(0, 16);

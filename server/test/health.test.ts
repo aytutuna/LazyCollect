@@ -1,6 +1,6 @@
 import { env, exports } from "cloudflare:workers";
 import { afterEach, describe, expect, it } from "vitest";
-import { fingerprint, keyCheckGate, linkCheck, masterCheck } from "../src/keycheck";
+import { fingerprint, keyCheckGate, linkCheck, masterCheck, sameText } from "../src/keycheck";
 import { api, openRequest, pdf, upload } from "./helpers";
 import { hmac } from "../src/util";
 import { fingerprint as scriptFingerprint, keyGate, keyProblems } from "../scripts/deploy-lib.mjs";
@@ -55,7 +55,7 @@ describe("key check", () => {
   it("fails when the master key is another one", async () => {
     const { req, path } = await openRequest();
     await upload(path, req.items[0].id, pdf(500));
-    env.MASTER_KEY_NA = btoa("a-different-master-key-32-bytes!!");
+    env.MASTER_KEY_NA = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
     expect(await masterCheck(env)).toBe("fail");
     expect(await fingerprint(env.MASTER_KEY_NA)).not.toBe(await fingerprint(original.master));
   });
@@ -68,9 +68,16 @@ describe("key check", () => {
     expect((await keys({ "X-Key-Check": gate })).status).toBe(404);
   });
 
+  it("compares texts without caring where they differ", () => {
+    expect(sameText("abc", "abc")).toBe(true);
+    expect(sameText("abc", "abd")).toBe(false);
+    expect(sameText("abc", "abcd")).toBe(false);
+    expect(sameText("", "abc")).toBe(false);
+  });
+
   it("matches what the deploy script computes", async () => {
     expect(await scriptFingerprint(original.master)).toBe(await fingerprint(original.master));
-    expect(await keyGate(original.hash)).toBe(await hmac(original.hash, "key-check"));
+    expect(await keyGate(original.hash)).toBe(await hmac(original.hash, "lazycollect:key-check:v1"));
   });
 
   it("stops a deploy when either key is wrong", async () => {
