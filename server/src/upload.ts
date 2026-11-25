@@ -132,6 +132,7 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
     if (family === "old") return c.json({ error: passwordProtected(whole) ? "encrypted_office" : "old_office" }, 415);
     const found = await inspect(family, whole, rawName);
     if (found === "macros") return c.json({ error: "macros" }, 415);
+    if (found === "chunk") return c.json({ error: "foreign_content" }, 415);
     if (!found) return c.json({ error: "unsupported_type" }, 415);
     mime = found;
     first = whole.subarray(0, Math.min(CHUNK, length));

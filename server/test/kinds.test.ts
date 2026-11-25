@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { crc32 } from "../src/kinds";
 import { randomId } from "../src/util";
 import { api, login, openRequest, pdf, randomBytes, sha, upload } from "./helpers";
 
@@ -21,9 +22,9 @@ async function zip(parts: [string, Body][], deflate: string[] = []): Promise<Uin
     if (method === 8) data = new Uint8Array(await new Response(new Blob([plain]).stream().pipeThrough(new CompressionStream("deflate-raw"))).arrayBuffer());
     const n = [...text(name)];
     const at = out.length;
-    out.push(...u32(0x04034b50), ...u16(20), ...u16(0), ...u16(method), ...u32(0), ...u32(0), ...u32(data.length), ...u32(plain.length), ...u16(n.length), ...u16(0), ...n);
+    out.push(...u32(0x04034b50), ...u16(20), ...u16(0), ...u16(method), ...u32(0), ...u32(crc32(plain)), ...u32(data.length), ...u32(plain.length), ...u16(n.length), ...u16(0), ...n);
     for (let i = 0; i < data.length; i += 8192) out.push(...data.subarray(i, i + 8192));
-    central.push(...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0), ...u16(method), ...u32(0), ...u32(0), ...u32(data.length), ...u32(plain.length), ...u16(n.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(at), ...n);
+    central.push(...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0), ...u16(method), ...u32(0), ...u32(crc32(plain)), ...u32(data.length), ...u32(plain.length), ...u16(n.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(at), ...n);
   }
   const end = [...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(parts.length), ...u16(parts.length), ...u32(central.length), ...u32(out.length), ...u16(0)];
   return new Uint8Array([...out, ...central, ...end]);
