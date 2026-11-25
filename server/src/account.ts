@@ -1,3 +1,4 @@
+import { classOf, itemFailed } from "./pulse";
 import { Hono } from "hono";
 import { deleteCookie } from "hono/cookie";
 import { audit } from "./audit";
@@ -19,7 +20,10 @@ export const CLOSE_WINDOW = 30 * DAY;
 const BUDGET = 20;
 const FIRMS = 5;
 
-const log = (e: unknown) => console.error(e instanceof Error ? e.message : "error");
+const log = (e: unknown) => {
+  console.error(e instanceof Error ? e.message : "error");
+  itemFailed(classOf(e));
+};
 
 account.post("/account/close", async (c) => {
   if (!(await isOwner(c))) return c.json({ error: "forbidden" }, 403);

@@ -1,3 +1,4 @@
+import { classOf, itemFailed } from "./pulse";
 import { sendMail } from "./email";
 import { asked } from "./expand";
 import { usable } from "./firm";
@@ -124,6 +125,7 @@ async function each<T>(rows: T[], fn: (row: T) => Promise<unknown>) {
       await fn(row);
     } catch (e) {
       console.error(e instanceof Error ? e.message : "error");
+      itemFailed(classOf(e));
     }
   }
 }
@@ -315,6 +317,7 @@ async function noticePass(env: Env, db: D1Database, now: number) {
       const tries = r.tries + 1;
       const spent = tries >= MAX_NOTICE_TRIES;
       console.error(`owner notice ${tries}/${MAX_NOTICE_TRIES} failed: ${e instanceof Error ? e.message : "error"}`);
+      itemFailed(classOf(e));
       // put the note back so the next run tries again, until the tries are used up
       await db
         .prepare("UPDATE requests SET notified_at = ?, notice_due_at = ?, notice_tries = ? WHERE firm_id = ? AND id = ?")

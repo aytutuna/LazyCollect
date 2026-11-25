@@ -1,3 +1,4 @@
+import { classOf, itemFailed } from "./pulse";
 import { Transient, escapeHtml, sendMail } from "./email";
 import { DAY } from "./util";
 
@@ -68,6 +69,7 @@ export async function sendTrialNotice(env: Env, firm: Trial, kind: TrialKind) {
       await sendMail(env, { from: env.EMAIL_FROM, to: owner.email, subject, text, html, idempotencyKey: `trial:${firm.id}:${owner.id}:${kind}` });
     } catch (e) {
       console.error(e instanceof Error ? e.message : "error");
+      itemFailed(e instanceof Transient ? "EmailDeferred" : "EmailRefused");
       if (e instanceof Transient) await env.CONTROL.prepare("DELETE FROM trial_notices WHERE firm_id = ? AND user_id = ? AND kind = ? AND trial_ends_at = ?").bind(firm.id, owner.id, kind, firm.trial_ends_at).run();
     }
   }
@@ -92,6 +94,7 @@ export async function runTrialNotices(env: Env, now = Date.now()) {
         await sendTrialNotice(env, firm, kind);
       } catch (e) {
         console.error(e instanceof Error ? e.message : "error");
+        itemFailed(classOf(e));
       }
     }
   }

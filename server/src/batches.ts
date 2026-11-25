@@ -1,3 +1,4 @@
+import { classOf, itemFailed } from "./pulse";
 import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { insertRows, itemColumns, itemsFromRequests, nextYearTitle, peopleFromRequests } from "./copy";
@@ -328,7 +329,10 @@ type Row = {
   client_deleted: number | null;
 };
 
-const log = (e: unknown) => console.error(e instanceof Error ? e.message : "error");
+const log = (e: unknown) => {
+  console.error(e instanceof Error ? e.message : "error");
+  itemFailed(classOf(e));
+};
 
 // Sends the invites of batches that have come due, a few at a time. A batch that runs into the daily email limit stops there and
 // carries on in a later run, once earlier emails are more than 24 hours old.
