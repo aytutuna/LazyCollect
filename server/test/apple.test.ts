@@ -1,9 +1,10 @@
 import { env, exports } from "cloudflare:workers";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { accountToken } from "../src/apple";
 import { AppleCa, appleFake } from "./apple-fake";
 import { refreshApple } from "../src/apple";
 import { usable } from "../src/firm";
+import { setAppUrl } from "./app";
 import { api, firmRow, login, mockOutbound } from "./helpers";
 
 let ca: AppleCa;
@@ -12,8 +13,12 @@ beforeEach(async () => {
   ca = await AppleCa.create();
   appleFake.ca = ca;
   env.APPLE_IAP_ROOT = ca.rootPem;
+  // the test root and API address are honoured only on a local APP_URL
+  setAppUrl(env, "http://localhost:8787");
   mockOutbound();
 });
+
+afterEach(() => setAppUrl(env, "https://collect.alazy.app"));
 
 async function owner(email = "owner@firm.test") {
   const cookie = await login(email);
@@ -78,13 +83,49 @@ describe("buying the plan in the app", () => {
     expect((await firmRow(cookie)).plan_source).toBeNull();
   });
 
-  it("refuses a subscription another firm already holds", async () => {
+  it("moves a subscription to the firm Apple's latest purchase names", async () => {
     const first = await owner();
     appleFake.subs["2000000000001"] = { status: 1, original: "1000000000001", token: first.token };
     expect((await buy(first.cookie)).status).toBe(200);
     const second = await owner("second@firm.test");
     appleFake.subs["2000000000002"] = { status: 1, original: "1000000000001", token: second.token };
-    expect((await buy(second.cookie, "2000000000002")).status).toBe(409);
+    expect((await buy(second.cookie, "2000000000002")).status).toBe(200);
+    expect(await firmRow(second.cookie)).toMatchObject({ plan_status: "active", plan_source: "apple", apple_original_transaction_id: "1000000000001" });
+    expect(await firmRow(first.cookie)).toMatchObject({ plan_status: "canceled", plan_source: null, apple_original_transaction_id: null });
+  });
+
+  it("does not let a purchase that is already over end a running trial", async () => {
+    const { cookie, token } = await owner();
+    appleFake.subs["2000000000001"] = { status: 2, original: "1000000000001", token };
+    expect((await buy(cookie)).status).toBe(409);
+    expect(await firmRow(cookie)).toMatchObject({ plan_status: "trialing", plan_source: null });
+  });
+
+  it("does not take a purchase that carries a free trial", async () => {
+    const { cookie, token } = await owner();
+    appleFake.subs["2000000000001"] = { status: 1, original: "1000000000001", token, freeTrial: true };
+    expect((await buy(cookie)).status).toBe(404);
+    expect((await firmRow(cookie)).plan_status).toBe("trialing");
+  });
+
+  it("keeps the plan open until Apple's grace date in the billing grace period", async () => {
+    const { cookie, token } = await owner();
+    const grace = Date.now() + 14 * 86_400_000;
+    appleFake.subs["2000000000001"] = { status: 4, original: "1000000000001", token, expires: Date.now() - 86_400_000, grace };
+    await buy(cookie);
+    const row = await firmRow(cookie);
+    expect(row).toMatchObject({ plan_status: "active", current_period_end: grace });
+    expect(usable(row, Date.now() + 10 * 86_400_000)).toBe(true);
+  });
+
+  it("ignores the test root and API address on a live APP_URL", async () => {
+    const { cookie, token } = await owner();
+    appleFake.subs["2000000000001"] = { status: 1, original: "1000000000001", token };
+    setAppUrl(env, "https://collect.alazy.app");
+    appleFake.calls.length = 0;
+    const res = await buy(cookie);
+    expect(res.status).not.toBe(200);
+    expect(appleFake.calls).toHaveLength(0);
   });
 
   it("does not take a transaction Apple does not know, or one for another product or app", async () => {
@@ -254,16 +295,21 @@ describe("Apple plans over time and in the rest of the app", () => {
     expect(hit).toBeNull();
   });
 
-  it("tells the owner who closes the account to cancel in the App Store, and records it", async () => {
+  it("refuses to close the account while the App Store still bills, and closes once it is set to end", async () => {
     const { cookie } = await bought();
     const res = await api("/api/account/close", { method: "POST", cookie, body: { confirm: "Tuna Tax" } });
-    expect(res.status).toBe(200);
-    const body = await res.json<any>();
-    expect(body.store_subscription).toMatchObject({ source: "apple", manage_url: "https://apps.apple.com/account/subscriptions" });
-    const log = await env.CONTROL.prepare("SELECT 1 FROM firms WHERE closed_at IS NOT NULL").first();
-    expect(log).not.toBeNull();
-    const audited = await env.DB_NA.prepare("SELECT meta FROM audit WHERE action = 'account.close'").first<{ meta: string }>();
-    expect(audited?.meta).toContain("apple");
+    expect(res.status).toBe(409);
+    expect(await res.json<any>()).toMatchObject({ error: "store_subscription", store_subscription: { source: "apple", manage_url: "https://apps.apple.com/account/subscriptions" } });
+    expect(await env.CONTROL.prepare("SELECT 1 FROM firms WHERE closed_at IS NOT NULL").first()).toBeNull();
+    await env.CONTROL.prepare("UPDATE firms SET cancel_at_period_end = 1").run();
+    expect((await api("/api/account/close", { method: "POST", cookie, body: { confirm: "Tuna Tax" } })).status).toBe(200);
+  });
+
+  it("keeps a paying App Store plan through close and reopen", async () => {
+    const { cookie } = await bought();
+    await env.CONTROL.prepare("UPDATE firms SET cancel_at_period_end = 1, stripe_subscription_id = 'sub_old'").run();
+    expect((await api("/api/account/close", { method: "POST", cookie, body: { confirm: "Tuna Tax" } })).status).toBe(200);
+    expect(await env.CONTROL.prepare("SELECT plan_status, plan_source FROM firms").first()).toMatchObject({ plan_status: "active", plan_source: "apple" });
   });
 
   it("does not let a second, expired transaction replace a live plan", async () => {
@@ -271,5 +317,56 @@ describe("Apple plans over time and in the rest of the app", () => {
     appleFake.subs["2000000000002"] = { status: 2, original: "1000000000002", token };
     expect((await buy(cookie, "2000000000002")).status).toBe(409);
     expect(await firmRow(cookie)).toMatchObject({ plan_status: "active", apple_original_transaction_id: "1000000000001" });
+  });
+});
+
+describe("Apple plans that Apple stops vouching for", () => {
+  async function bought(email = "owner@firm.test", original = "1000000000001", transaction = "2000000000001") {
+    const o = await owner(email);
+    appleFake.subs[transaction] = { status: 1, original, token: o.token, expires: Date.now() - 3_600_000 };
+    expect((await buy(o.cookie, transaction)).status).toBe(200);
+    return o;
+  }
+
+  it("ends a plan Apple no longer knows or that is sandbox while the flag is off", async () => {
+    const { cookie } = await bought();
+    delete appleFake.subs["1000000000001"];
+    delete appleFake.subs["2000000000001"];
+    await refreshApple(env, Date.now());
+    expect((await firmRow(cookie)).plan_status).toBe("canceled");
+    const two = await bought("two@firm.test", "1000000000002", "2000000000002");
+    appleFake.subs["1000000000002"] = { status: 1, original: "1000000000002", token: two.token, environment: "Sandbox" };
+    await refreshApple(env, Date.now());
+    expect((await firmRow(two.cookie)).plan_status).toBe("canceled");
+  });
+
+  it("checks the longest unchecked plan first", async () => {
+    const a = await bought("a@firm.test", "1000000000001", "2000000000001");
+    await bought("b@firm.test", "1000000000002", "2000000000002");
+    await env.CONTROL.prepare("UPDATE firms SET apple_checked_at = 5 WHERE id = ?").bind((await firmRow(a.cookie)).id).run();
+    await env.CONTROL.prepare("UPDATE firms SET apple_checked_at = 9 WHERE id != ?").bind((await firmRow(a.cookie)).id).run();
+    appleFake.subs["1000000000001"] = { status: 1, original: "1000000000001", token: a.token, expires: Date.now() - 3_600_000 };
+    appleFake.calls.length = 0;
+    await refreshApple(env, Date.now(), 1);
+    expect(appleFake.calls.map((c) => c.url)).toEqual([expect.stringContaining("1000000000001")]);
+  });
+
+  it("attaches a purchase from its SUBSCRIBED notice and takes a body without a length", async () => {
+    const { cookie, token } = await owner();
+    appleFake.subs["2000000000001"] = { status: 1, original: "1000000000001", token };
+    const signed = await ca.sign({ notificationType: "SUBSCRIBED", data: { signedTransactionInfo: await appleFake.transaction({ status: 1, original: "1000000000001", token }, "2000000000001") } });
+    const body = new TextEncoder().encode(JSON.stringify({ signedPayload: signed }));
+    const stream = new ReadableStream({
+      start(c) {
+        c.enqueue(body.slice(0, 100));
+        c.enqueue(body.slice(100));
+        c.close();
+      },
+    });
+    const res = await exports.default.fetch("https://collect.alazy.app/api/apple/notifications", { method: "POST", headers: { "content-type": "application/json" }, body: stream, duplex: "half" } as RequestInit);
+    expect(res.status).toBe(200);
+    expect(await firmRow(cookie)).toMatchObject({ plan_status: "active", plan_source: "apple" });
+    const big = await exports.default.fetch("https://collect.alazy.app/api/apple/notifications", { method: "POST", body: "x".repeat(70_000) });
+    expect(big.status).toBe(413);
   });
 });

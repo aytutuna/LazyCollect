@@ -64,7 +64,7 @@ export class AppleCa {
   }
 }
 
-export type Sub = { status: number; original: string; transaction?: string; token?: string | null; product?: string; environment?: string; expires?: number; renews?: boolean; revoked?: boolean };
+export type Sub = { status: number; original: string; transaction?: string; token?: string | null; product?: string; environment?: string; expires?: number; renews?: boolean; revoked?: boolean; grace?: number; freeTrial?: boolean };
 
 // the fake API's answers, by transaction id; each is signed by whichever CA `ca` points at
 export const appleFake = {
@@ -85,6 +85,7 @@ export const appleFake = {
       expiresDate: s.expires ?? Date.now() + 30 * day,
       ...(s.token === null ? {} : { appAccountToken: s.token }),
       ...(s.revoked ? { revocationDate: Date.now() } : {}),
+      ...(s.freeTrial ? { offerType: 1, offerDiscountType: "FREE_TRIAL" } : {}),
     });
   },
   async handle(url: string, init?: RequestInit): Promise<Response> {
@@ -102,7 +103,7 @@ export const appleFake = {
               originalTransactionId: s.original,
               status: s.status,
               signedTransactionInfo: await this.transaction(s, id),
-              signedRenewalInfo: await this.ca!.sign({ autoRenewStatus: s.renews === false ? 0 : 1 }),
+              signedRenewalInfo: await this.ca!.sign({ autoRenewStatus: s.renews === false ? 0 : 1, ...(s.grace ? { gracePeriodExpiresDate: s.grace } : {}) }),
             },
           ],
         },

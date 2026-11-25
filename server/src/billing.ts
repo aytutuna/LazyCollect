@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { audit } from "./audit";
-import { isOwner } from "./firm";
+import { isOwner, usable } from "./firm";
 import type { AppEnv, Firm } from "./session";
 import { StripeError, stripe } from "./stripe";
 import { DAY, MINUTE, sha256 } from "./util";
@@ -84,7 +84,9 @@ billing.post("/billing/checkout", async (c) => {
   const firm = c.get("firm");
   const now = Date.now();
   // anyone with a live subscription changes it in the portal
-  if (firm.plan_status === "active" || firm.plan_status === "past_due" || (firm.plan_status === "trialing" && firm.stripe_subscription_id)) {
+  // an App Store plan Apple no longer vouches for is over, whatever its status still says
+  const lapsed = firm.plan_source === "apple" && !usable(firm, now);
+  if (!lapsed && (firm.plan_status === "active" || firm.plan_status === "past_due" || (firm.plan_status === "trialing" && firm.stripe_subscription_id))) {
     return c.json({ error: "subscribed" }, 409);
   }
   try {
@@ -211,11 +213,11 @@ async function sync(env: Env, event: Event) {
   }
   if (!customer || !subscription) return;
 
-  type Row = { id: string; stripe_subscription_id: string | null; plan_source: string | null; plan_status: string; closed_at: number | null };
-  let firm = await env.CONTROL.prepare("SELECT id, stripe_subscription_id, plan_source, plan_status, closed_at FROM firms WHERE stripe_customer_id = ?").bind(customer).first<Row>();
+  type Row = { id: string; stripe_subscription_id: string | null; plan_source: string | null; plan_status: string; current_period_end: number | null; trial_ends_at: number | null; past_due_since: number | null; closed_at: number | null };
+  let firm = await env.CONTROL.prepare("SELECT id, stripe_subscription_id, plan_source, plan_status, current_period_end, trial_ends_at, past_due_since, closed_at FROM firms WHERE stripe_customer_id = ?").bind(customer).first<Row>();
   // a firm that never saved its customer id (the save after creating it failed) is matched by what we put on the session
   if (!firm && typeof firmId === "string") {
-    firm = await env.CONTROL.prepare("SELECT id, stripe_subscription_id, plan_source, plan_status, closed_at FROM firms WHERE id = ? AND stripe_customer_id IS NULL").bind(firmId).first<Row>();
+    firm = await env.CONTROL.prepare("SELECT id, stripe_subscription_id, plan_source, plan_status, current_period_end, trial_ends_at, past_due_since, closed_at FROM firms WHERE id = ? AND stripe_customer_id IS NULL").bind(firmId).first<Row>();
   }
   if (!firm) return;
 
@@ -224,11 +226,11 @@ async function sync(env: Env, event: Event) {
   const plan = planOf(sub.status);
   if (!plan) return;
   // an ending counts only for the subscription we hold; a late or unknown one must not undo the current plan
-  if (plan === "canceled" && firm.stripe_subscription_id !== sub.id) return;
+  if (plan === "canceled" && (firm.stripe_subscription_id !== sub.id || firm.plan_source === "apple")) return;
   // a subscription must not outlive the account it was bought for, nor sit beside another live one
   const other = firm.stripe_subscription_id && firm.stripe_subscription_id !== sub.id && firm.plan_status !== "canceled";
   // a plan bought in the App Store counts as the other one too: checkout may have been opened before the purchase
-  const store = firm.plan_source === "apple" && (firm.plan_status === "active" || firm.plan_status === "past_due");
+  const store = firm.plan_source === "apple" && (firm.plan_status === "active" || firm.plan_status === "past_due") && usable(firm, Date.now());
   if (plan !== "canceled" && (firm.closed_at || other || store)) {
     await cancelAndRefund(env, sub);
     return;

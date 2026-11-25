@@ -464,6 +464,20 @@ describe("double payment", () => {
     expect(await firmRow(cookie)).toMatchObject({ plan_source: "apple", stripe_subscription_id: null });
   });
 
+  it("is not undone by a late end of an old web subscription after an App Store purchase", async () => {
+    const { cookie, customer } = await subscribed();
+    stripeFake.sub("sub_old", customer, { status: "canceled" });
+    await env.CONTROL.prepare("UPDATE firms SET plan_source = 'apple', plan_status = 'active', stripe_subscription_id = 'sub_old', apple_original_transaction_id = '1000000000001', current_period_end = ?").bind(Date.now() + 86_400_000).run();
+    await webhook({ id: "evt_late", type: "customer.subscription.deleted", data: { object: { id: "sub_old", customer } } });
+    expect(await firmRow(cookie)).toMatchObject({ plan_status: "active", plan_source: "apple" });
+  });
+
+  it("lets an account whose App Store plan lapsed pay on the web", async () => {
+    const { cookie } = await subscribed();
+    await env.CONTROL.prepare("UPDATE firms SET plan_source = 'apple', plan_status = 'active', stripe_subscription_id = NULL, current_period_end = ?").bind(Date.now() - 30 * 86_400_000).run();
+    expect((await checkout(cookie)).status).toBe(200);
+  });
+
   it("keeps the duplicate alive when the refund fails, and finishes on the retry", async () => {
     const { customer } = await subscribed();
     stripeFake.sub("sub_1", customer);
