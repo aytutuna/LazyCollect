@@ -8,7 +8,7 @@ export async function fingerprint(key) {
 
 export async function keyGate(hashKey) {
   const k = await crypto.subtle.importKey("raw", encoder.encode(hashKey), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return hex(await crypto.subtle.sign("HMAC", k, encoder.encode("key-check")));
+  return hex(await crypto.subtle.sign("HMAC", k, encoder.encode("lazycollect:key-check:v1")));
 }
 
 // what the live key check says against the keys on this PC; an empty list means go ahead

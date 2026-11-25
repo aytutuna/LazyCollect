@@ -1,5 +1,6 @@
 // Deploys main to collect.alazy.app from this PC. Run from the main checkout: node scripts/deploy.mjs [--check]
-// --check runs only the checks that come before anything changes.
+// --check runs only the checks that come before anything changes. --first is for the one deploy that brings the key check to a live
+// worker that has none; it is refused once live reports a commit.
 import { spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -9,6 +10,7 @@ import { keyGate, keyProblems } from "./deploy-lib.mjs";
 const live = process.env.LIVE_URL ?? "https://collect.alazy.app";
 const keysDir = process.env.COLLECT_KEYS_DIR ?? join(homedir(), "Desktop", "Keys", "lazycollect");
 const checkOnly = process.argv.includes("--check");
+const first = process.argv.includes("--first");
 const win = process.platform === "win32";
 
 function run(cmd, args, opts = {}) {
@@ -31,7 +33,7 @@ if (!server.replaceAll("\\", "/").endsWith("/server")) stop("run it from the ser
 
 run("git", ["fetch", "-q", "origin", "main"]);
 if (run("git", ["rev-parse", "--abbrev-ref", "HEAD"]) !== "main") stop("not on main");
-if (run("git", ["status", "--porcelain", "--untracked-files=no"])) stop("there are uncommitted changes");
+if (run("git", ["status", "--porcelain"])) stop("there are uncommitted changes");
 const sha = run("git", ["rev-parse", "HEAD"]);
 if (sha !== run("git", ["rev-parse", "origin/main"])) stop("main is not at origin/main (pull or push first)");
 console.log(`main ${sha.slice(0, 7)} is origin/main`);
@@ -52,16 +54,19 @@ async function keyCheck() {
 
 const before = await keyCheck();
 if (before.length) {
-  // the first deploy that brings the check meets a worker that has none
+  if (!first) stop(`${before.join("\n")}\n(the first deploy that brings the key check needs --first)`);
   const health = await (await fetch(`${live}/api/health`)).json();
-  if (!("commit" in health)) console.log("live has no key check yet; it runs after this deploy");
-  else stop(before.join("\n"));
+  if ("commit" in health) stop("--first is refused: live already reports a commit, so its key check has to pass");
+  console.log("live has no key check yet; it runs after this deploy");
 } else console.log("live keys match the Keys folder and open the stored values");
 
 if (checkOnly) process.exit(0);
 
 const sitekey = process.env.VITE_TURNSTILE_SITEKEY ?? run("gh", ["variable", "get", "TURNSTILE_SITEKEY"]);
 const web = join(root, "web");
+// what goes out is what the lockfiles gave CI
+run("npm", ["ci"], { cwd: server, show: true });
+run("npm", ["ci"], { cwd: web, show: true });
 run("bash", ["scripts/fetch_docaligner.sh"], { cwd: web, show: true });
 process.env.VITE_TURNSTILE_SITEKEY = sitekey;
 run("npm", ["run", "build"], { cwd: web, show: true });
