@@ -39,7 +39,7 @@ type Event = { type?: string; data?: { email_id?: string; to?: string[]; bounce?
 
 // A permanent bounce marks the message and the client who has that address now. A client whose address was changed
 // since the email went out is left alone.
-export async function markBounced(env: Env, emailId: string, to: string, now: number) {
+export async function markBounced(env: Env, emailId: string, to: string, now: number): Promise<boolean> {
   for (const region of regionIds) {
     const { db } = regionOf(env, region);
     const hit = await db
@@ -51,8 +51,9 @@ export async function markBounced(env: Env, emailId: string, to: string, now: nu
       .prepare("UPDATE clients SET email_bounced_at = ? WHERE firm_id = ? AND id = ? AND lower(email) = lower(?)")
       .bind(now, hit.firm_id, hit.client_id, to)
       .run();
-    return;
+    return true;
   }
+  return false;
 }
 
 resendWebhook.post("/resend/webhook", async (c) => {
@@ -72,7 +73,8 @@ resendWebhook.post("/resend/webhook", async (c) => {
   }
   const { email_id: id, to, bounce } = event.data ?? {};
   if (event.type === "email.bounced" && bounce?.type === "Permanent" && typeof id === "string" && typeof to?.[0] === "string") {
-    await markBounced(c.env, id, to[0], Date.now());
+    // the notice can beat the row that records the provider's id; 404 makes the provider send it again later
+    if (!(await markBounced(c.env, id, to[0], Date.now()))) return c.json({ error: "unknown_message" }, 404);
   }
   return c.json({ ok: true });
 });

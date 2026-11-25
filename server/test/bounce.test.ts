@@ -121,9 +121,46 @@ describe("bounced emails", () => {
     await api(`/api/requests/${req.id}/remind`, { method: "POST", cookie });
     expect((await notice(bounced("amy@mail.test", "Transient"))).status).toBe(200);
     expect((await notice({ type: "email.delivered", data: { email_id: "email_1", to: ["amy@mail.test"] } })).status).toBe(200);
-    expect((await notice({ type: "email.bounced", data: { email_id: "email_unknown", to: ["amy@mail.test"], bounce: { type: "Permanent" } } })).status).toBe(200);
     expect((await message())!.bounced_at).toBeNull();
     expect((await client())!.email_bounced_at).toBeNull();
+  });
+
+  it("asks for the notice again when no message has that id yet", async () => {
+    await ready();
+    expect((await notice({ type: "email.bounced", data: { email_id: "email_unknown", to: ["amy@mail.test"], bounce: { type: "Permanent" } } })).status).toBe(404);
+  });
+
+  it("never marks a client in another account, even with the same address", async () => {
+    const a = await ready();
+    mockOutbound();
+    await api(`/api/requests/${a.req.id}/remind`, { method: "POST", cookie: a.cookie });
+    await env.DB_NA.prepare("UPDATE messages SET provider_id = 'email_a'").run();
+
+    const { cookie, client: other } = await setup("owner2@firm.test");
+    await api("/api/firm", { method: "PATCH", cookie, body: { address: ADDRESS, phone: "416-555-0100" } });
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'active' WHERE id = (SELECT firm_id FROM users WHERE email = 'owner2@firm.test')").run();
+    const req = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: other.id, title: "Other", deadline: inDays(10), items: [{ label: "Passport", required: true }] } })).json<any>();
+    await api(`/api/requests/${req.id}/link`, { method: "POST", cookie });
+    mockOutbound();
+    expect((await api(`/api/requests/${req.id}/remind`, { method: "POST", cookie })).status).toBe(200);
+    await env.DB_NA.prepare("UPDATE messages SET provider_id = 'email_b' WHERE provider_id IS NOT 'email_a'").run();
+
+    expect((await notice({ type: "email.bounced", data: { email_id: "email_a", to: ["amy@mail.test"], bounce: { type: "Permanent" } } })).status).toBe(200);
+    const rows = (await env.DB_NA.prepare("SELECT firm_id, email_bounced_at FROM clients").all<any>()).results;
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((r) => r.email_bounced_at)).toHaveLength(1);
+    const marked = rows.find((r) => r.email_bounced_at)!;
+    expect(marked.firm_id).toBe((await env.DB_NA.prepare("SELECT firm_id FROM messages WHERE provider_id = 'email_a'").first<any>())!.firm_id);
+  });
+
+  it("lets the person clear the mark and try the address again", async () => {
+    const { cookie, client: amy, req } = await ready();
+    mockOutbound();
+    await api(`/api/requests/${req.id}/remind`, { method: "POST", cookie });
+    await notice(bounced());
+    expect((await api(`/api/clients/${amy.id}/retry-email`, { method: "POST", cookie })).status).toBe(200);
+    expect((await client())!.email_bounced_at).toBeNull();
+    expect((await api(`/api/clients/${amy.id}/retry-email`, { method: "POST", cookie })).status).toBe(404);
   });
 
   it("refuses a notice that is unsigned, mis-signed, stale or made with another secret", async () => {
