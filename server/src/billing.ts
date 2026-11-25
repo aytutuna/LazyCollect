@@ -211,11 +211,11 @@ async function sync(env: Env, event: Event) {
   }
   if (!customer || !subscription) return;
 
-  type Row = { id: string; stripe_subscription_id: string | null; plan_status: string; closed_at: number | null };
-  let firm = await env.CONTROL.prepare("SELECT id, stripe_subscription_id, plan_status, closed_at FROM firms WHERE stripe_customer_id = ?").bind(customer).first<Row>();
+  type Row = { id: string; stripe_subscription_id: string | null; plan_source: string | null; plan_status: string; closed_at: number | null };
+  let firm = await env.CONTROL.prepare("SELECT id, stripe_subscription_id, plan_source, plan_status, closed_at FROM firms WHERE stripe_customer_id = ?").bind(customer).first<Row>();
   // a firm that never saved its customer id (the save after creating it failed) is matched by what we put on the session
   if (!firm && typeof firmId === "string") {
-    firm = await env.CONTROL.prepare("SELECT id, stripe_subscription_id, plan_status, closed_at FROM firms WHERE id = ? AND stripe_customer_id IS NULL").bind(firmId).first<Row>();
+    firm = await env.CONTROL.prepare("SELECT id, stripe_subscription_id, plan_source, plan_status, closed_at FROM firms WHERE id = ? AND stripe_customer_id IS NULL").bind(firmId).first<Row>();
   }
   if (!firm) return;
 
@@ -227,7 +227,9 @@ async function sync(env: Env, event: Event) {
   if (plan === "canceled" && firm.stripe_subscription_id !== sub.id) return;
   // a subscription must not outlive the account it was bought for, nor sit beside another live one
   const other = firm.stripe_subscription_id && firm.stripe_subscription_id !== sub.id && firm.plan_status !== "canceled";
-  if (plan !== "canceled" && (firm.closed_at || other)) {
+  // a plan bought in the App Store counts as the other one too: checkout may have been opened before the purchase
+  const store = firm.plan_source === "apple" && (firm.plan_status === "active" || firm.plan_status === "past_due");
+  if (plan !== "canceled" && (firm.closed_at || other || store)) {
     await cancelAndRefund(env, sub);
     return;
   }

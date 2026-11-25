@@ -453,6 +453,17 @@ describe("double payment", () => {
     expect((await firmRow(cookie)).stripe_subscription_id).toBe("sub_1");
   });
 
+  it("cancels and refunds a web subscription that arrives while an App Store plan is live", async () => {
+    const { cookie, customer } = await subscribed();
+    await env.CONTROL.prepare("UPDATE firms SET plan_source = 'apple', plan_status = 'active', apple_original_transaction_id = '1000000000001'").run();
+    stripeFake.sub("sub_1", customer, { latest_invoice: "in_1" });
+    stripeFake.payments.set("in_1", [{ status: "paid", payment: { payment_intent: "pi_1" } }]);
+    await webhook({ id: "evt_1", type: "customer.subscription.created", data: { object: { id: "sub_1", customer } } });
+    expect(stripeFake.subs.get("sub_1")!.status).toBe("canceled");
+    expect(refunds()).toHaveLength(1);
+    expect(await firmRow(cookie)).toMatchObject({ plan_source: "apple", stripe_subscription_id: null });
+  });
+
   it("keeps the duplicate alive when the refund fails, and finishes on the retry", async () => {
     const { customer } = await subscribed();
     stripeFake.sub("sub_1", customer);

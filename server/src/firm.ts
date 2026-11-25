@@ -30,9 +30,8 @@ export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at" | "past_due
   }
 }
 
-// TODO: when the iPhone branch lands, usable() also has to count plan_source and current_period_end (a plan bought in the store)
 export async function planUsable(env: Env, firmId: string, now: number): Promise<boolean> {
-  const f = await env.CONTROL.prepare("SELECT plan_status, trial_ends_at, past_due_since, closed_at, stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<Parameters<typeof usable>[0]>();
+  const f = await env.CONTROL.prepare("SELECT plan_status, plan_source, current_period_end, trial_ends_at, past_due_since, closed_at, stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<Parameters<typeof usable>[0]>();
   return Boolean(f && usable(f, now));
 }
 
