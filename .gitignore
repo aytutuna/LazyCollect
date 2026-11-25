@@ -5,3 +5,7 @@ server/test/dev.vars
 .dev.vars
 web/public/models/**/*.onnx
 web/.cache
+
+ios/.build
+ios/*.xcodeproj
+ios/Sources/CollectScanModel/Models/*.onnx

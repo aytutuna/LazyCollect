@@ -1,4 +1,5 @@
 import { purgeClosed } from "./account";
+import { refreshApple } from "./apple";
 import { runBatches } from "./batches";
 import { sendMail } from "./email";
 import { purgeExpired } from "./purge";
@@ -29,6 +30,7 @@ export const steps: Step[] = [
         env.CONTROL.prepare("DELETE FROM stripe_events WHERE received_at < ?").bind(now - 30 * DAY),
       ]),
   ],
+  ["apple", refreshApple],
   ["files", sweepFiles],
   ["purge", purgeExpired],
   ["closed", purgeClosed],

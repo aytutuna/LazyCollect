@@ -453,6 +453,33 @@ describe("double payment", () => {
     expect((await firmRow(cookie)).stripe_subscription_id).toBe("sub_1");
   });
 
+  it("cancels and refunds a web subscription that arrives while an App Store plan is live", async () => {
+    const { cookie, customer } = await subscribed();
+    await env.CONTROL.prepare("UPDATE firms SET plan_source = 'apple', plan_status = 'active', apple_original_transaction_id = '1000000000001'").run();
+    stripeFake.sub("sub_1", customer, { latest_invoice: "in_1" });
+    stripeFake.payments.set("in_1", [{ status: "paid", payment: { payment_intent: "pi_1" } }]);
+    await webhook({ id: "evt_1", type: "customer.subscription.created", data: { object: { id: "sub_1", customer } } });
+    expect(stripeFake.subs.get("sub_1")!.status).toBe("canceled");
+    expect(refunds()).toHaveLength(1);
+    expect(await firmRow(cookie)).toMatchObject({ plan_source: "apple", stripe_subscription_id: null });
+  });
+
+  it("is not undone by a late end of an old web subscription after an App Store purchase", async () => {
+    const { cookie, customer } = await subscribed();
+    stripeFake.sub("sub_old", customer, { status: "canceled" });
+    await env.CONTROL.prepare("UPDATE firms SET plan_source = 'apple', plan_status = 'active', stripe_subscription_id = 'sub_old', apple_original_transaction_id = '1000000000001', current_period_end = ?").bind(Date.now() + 86_400_000).run();
+    await webhook({ id: "evt_late", type: "customer.subscription.deleted", data: { object: { id: "sub_old", customer } } });
+    expect(await firmRow(cookie)).toMatchObject({ plan_status: "active", plan_source: "apple" });
+  });
+
+  it("lets an account whose App Store plan Apple has ended pay on the web, but not one still in billing retry", async () => {
+    const { cookie } = await subscribed();
+    await env.CONTROL.prepare("UPDATE firms SET plan_source = 'apple', plan_status = 'past_due', stripe_subscription_id = NULL, past_due_since = ?").bind(Date.now() - 20 * 86_400_000).run();
+    expect((await checkout(cookie)).status).toBe(409);
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'canceled'").run();
+    expect((await checkout(cookie)).status).toBe(200);
+  });
+
   it("keeps the duplicate alive when the refund fails, and finishes on the retry", async () => {
     const { customer } = await subscribed();
     stripeFake.sub("sub_1", customer);

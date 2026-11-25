@@ -2,7 +2,7 @@ import { itemFailed } from "./pulse";
 import { Transient, escapeHtml, sendMail } from "./email";
 import { reasonLabels } from "./reasons";
 import { isRegion, type Region } from "./regions";
-import { DAY, MINUTE, hmac, randomId, sha256 } from "./util";
+import { DAY, MINUTE, PAYING, hmac, randomId, sha256 } from "./util";
 
 export const TEMPLATE_VERSION = 1;
 
@@ -132,11 +132,11 @@ const ROOM = `((SELECT COUNT(*) FROM messages WHERE firm_id = ?2 AND status IN (
     + (SELECT COUNT(*) FROM staff_mail WHERE firm_id = ?2 AND sent_at > ?10)) < ?11
   AND (?5 != 'invite' OR (SELECT COUNT(*) FROM messages WHERE firm_id = ?2 AND request_id = ?3 AND kind = 'invite' AND status IN ('sent', 'sending') AND sent_at > ?10 AND seq IS NOT ?6) < ${INVITES_PER_REQUEST})`;
 
-const dailyCap = (subscribed: string | null | undefined) => (subscribed ? PAID_DAILY : TRIAL_DAILY);
+const dailyCap = (subscribed: number | null | undefined) => (subscribed ? PAID_DAILY : TRIAL_DAILY);
 
 // A staff invite takes a slot under the same cap as the messages above; null when the account is out of room.
 export async function claimStaffMail(env: Env, db: D1Database, firmId: string, now = Date.now()): Promise<string | null> {
-  const paid = await env.CONTROL.prepare("SELECT stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<{ stripe_subscription_id: string | null }>();
+  const paid = await env.CONTROL.prepare(`SELECT ${PAYING} AS paid FROM firms WHERE id = ?`).bind(firmId).first<{ paid: number }>();
   const id = randomId();
   const res = await db
     .prepare(
@@ -144,14 +144,14 @@ export async function claimStaffMail(env: Env, db: D1Database, firmId: string, n
        WHERE ((SELECT COUNT(*) FROM messages WHERE firm_id = ?2 AND status IN ('sent', 'sending') AND sent_at > ?4)
          + (SELECT COUNT(*) FROM staff_mail WHERE firm_id = ?2 AND sent_at > ?4)) < ?5`,
     )
-    .bind(id, firmId, now, now - DAY, dailyCap(paid?.stripe_subscription_id))
+    .bind(id, firmId, now, now - DAY, dailyCap(paid?.paid))
     .run();
   return res.meta.changes === 1 ? id : null;
 }
 
 // A look before a link is rotated for an email; deliver still guards the slot itself for parallel sends.
 export async function hasRoom(env: Env, db: D1Database, firmId: string, requestId: string, now = Date.now()): Promise<boolean> {
-  const paid = await env.CONTROL.prepare("SELECT stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<{ stripe_subscription_id: string | null }>();
+  const paid = await env.CONTROL.prepare(`SELECT ${PAYING} AS paid FROM firms WHERE id = ?`).bind(firmId).first<{ paid: number }>();
   const r = (await db
     .prepare(
       `SELECT (SELECT COUNT(*) FROM messages WHERE firm_id = ?1 AND status IN ('sent', 'sending') AND sent_at > ?3)
@@ -160,7 +160,7 @@ export async function hasRoom(env: Env, db: D1Database, firmId: string, requestI
     )
     .bind(firmId, requestId, now - DAY)
     .first<{ day: number; invites: number }>())!;
-  return r.day < dailyCap(paid?.stripe_subscription_id) && r.invites < INVITES_PER_REQUEST;
+  return r.day < dailyCap(paid?.paid) && r.invites < INVITES_PER_REQUEST;
 }
 
 // The row goes in as 'sending' before the provider is called; the unique key lets only one run claim a slot.
@@ -169,9 +169,9 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
   const { subject, text, html } = render(l);
   const hash = await sha256(`${subject}\n${text}\n${html}`);
   const id = randomId();
-  const paid = await env.CONTROL.prepare("SELECT stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<{ stripe_subscription_id: string | null }>();
+  const paid = await env.CONTROL.prepare(`SELECT ${PAYING} AS paid FROM firms WHERE id = ?`).bind(firmId).first<{ paid: number }>();
   // both statements below read the same numbered values
-  const args = [id, firmId, requestId, slot.clientId, kind, slot.seq, TEMPLATE_VERSION, hash, now, now - DAY, dailyCap(paid?.stripe_subscription_id), now - STALE];
+  const args = [id, firmId, requestId, slot.clientId, kind, slot.seq, TEMPLATE_VERSION, hash, now, now - DAY, dailyCap(paid?.paid), now - STALE];
   const inserted = await db
     .prepare(
       `INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at)

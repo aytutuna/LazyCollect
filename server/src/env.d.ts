@@ -15,6 +15,12 @@ interface Secrets {
   APP_ATTEST_ROOT?: string;
   APP_ATTEST_OFF?: string;
   ANDROID_CERT_SHA256?: string;
+  APPLE_IAP_KEY?: string;
+  APPLE_IAP_KEY_ID?: string;
+  APPLE_ISSUER_ID?: string;
+  APPLE_IAP_SANDBOX?: string;
+  APPLE_IAP_ROOT?: string;
+  APPLE_API_BASE?: string;
   COMMIT?: string;
 }
 interface Env extends Secrets {}
