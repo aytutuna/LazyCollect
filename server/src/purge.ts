@@ -140,9 +140,9 @@ async function startClocks(db: D1Database, now: number) {
     .prepare(
       `UPDATE requests SET ended_at = ${ends},
          keep_until = ${ends} + COALESCE((SELECT retention_years FROM firm_settings WHERE firm_id = requests.firm_id), ${DEFAULT_YEARS}) * ${YEAR}
-       WHERE rowid IN (SELECT rowid FROM requests WHERE status = 'open' AND ended_at IS NULL AND deleted_at IS NULL AND ${ends} <= ? LIMIT ${RETENTION_BATCH})`,
+       WHERE rowid IN (SELECT rowid FROM requests WHERE status = 'open' AND ended_at IS NULL AND deleted_at IS NULL AND deadline <= ? LIMIT ${RETENTION_BATCH})`,
     )
-    .bind(now)
+    .bind(now - LINK_GRACE)
     .run();
 }
 
