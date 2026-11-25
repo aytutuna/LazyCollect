@@ -4,6 +4,7 @@ import { auditClient } from "./audit";
 import { linkOf } from "./client";
 import { ByteSource, CHUNK, cipherLength, encryptStream, fileKey } from "./crypt";
 import { planUsable } from "./firm";
+import { holdFiles, type FileRow as HeldFile } from "./held";
 import { firmDek } from "./keys";
 import { regionOf } from "./regions";
 import type { AppEnv } from "./session";
@@ -245,11 +246,11 @@ uploads.delete("/c/:token/files/:fileId", async (c) => {
   const fileId = c.req.param("fileId");
   const file = await db
     .prepare(
-      `SELECT f.r2_key, f.item_id, i.status FROM files f JOIN items i ON i.firm_id = f.firm_id AND i.request_id = f.request_id AND i.id = f.item_id
+      `SELECT f.id, f.firm_id, f.request_id, f.item_id, f.r2_key, f.name, f.mime, f.size, f.uploaded_by, f.uploaded_at, i.status FROM files f JOIN items i ON i.firm_id = f.firm_id AND i.request_id = f.request_id AND i.id = f.item_id
        WHERE f.firm_id = ? AND f.request_id = ? AND f.id = ? AND f.uploaded_by = 'client' AND f.state = 'live' AND f.deleted_at IS NULL`,
     )
     .bind(req.firm_id, req.id, fileId)
-    .first<{ r2_key: string; item_id: string; status: string }>();
+    .first<HeldFile & { status: string }>();
   if (!file) return notFound(c);
   if (file.status === "approved") return c.json({ error: "approved" }, 409);
   const held = "EXISTS (SELECT 1 FROM requests WHERE firm_id = files.firm_id AND id = files.request_id AND hold_at IS NOT NULL)";
@@ -280,7 +281,9 @@ uploads.delete("/c/:token/files/:fileId", async (c) => {
     const onHold = await db.prepare("SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND hold_at IS NOT NULL").bind(req.firm_id, req.id).first();
     return c.json({ error: onHold ? "legal_hold" : "approved" }, 409);
   }
-  // a failed object delete leaves ciphertext behind; the retention sweep removes objects of deleted rows
-  await regionOf(c.env, region).bucket.delete(file.r2_key).catch((e) => console.error(e instanceof Error ? e.message : "error"));
+  // a failed copy or delete leaves the object where it is; the sweep copies and removes the objects of deleted rows
+  await holdFiles(c.env, region, [file], "removed")
+    .then(() => regionOf(c.env, region).bucket.delete(file.r2_key))
+    .catch((e) => console.error(e instanceof Error ? e.message : "error"));
   return c.json({ ok: true });
 });

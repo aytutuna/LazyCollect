@@ -17,6 +17,6 @@ beforeEach(async () => {
   const { objects } = await env.FILES_NA.list();
   await env.FILES_NA.delete(objects.map((o) => o.key));
   await env.DB_NA.batch(
-    ["audit", "deletion_log", "firm_settings", "email_stops", "staff_mail", "messages", "notes", "files", "links", "items", "people", "batch_items", "batches", "requests", "templates", "examples", "clients"].map((t) => env.DB_NA.prepare(`DELETE FROM ${t}`)),
+    ["audit", "deletion_log", "firm_settings", "email_stops", "staff_mail", "messages", "notes", "files", "links", "items", "people", "batch_items", "batches", "requests", "templates", "examples", "clients", "held_files"].map((t) => env.DB_NA.prepare(`DELETE FROM ${t}`)),
   );
 });

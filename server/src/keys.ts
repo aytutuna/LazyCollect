@@ -47,3 +47,8 @@ export async function firmDek(env: Env, region: Region, firmId: string, create: 
   if (!row?.dek_wrapped) throw new Error("firm has no key");
   return unwrap(master, row.dek_wrapped, firmId);
 }
+
+// a wrapped key kept beside a held file, for when the account's own row is gone
+export async function openDek(env: Env, region: Region, wrapped: string, firmId: string): Promise<Uint8Array> {
+  return unwrap(await masterKey(env, region), wrapped, firmId);
+}

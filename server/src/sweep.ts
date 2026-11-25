@@ -1,5 +1,6 @@
 import { DAY, HOUR } from "./util";
 import { dropUnused } from "./examples";
+import { FILE_COLUMNS, dropHeld, holdFiles, type FileRow } from "./held";
 import { regionIds, regionOf } from "./regions";
 
 const BATCH = 200;
@@ -8,6 +9,14 @@ const BATCH = 200;
 export async function sweepFiles(env: Env, now = Date.now()) {
   for (const id of regionIds) {
     const { db, bucket } = regionOf(env, id);
+    // files a client removed are copied to the holding place before their rows and objects go; unfinished uploads have nothing to keep
+    const removed = await db
+      .prepare(
+        `SELECT ${FILE_COLUMNS} FROM files WHERE deleted_at IS NOT NULL AND state = 'live'
+         AND NOT EXISTS (SELECT 1 FROM requests r WHERE r.firm_id = files.firm_id AND r.id = files.request_id AND r.hold_at IS NOT NULL) LIMIT ${BATCH}`,
+      )
+      .all<FileRow>();
+    await holdFiles(env, id, removed.results, "removed", now);
     // the rows go first, guarded against a hold set meanwhile, and only the objects of rows that went are deleted
     const due = `(state = 'pending' AND uploaded_at < ?)
       OR (deleted_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM requests r WHERE r.firm_id = files.firm_id AND r.id = files.request_id AND r.hold_at IS NOT NULL))`;
@@ -17,5 +26,6 @@ export async function sweepFiles(env: Env, now = Date.now()) {
       .all<{ r2_key: string }>();
     if (results.length) await bucket.delete(results.map((f) => f.r2_key));
     await dropUnused(db, bucket, now - DAY);
+    await dropHeld(db, bucket, now);
   }
 }

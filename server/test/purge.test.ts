@@ -1,11 +1,14 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { HELD_FOR, openHeld, restoreHeld } from "../src/held";
 import { purgeExpired } from "../src/purge";
+import { sweepFiles } from "../src/sweep";
 import { DAY, RESTORE_WINDOW } from "../src/util";
-import { api, inDays, jpeg, openRequest, pdf, setup, upload } from "./helpers";
+import { api, inDays, jpeg, openRequest, pdf, setup, sha, upload } from "./helpers";
 
 const count = async (table: string, where = "1") => (await env.DB_NA.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${where}`).first<{ n: number }>())!.n;
-const objects = async () => (await env.FILES_NA.list()).objects.length;
+const objects = async () => (await env.FILES_NA.list({ prefix: "f/" })).objects.length;
+const heldObjects = async () => (await env.FILES_NA.list({ prefix: "held/" })).objects.length;
 const log = async () => (await env.DB_NA.prepare("SELECT kind, reason, files, target_id, firm_id FROM deletion_log ORDER BY rowid").all<any>()).results;
 
 async function withFiles() {
@@ -295,5 +298,69 @@ describe("purge claims and failures", () => {
     // the claim was kept after the objects went, and the stale-claim retry finishes it
     await purgeExpired(env, now + 2 * 3_600_000);
     expect(await count("requests")).toBe(0);
+  });
+});
+
+describe("held files", () => {
+  const held = async () => (await env.DB_NA.prepare("SELECT id, file_id, held_at, expires_at, reason FROM held_files ORDER BY rowid").all<any>()).results;
+  const read = async (id: string) => new Uint8Array(await new Response((await openHeld(env, "na", id))!.body).arrayBuffer());
+
+  it("keeps a file the client removed for 30 days, then drops it", async () => {
+    const { req, path } = await openRequest();
+    const body = pdf(3000);
+    const file = await (await upload(path, req.items[0].id, body)).json<any>();
+    expect((await api(`${path}/files/${file.id}`, { method: "DELETE" })).status).toBe(200);
+    expect([await objects(), await heldObjects()]).toEqual([0, 1]);
+    const [row] = await held();
+    expect(row).toMatchObject({ file_id: file.id, reason: "removed", expires_at: row.held_at + HELD_FOR });
+    expect(await sha(await read(row.id))).toBe(await sha(body));
+
+    await sweepFiles(env, row.held_at + HELD_FOR - 1);
+    expect(await heldObjects()).toBe(1);
+    await sweepFiles(env, row.held_at + HELD_FOR);
+    expect([await heldObjects(), await count("held_files")]).toEqual([0, 0]);
+  });
+
+  it("puts a removed file back on its item", async () => {
+    const { req, path } = await openRequest();
+    const body = jpeg(2000);
+    const file = await (await upload(path, req.items[0].id, body, { name: "id.jpg" })).json<any>();
+    await api(`${path}/files/${file.id}`, { method: "DELETE" });
+    const [row] = await held();
+    expect(await restoreHeld(env, "na", row.id)).toBe("restored");
+    expect(await objects()).toBe(1);
+    expect(await env.DB_NA.prepare("SELECT deleted_at, state, name FROM files WHERE id = ?").bind(file.id).first()).toEqual({ deleted_at: null, state: "live", name: "id.jpg" });
+    expect((await env.DB_NA.prepare("SELECT status FROM items WHERE id = ?").bind(req.items[0].id).first<any>())!.status).toBe("submitted");
+  });
+
+  it("also holds the sweep's copy of a removal whose first copy failed", async () => {
+    const { req, path } = await openRequest();
+    const file = await (await upload(path, req.items[0].id, pdf(500))).json<any>();
+    const key = (await env.DB_NA.prepare("SELECT r2_key FROM files").first<any>())!.r2_key;
+    await env.DB_NA.prepare("UPDATE files SET deleted_at = ?").bind(Date.now()).run();
+    await sweepFiles(env);
+    expect([await objects(), await heldObjects(), await count("files")]).toEqual([0, 1, 0]);
+    expect((await held())[0].file_id).toBe(file.id);
+    expect(key).toContain(file.id);
+  });
+
+  it("keeps the files of a purged request for 30 more days, readable after the account's key is gone", async () => {
+    const { cookie, req } = await withFiles();
+    const bodies = new Map<string, string>();
+    for (const f of (await env.DB_NA.prepare("SELECT id, size FROM files").all<any>()).results) bodies.set(f.id, f.size);
+    await api(`/api/requests/${req.id}`, { method: "DELETE", cookie });
+    const deletedAt = (await env.DB_NA.prepare("SELECT deleted_at FROM requests").first<any>())!.deleted_at;
+    const day = deletedAt + RESTORE_WINDOW;
+    await purgeExpired(env, day);
+    expect([await objects(), await heldObjects()]).toEqual([0, 3]);
+    expect((await held()).map((h) => h.reason)).toEqual(["deleted", "deleted", "deleted"]);
+
+    await env.CONTROL.batch(["sessions", "users", "firms"].map((t) => env.CONTROL.prepare(`DELETE FROM ${t}`)));
+    for (const h of await held()) expect((await read(h.id)).length).toBe(Number(bodies.get(h.file_id)));
+
+    await sweepFiles(env, day + HELD_FOR - 1);
+    expect(await heldObjects()).toBe(3);
+    await sweepFiles(env, day + HELD_FOR);
+    expect([await heldObjects(), await count("held_files")]).toEqual([0, 0]);
   });
 });

@@ -5,6 +5,7 @@ import { MAX_ITEMS, expandItems, matches, relabel, rowsFor, parsePeople, type Bl
 import { deadlineDay, flagOf, today } from "./expiry";
 import { ownsExamples, parseExample } from "./examples";
 import { usable } from "./firm";
+import { FILE_COLUMNS, holdFiles, type FileRow } from "./held";
 import { LINK_GRACE, sealToken } from "./links";
 import { MANUAL_SEQ, addressStopped, deliver, hasRoom, unsubUrl } from "./mail";
 import { ITEM_COLS, conditionOk, isQuestion, parseDay, presentItem } from "./questions";
@@ -432,6 +433,8 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
   const free = "NOT EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND hold_at IS NOT NULL)";
   const binds = [firmId, req.id, itemId, firmId, req.id, firmId, req.id];
   // rows of files the client removed still wait for the sweep; they go here, and only then their objects, so the item can leave
+  const removed = await db.prepare(`SELECT ${FILE_COLUMNS} FROM files WHERE firm_id = ? AND item_id = ? AND deleted_at IS NOT NULL`).bind(firmId, itemId).all<FileRow>();
+  await holdFiles(c.env, firm.region as Region, removed.results, "removed");
   // the audit row goes first: its condition reads the item the delete removes
   const [, gone, res] = await db.batch([
     audit(c, "item.delete", "item", itemId, { request: req.id }, {

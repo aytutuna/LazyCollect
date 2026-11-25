@@ -128,7 +128,7 @@ async function purgeFirm(env: Env, id: string, regionId: string, now: number) {
     )
     .bind(id, now - HOUR, now - HOUR, BUDGET)
     .all<Req>();
-  for (const req of results) await purgeRequest(db, bucket, req, reasonOf(req), now, now).catch(log);
+  for (const req of results) await purgeRequest(env, regionId as Region, req, reasonOf(req), now, now).catch(log);
 
   const left = await db.prepare("SELECT COUNT(*) AS n FROM requests WHERE firm_id = ?").bind(id).first<{ n: number }>();
 

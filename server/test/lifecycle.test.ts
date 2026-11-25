@@ -8,7 +8,7 @@ import { api, openRequest, pdf, review, upload } from "./helpers";
 const state = async () => (await env.DB_NA.prepare("SELECT status FROM requests").first<any>())!.status as string;
 const counts = async () => ({
   rows: (await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM files").first<{ n: number }>())!.n,
-  objects: (await env.FILES_NA.list()).objects.length,
+  objects: (await env.FILES_NA.list({ prefix: "f/" })).objects.length,
 });
 
 async function completeRequest() {
@@ -109,7 +109,7 @@ describe("sweep", () => {
     expect(await env.FILES_NA.head(removed.key)).toBeNull();
     expect(await env.FILES_NA.head(noObject.key)).toBeNull();
     expect(await env.FILES_NA.head(fresh.key)).not.toBeNull();
-    expect((await env.FILES_NA.list()).objects).toHaveLength(2);
+    expect((await env.FILES_NA.list({ prefix: "f/" })).objects).toHaveLength(2);
   });
 
   it("leaves objects of soft-deleted requests alone", async () => {

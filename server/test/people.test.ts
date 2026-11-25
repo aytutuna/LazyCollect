@@ -191,7 +191,7 @@ describe("adding, renaming and removing people", () => {
     const path = await openLink(cookie, req.id);
     const passport = req.items.find((i: any) => i.label === "Passport — Amira Haddad");
     expect((await upload(path, passport.id, pdf(300))).status).toBe(201);
-    expect((await env.FILES_NA.list()).objects).toHaveLength(1);
+    expect((await env.FILES_NA.list({ prefix: "f/" })).objects).toHaveLength(1);
     const amira = req.people[1];
     const refused = await api(`/api/requests/${req.id}/people/${amira.id}`, { method: "DELETE", cookie });
     expect([refused.status, await refused.json()]).toEqual([409, { error: "has_data", items: 1 }]);
@@ -199,7 +199,7 @@ describe("adding, renaming and removing people", () => {
     const done = await api(`/api/requests/${req.id}/people/${amira.id}?confirm=1`, { method: "DELETE", cookie });
     expect(done.status).toBe(200);
     expect((await q("SELECT COUNT(*) AS n FROM files"))[0].n).toBe(0);
-    expect((await env.FILES_NA.list()).objects).toHaveLength(0);
+    expect((await env.FILES_NA.list({ prefix: "f/" })).objects).toHaveLength(0);
     expect((await q("SELECT COUNT(*) AS n FROM items WHERE person_pos = 1"))[0].n).toBe(0);
   });
 
