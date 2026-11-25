@@ -120,6 +120,7 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
   if (!mime) {
     const family = familyOf(first, rawName);
     if (!family) return c.json({ error: "unsupported_type" }, 415);
+    if (family === "old") return c.json({ error: "old_office" }, 415);
     // office, open document and text files are read whole: a zip lists its parts at the end, and macros hide inside
     const whole = new Uint8Array(length);
     whole.set(first);
