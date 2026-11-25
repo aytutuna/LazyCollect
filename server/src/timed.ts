@@ -2,6 +2,7 @@ import { purgeClosed } from "./account";
 import { runBatches } from "./batches";
 import { sendMail } from "./email";
 import { purgeExpired } from "./purge";
+import { classOf, collect, endCollect } from "./pulse";
 import { runReminders } from "./reminders";
 import { sweepFiles } from "./sweep";
 import { runTrialNotices } from "./trial";
@@ -42,12 +43,17 @@ const message = (e: unknown) => (e instanceof Error ? e.message : "error");
 export async function runTimed(env: Env, now = Date.now(), list: Step[] = steps) {
   const failed: { name: string; error: string }[] = [];
   for (const [name, run] of list) {
+    collect();
+    let error: string | null = null;
     try {
       await run(env, now);
     } catch (e) {
       console.error(message(e));
-      failed.push({ name, error: message(e).slice(0, 200) });
+      error = classOf(e);
     }
+    // items that failed inside a step that went through count against it too
+    const items = Object.entries(endCollect()).map(([kind, n]) => `${kind} x${n}`);
+    if (error || items.length) failed.push({ name, error: [error, ...items].filter(Boolean).join(", ") });
   }
   try {
     await record(env, now, list, failed);
@@ -58,7 +64,8 @@ export async function runTimed(env: Env, now = Date.now(), list: Step[] = steps)
 
 async function record(env: Env, now: number, list: Step[], failed: { name: string; error: string }[]) {
   const bad = new Set(failed.map((f) => f.name));
-  const upsert = "INSERT INTO timed_status (step, ok_at) VALUES (?1, ?2) ON CONFLICT (step) DO UPDATE SET ok_at = ?2";
+  // a step that works again may be mailed about the next time it fails
+  const upsert = "INSERT INTO timed_status (step, ok_at) VALUES (?1, ?2) ON CONFLICT (step) DO UPDATE SET ok_at = ?2, alerted_at = NULL";
   await env.CONTROL.batch([
     ...list.filter(([name]) => !bad.has(name)).map(([name]) => env.CONTROL.prepare(upsert).bind(name, now)),
     ...failed.map((f) =>
@@ -73,7 +80,7 @@ async function record(env: Env, now: number, list: Step[], failed: { name: strin
     if (claim.meta.changes === 1) due.push(f);
   }
   if (!due.length) return;
-  const text = `${due.map((f) => `${f.name}: ${f.error}`).join("\n")}\n\nThe timed run of ${env.APP_URL} had these steps fail at ${new Date(now).toISOString()}. The others ran. Look at the worker's logs.\n`;
+  const text = `${due.map((f) => `${f.name}: ${f.error}`).join("\n")}\n\nThe timed run of ${env.APP_URL} had these steps fail at ${new Date(now).toISOString()}. The others ran. Only the kind of error is listed here; the worker's logs have the rest.\n`;
   await sendMail(env, { from: env.EMAIL_FROM, to: ALERT_TO, subject: `Lazy Collect: timed run failed (${due.map((f) => f.name).join(", ")})`, text });
 }
 
