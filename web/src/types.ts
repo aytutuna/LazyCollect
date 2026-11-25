@@ -186,6 +186,7 @@ export type ClientView = {
   deadline: number;
   status: string;
   expires_at: number;
+  paused: boolean;
   contact: { name: string | null; email: string | null; phone: string | null; address: string | null } | null;
   notes: Note[];
   people: { position: number; role: Role; name: string }[];

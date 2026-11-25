@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { createSession, endSession, holdLogin, type App, type AppEnv } from "./session";
 import { sendLoginEmail } from "./email";
 import { untouchedRegion, untouchedSql, usable } from "./firm";
+import { sendTrialNotice } from "./trial";
 import { htmlHeaders } from "./headers";
 import { isRegion, regionOf, type Region } from "./regions";
 import { DAY, MINUTE, hmac, keyLimited, randomCode, randomId, randomToken, sha256, ipPrefix, FETCH_TIMEOUT_MS } from "./util";
@@ -187,6 +188,10 @@ async function signIn(c: Context<AppEnv>, email: string, app: App | null): Promi
         .bind(firmId, firmId),
     ]);
     user = (await find())!;
+    if (user.firm_id === firmId) {
+      // the account is made and the code was checked; a failed email must not stop the sign-in
+      await sendTrialNotice(c.env, { id: firmId, tz: "America/Toronto", trial_ends_at: now + TRIAL_DAYS * DAY }, "start").catch((e) => console.error(e instanceof Error ? e.message : "error"));
+    }
   }
   if (user.disabled_at) return null;
   const keys = await db
@@ -299,7 +304,7 @@ auth.get("/me", async (c) => {
   if (!session) return c.json({ error: "unauthorized" }, 401);
   const row = await c.env.CONTROL.prepare(
     `SELECT u.id, u.email, u.name, u.role, f.id AS firm_id, f.name AS firm_name, f.tz, f.plan_status, f.trial_ends_at,
-       f.current_period_end, f.past_due_since, f.cancel_at_period_end, f.stripe_subscription_id IS NOT NULL AS subscribed, f.closed_at, f.region
+       f.current_period_end, f.past_due_since, f.cancel_at_period_end, f.stripe_subscription_id, f.stripe_subscription_id IS NOT NULL AS subscribed, f.closed_at, f.region
      FROM users u JOIN firms f ON f.id = u.firm_id WHERE u.id = ?`,
   )
     .bind(session.userId)
@@ -316,6 +321,7 @@ auth.get("/me", async (c) => {
       current_period_end: number | null;
       past_due_since: number | null;
       cancel_at_period_end: number;
+      stripe_subscription_id: string | null;
       subscribed: number;
       closed_at: number | null;
       region: string;
