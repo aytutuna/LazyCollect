@@ -307,7 +307,10 @@ describe("sending a batch", () => {
     const { cookie, ids } = await ready(1);
     mockOutbound(true, 400);
     const batch = await (await create(cookie, body(ids))).json<any>();
-    for (let i = 0; i < 3; i++) await runBatches(env, NOW + i * 10 * MINUTE);
+    // a run every minute does not use the tries up either: the item waits a quarter of an hour between them
+    for (const min of [0, 1, 5, 14]) await runBatches(env, NOW + min * MINUTE);
+    expect((await q("SELECT tries FROM batch_items"))[0].tries).toBe(1);
+    for (const min of [20, 40]) await runBatches(env, NOW + min * MINUTE);
     expect(await one(batch.id, cookie)).toMatchObject({ status: "done", failed: 1, sent: 0 });
     expect((await q("SELECT reason, tries FROM batch_items"))[0]).toEqual({ reason: "send_failed", tries: 3 });
   });

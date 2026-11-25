@@ -419,11 +419,14 @@ describe("reminders", () => {
     await invite(cookie, req.id);
     await pin(req.id, at(2027, 1, 5, 10));
     mockOutbound(true, 422);
-    for (const min of [5, 15, 25]) await runReminders(env, at(2027, 1, 5, 10, min));
+    // a run every minute does not use the tries up: each waits its turn, a quarter of an hour apart
+    for (const min of [5, 6, 10, 19]) await runReminders(env, at(2027, 1, 5, 10, min));
+    expect((await messages()).find((m) => m.kind === "reminder")).toMatchObject({ status: "failed", attempts: 1 });
+    for (const min of [20, 35]) await runReminders(env, at(2027, 1, 5, 10, min));
     let row = (await messages()).find((m) => m.kind === "reminder");
     expect(row).toMatchObject({ status: "failed", attempts: 3 });
     expect((await requestRow(req.id)).reminder_seq).toBe(0);
-    await runReminders(env, at(2027, 1, 5, 10, 35));
+    await runReminders(env, at(2027, 1, 5, 10, 55));
     row = (await messages()).filter((m) => m.kind === "reminder")[0];
     expect(row.attempts).toBe(3);
     expect((await requestRow(req.id)).reminder_seq).toBe(1);
@@ -453,16 +456,21 @@ describe("reminders", () => {
     await invite(cookie, second.id);
     await pin(req.id, at(2027, 1, 5, 10));
     await pin(second.id, at(2027, 1, 5, 10, 1));
-    for (const status of [429, 503]) {
+    mockOutbound(true, 429);
+    await runReminders(env, at(2027, 1, 5, 10, 5));
+    // the busy provider stops the pass at the first request, which waits a quarter of an hour
+    expect((await messages()).filter((m) => m.kind === "reminder")).toHaveLength(1);
+    for (const [status, min] of [[503, 6], [429, 21], [503, 40]] as const) {
       mockOutbound(true, status);
-      for (const min of [5, 15, 25, 35]) await runReminders(env, at(2027, 1, 5, 10, min));
+      await runReminders(env, at(2027, 1, 5, 10, min));
     }
     const rows = (await messages()).filter((m) => m.kind === "reminder");
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ status: "failed", attempts: 0 });
+    expect(rows).toHaveLength(2);
+    expect(rows.every((m) => m.status === "failed" && m.attempts === 0)).toBe(true);
     expect((await requestRow(req.id)).reminder_seq).toBe(0);
     const sent = mockOutbound();
-    await runReminders(env, at(2027, 1, 5, 10, 45));
+    await runReminders(env, at(2027, 1, 5, 10, 58));
+    // the same client hears once in 36 hours, so the second request waits its turn
     expect(sent).toHaveLength(1);
   });
 
@@ -478,6 +486,22 @@ describe("reminders", () => {
     expect(links.results).toEqual([{ revoked_at: null }]);
   });
 
+  it("treats a dropped connection or a timeout as the provider being out of reach, not as a refusal", async () => {
+    const { cookie, req } = await ready();
+    mockOutbound();
+    await invite(cookie, req.id);
+    await pin(req.id, at(2027, 1, 5, 10));
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(Object.assign(new Error("timed out"), { name: "TimeoutError" }));
+    for (const min of [5, 20, 35, 50]) await runReminders(env, at(2027, 1, 5, 10, min));
+    const rows = (await messages()).filter((m) => m.kind === "reminder");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "failed", attempts: 0 });
+    expect((await requestRow(req.id)).reminder_seq).toBe(0);
+    const sent = mockOutbound();
+    await runReminders(env, at(2027, 1, 5, 11, 10));
+    expect(sent).toHaveLength(1);
+  });
+
   it("recovers a failed send on the next run", async () => {
     const { cookie, req } = await ready();
     mockOutbound();
@@ -487,6 +511,8 @@ describe("reminders", () => {
     await runReminders(env, at(2027, 1, 5, 10, 5));
     const sent = mockOutbound();
     await runReminders(env, at(2027, 1, 5, 10, 15));
+    expect(sent).toHaveLength(0);
+    await runReminders(env, at(2027, 1, 5, 10, 20));
     expect(sent).toHaveLength(1);
     const rows = (await messages()).filter((m) => m.kind === "reminder");
     expect(rows).toHaveLength(1);

@@ -15,6 +15,8 @@ const MAX_NOTICE_TRIES = 3;
 const NOTICES = 30;
 // reminders and sent-back emails one run may send; the run starts every minute, and the rest wait for the next one
 export const PER_RUN = 50;
+// a request whose email failed waits this long before its next try, so the three tries of one email span half an hour or more
+export const RETRY_WAIT = 15 * MINUTE;
 const REJECT_QUIET = 10 * MINUTE;
 
 export type Sender = {
@@ -219,7 +221,8 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number,
     // over the daily cap: not sent, so it stays due and is looked at again later
     if (outcome === "capped") return move(now + HOUR);
     if (outcome === "later") busy = true;
-    if (outcome === "failed" || outcome === "busy" || outcome === "later") return;
+    if (outcome === "failed" || outcome === "later") return move(now + RETRY_WAIT);
+    if (outcome === "busy") return;
     if (outcome === "sent") room.left--;
     await db
       .prepare("UPDATE requests SET reminder_seq = ?, next_reminder_at = ? WHERE firm_id = ? AND id = ? AND reminder_seq = ?")
@@ -277,7 +280,8 @@ async function rejectedPass(env: Env, region: Region, db: D1Database, now: numbe
     );
     if (outcome === "capped") return hold(now + HOUR);
     if (outcome === "later") busy = true;
-    if (outcome === "failed" || outcome === "busy" || outcome === "later") return;
+    if (outcome === "failed" || outcome === "later") return hold(now + RETRY_WAIT);
+    if (outcome === "busy") return;
     if (outcome === "sent") room.left--;
     await db
       .prepare(

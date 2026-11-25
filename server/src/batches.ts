@@ -8,7 +8,7 @@ import { usable } from "./firm";
 import { linkUrl } from "./links";
 import { addressStopped, deliver, hasRoom, unsubUrl } from "./mail";
 import { regionIds, regionOf, type Region } from "./regions";
-import { canSend, missingItems, senderName, sendersOf, type Sender } from "./reminders";
+import { RETRY_WAIT, canSend, missingItems, senderName, sendersOf, type Sender } from "./reminders";
 import { deadline } from "./requests";
 import type { AppEnv } from "./session";
 import { PAGE, offsetOf } from "./search";
@@ -521,16 +521,18 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
           full = true;
           break;
         } else {
-          // provider trouble: a few more runs may get it through
-          const tries = r.tries + 1;
-          await db
-            .prepare("UPDATE batch_items SET tries = ?, state = CASE WHEN ? >= ? THEN 'failed' ELSE state END, reason = CASE WHEN ? >= ? THEN 'send_failed' ELSE NULL END WHERE firm_id = ? AND request_id = ? AND state = 'pending'")
-            .bind(tries, tries, MAX_TRIES, tries, MAX_TRIES, b.firm_id, r.request_id)
-            .run();
           if (outcome === "later") {
+            // the provider is out of reach: nothing was refused, so no try is used up, and the batch waits
+            await db.prepare("UPDATE batch_items SET reason = NULL WHERE firm_id = ? AND request_id = ? AND state = 'pending'").bind(b.firm_id, r.request_id).run();
             busy = true;
             break;
           }
+          // a refusal: the item is held back for a while (the hold lapses LEASE after its time), so its tries are spread over half an hour
+          const tries = r.tries + 1;
+          await db
+            .prepare("UPDATE batch_items SET tries = ?, state = CASE WHEN ? >= ? THEN 'failed' ELSE state END, reason = CASE WHEN ? >= ? THEN 'send_failed' ELSE ? END WHERE firm_id = ? AND request_id = ? AND state = 'pending'")
+            .bind(tries, tries, MAX_TRIES, tries, MAX_TRIES, `sending:${now + RETRY_WAIT - LEASE}`, b.firm_id, r.request_id)
+            .run();
         }
       }
     } catch (e) {
