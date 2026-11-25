@@ -165,6 +165,18 @@ clients.patch("/clients/:id", async (c) => {
   return c.json(await db.prepare(`SELECT ${COLS} FROM clients WHERE id = ?`).bind(row.id).first());
 });
 
+// the person says the address is right after all (a full mailbox that has since been emptied, say)
+clients.post("/clients/:id/retry-email", async (c) => {
+  const db = c.get("db");
+  const res = await db
+    .prepare("UPDATE clients SET email_bounced_at = NULL WHERE firm_id = ? AND id = ? AND deleted_at IS NULL AND email_bounced_at IS NOT NULL")
+    .bind(c.get("firm").id, c.req.param("id"))
+    .run();
+  if (res.meta.changes !== 1) return notFound(c);
+  await audit(c, "client.update", "client", c.req.param("id"), { fields: ["email_bounced_at"] }).run();
+  return c.json({ ok: true });
+});
+
 clients.delete("/clients/:id", async (c) => {
   const db = c.get("db");
   const firmId = c.get("firm").id;

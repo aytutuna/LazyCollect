@@ -73,6 +73,7 @@ export function Clients() {
   const [editing, setEditing] = useState<string | null>(null);
   const [asking, setAsking] = useState<ClientRow | null>(null);
   const remove = useAction();
+  const retry = useAction();
 
   const done = () => {
     setEditing(null);
@@ -201,7 +202,14 @@ export function Clients() {
                         {c.name}
                         {c.reference && <div class="muted">{c.reference}</div>}
                         {c.email_stop_at && <div class="muted">{t("clients.unsubscribed")}</div>}
-                        {c.email_bounced_at && <div class="error">{t("clients.bounced")}</div>}
+                        {c.email_bounced_at && (
+                          <div class="error">
+                            {t("clients.bounced")}{" "}
+                            <button class="link" disabled={retry.busy} onClick={async () => (await retry.run(() => post(`/clients/${c.id}/retry-email`))) && list.reload()}>
+                              {t("clients.bounced_retry")}
+                            </button>
+                          </div>
+                        )}
                       </td>
                       <td class="wide">{c.email ?? "-"}</td>
                       <td class="wide">{c.phone ?? "-"}</td>
