@@ -38,7 +38,10 @@ struct ProRootView: View {
             }
             .environmentObject(session)
             .onChange(of: app.path) { _, path in if !path.isEmpty { tab = 2 } }
-            .task { await session.loadMe() }
+            .task {
+                await session.loadMe()
+                await PlanStore.shared.watch(session)
+            }
         }
     }
 }

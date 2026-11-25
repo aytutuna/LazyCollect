@@ -243,7 +243,7 @@ struct NewRequestView: View {
 
 struct SettingsView: View {
     @EnvironmentObject var session: ProSession
-    @StateObject private var plan = PlanStore()
+    @ObservedObject private var plan = PlanStore.shared
     @State private var confirm = false
     @State private var managing = false
 
@@ -279,16 +279,17 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func planActions(_ me: Me) -> some View {
-        if me.firm.planSource == "apple" {
+        // Apple's word is final for its own plans: one it no longer reports shows Subscribe and Restore like no plan at all
+        let live = (me.firm.planStatus == "active" || me.firm.planStatus == "past_due") && me.firm.usable
+        if me.firm.planSource == "apple" && live {
             Button("Manage subscription") { managing = true }
-        } else if me.firm.subscribed {
+        } else if me.firm.subscribed && me.firm.planSource != "apple" {
             Text("This plan is managed on the website.").font(.footnote).foregroundStyle(.secondary)
         } else if me.user.role != "owner" {
             Text("Only the owner can start the plan.").font(.footnote).foregroundStyle(.secondary)
         } else {
             if let price = plan.product?.displayPrice {
                 Button("Subscribe, \(price) a month") { subscribe(me) }.disabled(plan.busy)
-                if let offer = plan.offer { Text("Starts with \(offer).").font(.footnote).foregroundStyle(.secondary) }
             }
             Button("Restore purchases") { restore(me) }.disabled(plan.busy)
         }

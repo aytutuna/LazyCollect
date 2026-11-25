@@ -3,10 +3,11 @@ import CollectKit
 import StoreKit
 import SwiftUI
 
-/// The plan sold through the App Store: one auto-renewing subscription. The purchase carries the firm's account token, and the
-/// Worker is told which transaction it was; the price and the free introductory weeks come from App Store Connect.
+/// The plan sold through the App Store: one auto-renewing subscription, paid from the first day. The purchase carries the
+/// firm's account token, and the Worker is told which transaction it was; the price comes from App Store Connect.
 @MainActor
 final class PlanStore: ObservableObject {
+    static let shared = PlanStore()
     static let productId = "com.lazycollect.lazycollect.plan.monthly"
 
     @Published private(set) var product: Product?
@@ -17,16 +18,34 @@ final class PlanStore: ObservableObject {
         product = try? await Product.products(for: [Self.productId]).first
     }
 
-    var offer: String? {
-        guard let product, let intro = product.subscription?.introductoryOffer, intro.paymentMode == .freeTrial else { return nil }
-        let unit = intro.period.unit
-        let n = intro.period.value
-        switch unit {
-        case .day: return "\(n) free days"
-        case .week: return n == 1 ? "1 free week" : "\(n) free weeks"
-        case .month: return n == 1 ? "1 free month" : "\(n) free months"
-        default: return "A free trial"
+    /// Purchases that finish outside the buy button (Ask to Buy approvals, renewals, one the Worker could not be told about last
+    /// time) arrive here. A transaction is finished only once the Worker has taken it, so one that failed comes again at the next launch.
+    func watch(_ session: ProSession) async {
+        for await result in Transaction.updates {
+            guard let firmId = session.me?.firm.id else { continue }
+            if await attach(result, firmId: firmId, api: session.api) { await session.loadMe() }
         }
+    }
+
+    /// True when the Worker took the transaction. One bought for another account is left alone, unfinished.
+    private func attach(_ result: VerificationResult<Transaction>, firmId: String, api: APIClient) async -> Bool {
+        guard case .verified(let transaction) = result else {
+            message = "The App Store could not confirm the purchase."
+            return false
+        }
+        guard transaction.productID == Self.productId, let token = APIClient.accountToken(firmId: firmId), transaction.appAccountToken?.uuidString.lowercased() == token else { return false }
+        do {
+            try await api.billApple(transaction: String(transaction.id))
+            await transaction.finish()
+            message = nil
+            return true
+        } catch let e as APIError {
+            // the purchase went through at Apple; what failed is telling the Worker, which the next launch or Restore tries again
+            message = e.code == "unavailable" ? "The plan cannot be activated yet. Try again later." : AppModel.words(e)
+        } catch {
+            message = "That did not work. Try again."
+        }
+        return false
     }
 
     /// True when the purchase went through and the Worker has the plan.
@@ -35,28 +54,22 @@ final class PlanStore: ObservableObject {
             message = "The plan is not available right now. Try again later."
             return false
         }
-        guard let token = APIClient.accountToken(firmId: firmId).flatMap({ UUID(uuidString: $0) }) else { return false }
+        guard let token = APIClient.accountToken(firmId: firmId).flatMap({ UUID(uuidString: $0) }) else {
+            message = "This account could not be checked. Sign out and sign in again."
+            return false
+        }
         busy = true
         defer { busy = false }
+        message = nil
         do {
             switch try await product.purchase(options: [.appAccountToken(token)]) {
             case .success(let verification):
-                guard case .verified(let transaction) = verification else {
-                    message = "The App Store could not confirm the purchase."
-                    return false
-                }
-                try await api.billApple(transaction: String(transaction.id))
-                await transaction.finish()
-                message = nil
-                return true
+                return await attach(verification, firmId: firmId, api: api)
             case .pending:
                 message = "The purchase is waiting for approval."
             default:
                 break
             }
-        } catch let e as APIError {
-            // the purchase went through at Apple; what failed is telling the Worker, which restoring tries again
-            message = e.code == "unavailable" ? "The plan cannot be activated yet. Try again later." : AppModel.words(e)
         } catch {
             message = "The purchase did not go through."
         }
@@ -67,20 +80,11 @@ final class PlanStore: ObservableObject {
     func restore(firmId: String, api: APIClient) async -> Bool {
         busy = true
         defer { busy = false }
+        message = nil
         try? await AppStore.sync()
         for await result in Transaction.currentEntitlements {
-            guard case .verified(let transaction) = result, transaction.productID == Self.productId, transaction.appAccountToken.map({ $0.uuidString.lowercased() }) == APIClient.accountToken(firmId: firmId) else { continue }
-            do {
-                try await api.billApple(transaction: String(transaction.id))
-                message = nil
-                return true
-            } catch let e as APIError {
-                message = AppModel.words(e)
-                return false
-            } catch {
-                message = "That did not work. Try again."
-                return false
-            }
+            if await attach(result, firmId: firmId, api: api) { return true }
+            if message != nil { return false }
         }
         message = "No plan was found for this account on this Apple ID."
         return false
