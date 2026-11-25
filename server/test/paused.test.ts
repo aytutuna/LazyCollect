@@ -32,6 +32,16 @@ it("refuses an upload, and takes uploads again after a payment or a fresh trial"
   expect((await upload(path, item, pdf(400))).status).toBe(201);
 });
 
+it("keeps taking uploads from an account that has subscribed while its trial turns into a plan", async () => {
+  const { req, path } = await openRequest();
+  const item = req.items[0].id;
+  await env.CONTROL.prepare("UPDATE firms SET stripe_subscription_id = 'sub_1', plan_status = 'trialing', trial_ends_at = ?").bind(Date.now() - HOUR).run();
+  expect((await upload(path, item, pdf(400))).status).toBe(201);
+  expect((await (await api(path)).json<any>()).paused).toBe(false);
+  await trialEnds(Date.now() - 8 * DAY);
+  expect((await upload(path, item, pdf(400))).status).toBe(402);
+});
+
 it("answers an upload that already arrived, and still takes messages", async () => {
   const { req, path } = await openRequest();
   const item = req.items[0].id;

@@ -1,3 +1,4 @@
+import { classOf, itemFailed } from "./pulse";
 import { sendMail } from "./email";
 import { asked } from "./expand";
 import { usable } from "./firm";
@@ -24,12 +25,13 @@ export type Sender = {
   trial_ends_at: number | null;
   past_due_since: number | null;
   closed_at: number | null;
+  stripe_subscription_id: string | null;
   owner_email: string | null;
 };
 
 export async function sendersOf(env: Env, region: Region, ids: string[]): Promise<Map<string, Sender>> {
   const { results } = await env.CONTROL.prepare(
-    `SELECT f.id, f.name, f.legal_name, f.address, f.phone, f.tz, f.plan_status, f.trial_ends_at, f.past_due_since, f.closed_at,
+    `SELECT f.id, f.name, f.legal_name, f.address, f.phone, f.tz, f.plan_status, f.trial_ends_at, f.past_due_since, f.closed_at, f.stripe_subscription_id,
        (SELECT email FROM users WHERE firm_id = f.id AND role = 'owner' AND disabled_at IS NULL ORDER BY created_at LIMIT 1) AS owner_email
      FROM firms f WHERE f.region = ? AND f.id IN (SELECT value FROM json_each(?))`,
   )
@@ -124,13 +126,14 @@ async function each<T>(rows: T[], fn: (row: T) => Promise<unknown>) {
       await fn(row);
     } catch (e) {
       console.error(e instanceof Error ? e.message : "error");
+      itemFailed(classOf(e));
     }
   }
 }
 
 // the sender list was read before the loop; a close or a lapse in between must still stop the email
 async function stillUsable(env: Env, firmId: string, now: number) {
-  const f = await env.CONTROL.prepare("SELECT plan_status, trial_ends_at, past_due_since, closed_at FROM firms WHERE id = ?").bind(firmId).first<Parameters<typeof usable>[0]>();
+  const f = await env.CONTROL.prepare("SELECT plan_status, trial_ends_at, past_due_since, closed_at, stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<Parameters<typeof usable>[0]>();
   return Boolean(f && usable(f, now));
 }
 
@@ -315,6 +318,7 @@ async function noticePass(env: Env, db: D1Database, now: number) {
       const tries = r.tries + 1;
       const spent = tries >= MAX_NOTICE_TRIES;
       console.error(`owner notice ${tries}/${MAX_NOTICE_TRIES} failed: ${e instanceof Error ? e.message : "error"}`);
+      itemFailed(classOf(e));
       // put the note back so the next run tries again, until the tries are used up
       await db
         .prepare("UPDATE requests SET notified_at = ?, notice_due_at = ?, notice_tries = ? WHERE firm_id = ? AND id = ?")
