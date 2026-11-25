@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { HELD_FOR, openHeld, restoreHeld } from "../src/held";
+import { HELD_FOR, holdFiles, openHeld, restoreHeld } from "../src/held";
 import { purgeExpired } from "../src/purge";
 import { sweepFiles } from "../src/sweep";
 import { DAY, RESTORE_WINDOW } from "../src/util";
@@ -342,6 +342,18 @@ describe("held files", () => {
     expect([await objects(), await heldObjects(), await count("files")]).toEqual([0, 1, 0]);
     expect((await held())[0].file_id).toBe(file.id);
     expect(key).toContain(file.id);
+  });
+
+  it("gives a file removed a second time a fresh 30 days", async () => {
+    const { req, path } = await openRequest();
+    const file = await (await upload(path, req.items[0].id, pdf(500))).json<any>();
+    await api(`${path}/files/${file.id}`, { method: "DELETE" });
+    const [first] = await held();
+    await env.DB_NA.prepare("UPDATE held_files SET expires_at = 5").run();
+    const row = (await env.DB_NA.prepare("SELECT id, firm_id, request_id, item_id, r2_key, name, mime, size, uploaded_by, uploaded_at FROM files").first<any>())!;
+    await env.FILES_NA.put(row.r2_key, new Uint8Array([1]));
+    await holdFiles(env, "na", [row], "removed", first.held_at + 10 * DAY);
+    expect((await held()).map((h) => h.expires_at).sort((a, b) => a - b)).toEqual([5, first.held_at + 10 * DAY + HELD_FOR]);
   });
 
   it("keeps the files of a purged request for 30 more days, readable after the account's key is gone", async () => {

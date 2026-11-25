@@ -27,7 +27,11 @@ export async function holdFiles(env: Env, region: Region, files: FileRow[], reas
   if (!files.length) return;
   const { db, bucket } = regionOf(env, region);
   const keys = new Map<string, string | null>();
-  const done = await db.prepare("SELECT file_id FROM held_files WHERE file_id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(files.map((f) => f.id))).all<{ file_id: string }>();
+  // a copy that has run out its 30 days doesn't count: a file removed again gets a fresh 30
+  const done = await db
+    .prepare("SELECT file_id FROM held_files WHERE expires_at > ? AND file_id IN (SELECT value FROM json_each(?))")
+    .bind(now, JSON.stringify(files.map((f) => f.id)))
+    .all<{ file_id: string }>();
   const held = new Set(done.results.map((r) => r.file_id));
   for (const f of files) {
     if (held.has(f.id)) continue;

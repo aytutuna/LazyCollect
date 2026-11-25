@@ -52,9 +52,11 @@ export async function purgeRequest(env: Env, region: Region, req: Target, reason
   try {
     const prefix = `f/${req.firm_id}/${req.id}/`;
     const { n } = (await db.prepare("SELECT COUNT(*) AS n FROM files WHERE firm_id = ? AND request_id = ?").bind(req.firm_id, req.id).first<{ n: number }>())!;
-    // 30 days in the holding place, so a purge is not the last chance to get a document back
-    const files = await db.prepare(`SELECT ${FILE_COLUMNS} FROM files WHERE firm_id = ? AND request_id = ? AND state = 'live'`).bind(req.firm_id, req.id).all<FileRow>();
-    await holdFiles(env, region, files.results, reason, now);
+    // 30 days in the holding place, so a purge is not the last chance to get a document back; an account being deleted keeps nothing
+    if (reason !== "closed") {
+      const files = await db.prepare(`SELECT ${FILE_COLUMNS} FROM files WHERE firm_id = ? AND request_id = ? AND state = 'live'`).bind(req.firm_id, req.id).all<FileRow>();
+      await holdFiles(env, region, files.results, reason, now);
+    }
     await emptyPrefix(bucket, prefix, () => (touched = true));
     const own = [req.firm_id, req.id] as const;
     const mine = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND purging_at = ?)";

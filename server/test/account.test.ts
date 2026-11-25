@@ -275,6 +275,23 @@ describe("purge of a closed account", () => {
     expect((await env.FILES_NA.list()).objects.length).toBeGreaterThan(0);
   });
 
+  it("takes the copies held for the account and their key with it", async () => {
+    const { cookie, firm } = await withUpload();
+    await env.FILES_NA.put(`held/${firm.id}/one`, new Uint8Array([1]));
+    await env.DB_NA
+      .prepare(
+        `INSERT INTO held_files (id, file_id, firm_id, request_id, item_id, r2_key, held_key, name, mime, size, uploaded_by, uploaded_at, reason, dek_wrapped, held_at, expires_at)
+         VALUES (?1, ?1, ?2, 'r', 'i', 'k', ?3, 'n', 'm', 1, 'client', 1, 'removed', 'gcm1:x', ?4, ?5)`,
+      )
+      .bind("1".repeat(32), firm.id, `held/${firm.id}/one`, Date.now(), Date.now() + 30 * DAY)
+      .run();
+    await close(cookie);
+    await ageClose(31);
+    await purgeClosed(env);
+    expect((await env.FILES_NA.list({ prefix: "held/" })).objects).toHaveLength(0);
+    expect(await count(env.DB_NA, "held_files", firm.id)).toBe(0);
+  });
+
   it("removes everything of the account, the key included", async () => {
     const { cookie, firm } = await withUpload();
     const member = await addMember(cookie);
