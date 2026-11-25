@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { createSession, endSession, holdLogin, type App, type AppEnv } from "./session";
 import { sendLoginEmail } from "./email";
 import { untouchedRegion, untouchedSql, usable } from "./firm";
+import { sendTrialNotice } from "./trial";
 import { htmlHeaders } from "./headers";
 import { isRegion, regionOf, type Region } from "./regions";
 import { DAY, MINUTE, hmac, keyLimited, randomCode, randomId, randomToken, sha256, ipPrefix, FETCH_TIMEOUT_MS } from "./util";
@@ -187,6 +188,10 @@ async function signIn(c: Context<AppEnv>, email: string, app: App | null): Promi
         .bind(firmId, firmId),
     ]);
     user = (await find())!;
+    if (user.firm_id === firmId) {
+      // the account is made and the code was checked; a failed email must not stop the sign-in
+      await sendTrialNotice(c.env, { id: firmId, tz: "America/Toronto", trial_ends_at: now + TRIAL_DAYS * DAY }, "start").catch((e) => console.error(e instanceof Error ? e.message : "error"));
+    }
   }
   if (user.disabled_at) return null;
   const keys = await db

@@ -29,6 +29,7 @@ import { staff } from "./staff";
 import { sweepFiles } from "./sweep";
 import { templates } from "./templates";
 import { trash } from "./trash";
+import { runTrialNotices } from "./trial";
 import { unavailable } from "./unavailable";
 import { unsubscribe } from "./unsubscribe";
 import { uploads } from "./upload";
@@ -140,5 +141,6 @@ export default {
     await step(() => purgeClosed(env, now));
     await step(() => runBatches(env, now));
     await step(() => runReminders(env, now));
+    await step(() => runTrialNotices(env, now));
   },
 };
