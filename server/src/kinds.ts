@@ -124,7 +124,11 @@ async function zipText(b: Uint8Array, e: Entry): Promise<string | null> {
   return new TextDecoder().decode(await new Blob(parts).arrayBuffer());
 }
 
-const MACRO_PART = /(^|\/)vbaProject\.bin$|^xl\/macrosheets\/|^xl\/dialogsheets\//i;
+// parts that carry or can start code, and what an Office file may bring along (embedded workbooks and objects, ActiveX)
+const MACRO_PART = /(^|\/)vbaProject\.bin$|(^|\/)vbaData\.xml$|^xl\/macrosheets\/|^xl\/dialogsheets\/|(^|\/)(embeddings|activeX)\//i;
+// in the content types and the relationships: macro-enabled documents, VBA projects, ActiveX controls and embedded objects
+const MACRO_TYPE = /macroEnabled|vbaProject|vbaData|activeX|oleObject|macrosheet|relationships\/package"/i;
+const MAX_RELS = 200;
 
 async function inZip(b: Uint8Array): Promise<string | "macros" | null> {
   const entries = zipEntries(b);
@@ -140,57 +144,128 @@ async function inZip(b: Uint8Array): Promise<string | "macros" | null> {
   const types = entries.find((e) => e.name === "[Content_Types].xml");
   if (!types) return null;
   if (entries.some((e) => MACRO_PART.test(e.name))) return "macros";
-  // a macro-enabled file names its own main part as such, even with the macro project taken out
-  if (/macroEnabled/i.test((await zipText(b, types)) ?? "")) return "macros";
+  // a part can be renamed, so the content types and every relationship are read for what they say each part is
+  const rels = entries.filter((e) => e.name.endsWith(".rels"));
+  if (rels.length > MAX_RELS) return null;
+  for (const e of [types, ...rels]) {
+    if (MACRO_TYPE.test((await zipText(b, e)) ?? "")) return "macros";
+  }
   if (names.has("xl/workbook.xml")) return `${OFFICE}.spreadsheetml.sheet`;
   if (names.has("word/document.xml")) return `${OFFICE}.wordprocessingml.document`;
   if (names.has("ppt/presentation.xml")) return `${OFFICE}.presentationml.presentation`;
   return null;
 }
 
-// the names of the storages and streams in an old Office file (a compound file); null when it can't be read
-export function oleNames(b: Uint8Array): string[] | null {
+type OleEntry = { name: string; type: number; start: number; size: number };
+type Ole = { b: Uint8Array; size: number; fat: number[]; entries: OleEntry[] };
+
+const LAST = 0xfffffffa;
+
+// A compound file (the old .xls, .doc and .ppt), as far as its directory. Every walk is bounded by the number of sectors the
+// file really has, so a padded or looping table ends instead of running on; null when it can't be read.
+export function oleOpen(b: Uint8Array): Ole | null {
   if (b.length < 512 || ascii(b, 0, 8) !== "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1") return null;
   const shift = u16(b, 0x1e);
   if (shift !== 9 && shift !== 12) return null;
   const size = 1 << shift;
   const sectors = Math.floor(b.length / size);
   const at = (id: number) => (id + 1) * size;
-  const last = 0xfffffffa;
+  const inside = (id: number) => id < sectors && at(id) + size <= b.length;
+  const numFat = u32(b, 0x2c);
+  if (numFat > sectors) return null;
   const fatIds: number[] = [];
   for (let i = 0; i < 109; i++) fatIds.push(u32(b, 0x4c + i * 4));
+  const seen = new Set<number>();
   let difat = u32(b, 0x44);
-  for (let n = u32(b, 0x48); n > 0 && difat < last; n--) {
-    if (at(difat) + size > b.length) return null;
+  for (let n = Math.min(u32(b, 0x48), sectors); n > 0 && difat < LAST; n--) {
+    if (!inside(difat) || seen.has(difat)) return null;
+    seen.add(difat);
     for (let i = 0; i < size / 4 - 1; i++) fatIds.push(u32(b, at(difat) + i * 4));
     difat = u32(b, at(difat) + size - 4);
   }
   const fat: number[] = [];
-  for (const id of fatIds.slice(0, u32(b, 0x2c))) {
-    if (id >= last || at(id) + size > b.length) return null;
+  for (const id of fatIds.slice(0, numFat)) {
+    if (!inside(id)) return null;
     for (let i = 0; i < size / 4; i++) fat.push(u32(b, at(id) + i * 4));
   }
-  const names: string[] = [];
+  const entries: OleEntry[] = [];
   let sector = u32(b, 0x30);
-  for (let hops = 0; sector < last; hops++) {
-    if (hops > sectors || at(sector) + size > b.length) return null;
+  for (let hops = 0; sector < LAST; hops++) {
+    if (hops > sectors || !inside(sector)) return null;
     for (let e = at(sector); e < at(sector) + size; e += 128) {
       const type = b[e + 66];
       const len = u16(b, e + 64);
-      if ((type === 1 || type === 2 || type === 5) && len >= 2 && len <= 64) names.push(new TextDecoder("utf-16le").decode(b.subarray(e, e + len - 2)));
+      if ((type === 1 || type === 2 || type === 5) && len >= 2 && len <= 64) {
+        entries.push({ name: new TextDecoder("utf-16le").decode(b.subarray(e, e + len - 2)), type, start: u32(b, e + 116), size: u32(b, e + 120) });
+      }
     }
-    sector = fat[sector] ?? last;
+    sector = fat[sector] ?? LAST;
   }
-  return names.length ? names : null;
+  return entries.length ? { b, size, fat, entries } : null;
 }
 
+// a chain of sectors, never longer than the table can hold
+function chain(start: number, next: number[], limit: number): number[] | null {
+  const out: number[] = [];
+  for (let id = start; id < LAST; id = next[id] ?? LAST) {
+    if (out.length >= limit) return null;
+    out.push(id);
+  }
+  return out;
+}
+
+function stream(o: Ole, e: OleEntry): Uint8Array | null {
+  const { b, size, fat } = o;
+  const sectors = Math.floor(b.length / size);
+  const regular = (start: number, length: number) => {
+    const ids = chain(start, fat, sectors);
+    if (!ids || ids.some((id) => id >= sectors) || ids.length * size < length) return null;
+    const out = new Uint8Array(length);
+    ids.forEach((id, i) => out.set(b.subarray((id + 1) * size, (id + 2) * size).subarray(0, Math.max(0, Math.min(size, length - i * size))), i * size));
+    return out;
+  };
+  if (e.size >= 4096) return regular(e.start, e.size);
+  // a short stream lives in the mini stream, 64-byte pieces inside the root's own stream
+  const root = o.entries.find((x) => x.type === 5);
+  if (!root || root.size > b.length) return null;
+  const container = regular(root.start, root.size);
+  const table = regular(u32(b, 0x3c), u32(b, 0x40) * size);
+  if (!container || !table) return null;
+  const mini = Array.from({ length: table.length / 4 }, (_, i) => u32(table, i * 4));
+  const ids = chain(e.start, mini, mini.length);
+  if (!ids || ids.length * 64 < e.size) return null;
+  const out = new Uint8Array(e.size);
+  ids.forEach((id, i) => out.set(container.subarray(id * 64, id * 64 + 64).subarray(0, Math.max(0, Math.min(64, e.size - i * 64))), i * 64));
+  return out;
+}
+
+// Excel 4.0 (XLM) macros live in sheets of the macro kind, listed in the workbook's first stretch of records
+function hasMacroSheet(book: Uint8Array): boolean {
+  for (let at = 0; at + 4 <= book.length; ) {
+    const type = u16(book, at);
+    const length = u16(book, at + 2);
+    if (type === 0x000a) return false;
+    // BOUNDSHEET: the sheet's kind is the second byte after the 4-byte position; 1 is a macro sheet and 6 a VBA module
+    if (type === 0x0085 && length >= 6 && [1, 6].includes(book[at + 4 + 5] & 0x0f)) return true;
+    at += 4 + length;
+  }
+  return false;
+}
+
+// Old Office files are only taken when nothing in them can be shown to run code: no VBA storage whatever its case, no macro
+// sheet, and a workbook that can be read through to prove it.
 function inOle(b: Uint8Array): string | "macros" | null {
-  const names = oleNames(b);
-  if (!names) return null;
-  if (names.some((n) => n === "VBA" || n === "_VBA_PROJECT" || n === "_VBA_PROJECT_CUR" || n === "Macros")) return "macros";
-  if (names.includes("Workbook") || names.includes("Book")) return "application/vnd.ms-excel";
-  if (names.includes("WordDocument")) return "application/msword";
-  if (names.includes("PowerPoint Document")) return "application/vnd.ms-powerpoint";
+  const o = oleOpen(b);
+  if (!o) return null;
+  const names = o.entries.map((e) => e.name.toLowerCase());
+  if (names.some((n) => n === "vba" || n === "macros" || n.startsWith("_vba_project") || n === "_macrostorage" || n === "xlm")) return "macros";
+  const book = o.entries.find((e) => e.type === 2 && (e.name === "Workbook" || e.name === "Book"));
+  if (book) {
+    const data = stream(o, book);
+    return !data || hasMacroSheet(data) ? "macros" : "application/vnd.ms-excel";
+  }
+  if (names.includes("worddocument")) return "application/msword";
+  if (names.includes("powerpoint document")) return "application/vnd.ms-powerpoint";
   return null;
 }
 

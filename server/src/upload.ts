@@ -121,11 +121,14 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
     const family = familyOf(first, rawName);
     if (!family) return c.json({ error: "unsupported_type" }, 415);
     // office, open document and text files are read whole: a zip lists its parts at the end, and macros hide inside
-    const rest = await source.read(length - first.length);
-    if (first.length + rest.length !== length) return invalid(c);
     const whole = new Uint8Array(length);
     whole.set(first);
-    whole.set(rest, first.length);
+    for (let at = first.length; at < length; ) {
+      const piece = await source.read(Math.min(CHUNK, length - at));
+      if (!piece.length) return invalid(c);
+      whole.set(piece, at);
+      at += piece.length;
+    }
     const found = await inspect(family, whole, rawName);
     if (found === "macros") return c.json({ error: "macros" }, 415);
     if (!found) return c.json({ error: "unsupported_type" }, 415);

@@ -32,9 +32,13 @@ const docx = () => zip([["[Content_Types].xml", types(`${OFFICE}.wordprocessingm
 const pptx = () => zip([["[Content_Types].xml", types(`${OFFICE}.presentationml.presentation.main+xml`)], ["ppt/presentation.xml", "<p/>"]]);
 const ods = (extra: [string, string][] = []) => zip([["mimetype", "application/vnd.oasis.opendocument.spreadsheet"], ["content.xml", "<c/>"], ...extra]);
 
-// a compound file with a root and up to three named streams, in 512-byte sectors: the header, one FAT sector and one directory sector
-function ole(streams: string[]): Uint8Array {
-  const b = new Uint8Array(512 * 3);
+// a compound file with a root and up to three named streams, in 512-byte sectors: the header, one FAT sector and one directory
+// sector, then the workbook stream if one is given (padded to the 4,096 bytes a stream needs to sit outside the mini stream)
+function ole(streams: string[], workbook?: Uint8Array): Uint8Array {
+  const data = workbook && new Uint8Array(Math.max(4096, workbook.length));
+  data?.set(workbook!);
+  const used = data ? Math.ceil(data.length / 512) : 0;
+  const b = new Uint8Array(512 * (3 + used));
   const set = (at: number, v: number[]) => b.set(v, at);
   set(0, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
   set(0x18, [...u16(0x3e), ...u16(3), ...u16(0xfffe), ...u16(9), ...u16(6)]);
@@ -47,13 +51,33 @@ function ole(streams: string[]): Uint8Array {
   set(0x4c, u32(0));
   b.fill(0xff, 512, 1024);
   set(512, [...u32(0xfffffffd), ...u32(0xfffffffe)]);
+  for (let i = 0; i < used; i++) set(512 + (2 + i) * 4, u32(i === used - 1 ? 0xfffffffe : 3 + i));
+  if (data) b.set(data, 512 * 3);
   ["Root Entry", ...streams].slice(0, 4).forEach((name, i) => {
     const at = 1024 + i * 128;
     const units = [...name].flatMap((ch) => u16(ch.charCodeAt(0)));
     set(at, units);
     set(at + 64, u16(units.length + 2));
     b[at + 66] = i === 0 ? 5 : 2;
+    if (name === "Workbook" && data) set(at + 116, [...u32(2), ...u32(data.length)]);
   });
+  return b;
+}
+
+// the records an Excel file starts with: the start of the file, one sheet of the given kind, the end of that stretch
+function biff(sheet: number): Uint8Array {
+  const record = (type: number, body: number[]) => [...u16(type), ...u16(body.length), ...body];
+  return new Uint8Array([...record(0x0809, [0, 6, 5, 0]), ...record(0x0085, [...u32(0), 0, sheet, 83, 104]), ...record(0x000a, [])]);
+}
+
+// a small compound file whose DIFAT chain loops on itself and claims thousands of sectors
+function cyclic(): Uint8Array {
+  const b = ole(["Workbook"]);
+  b.set(u32(1), 0x44);
+  b.set(u32(5000), 0x48);
+  b.set(u32(1), 0x44);
+  b.set(u32(5000), 0x2c);
+  b.set(u32(1), 512 + 508);
   return b;
 }
 
@@ -69,7 +93,7 @@ describe("file kinds", () => {
     const cases: [string, Uint8Array, string][] = [
       ["a.xlsx", await xlsx(), `${OFFICE}.spreadsheetml.sheet`],
       ["a.docx", await docx(), `${OFFICE}.wordprocessingml.document`],
-      ["a.xls", ole(["Workbook"]), "application/vnd.ms-excel"],
+      ["a.xls", ole(["Workbook"], biff(0)), "application/vnd.ms-excel"],
       ["a.doc", ole(["WordDocument"]), "application/msword"],
       ["a.csv", text("name,amount\nCôté,12\n"), "text/csv"],
     ];
@@ -96,9 +120,18 @@ describe("file kinds", () => {
       ["c.xlsx", await xlsx([["xl/macrosheets/sheet1.xml", "<m/>"]])],
       ["d.xlsx", await zip([["[Content_Types].xml", types("application/vnd.ms-excel.sheet.macroEnabled.main+xml")], ["xl/workbook.xml", "<w/>"]], ["[Content_Types].xml"])],
       ["e.docm", await zip([["[Content_Types].xml", types("application/vnd.ms-word.document.macroEnabled.main+xml")], ["word/document.xml", "<d/>"]])],
-      ["f.xls", ole(["Workbook", "_VBA_PROJECT_CUR"])],
+      ["f.xls", ole(["Workbook", "_VBA_PROJECT_CUR"], biff(0))],
+      ["f2.xls", ole(["Workbook", "_vba_project_cur"], biff(0))],
+      ["f3.xls", ole(["Workbook"], biff(1))],
+      ["f4.xls", ole(["Workbook"], biff(6))],
+      ["f5.xls", ole(["Workbook"])],
+      ["f6.ppt", ole(["PowerPoint Document", "VBA"])],
       ["g.doc", ole(["WordDocument", "Macros"])],
       ["h.ods", await ods([["Basic/Standard/Module1.xml", "x"]])],
+      ["j.xlsx", await xlsx([["xl/blob.bin", "x"]], "application/vnd.ms-office.vbaProject")],
+      ["k.xlsx", await xlsx([["xl/_rels/workbook.xml.rels", '<Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject" Target="x"/>']])],
+      ["l.xlsx", await xlsx([["xl/embeddings/a.xlsx", "x"]])],
+      ["m.xlsx", await xlsx([["xl/activeX/activeX1.xml", "x"]])],
     ];
     for (const [name, body] of refused) {
       const res = await put(o.path, item, body, name);
@@ -120,6 +153,7 @@ describe("file kinds", () => {
       ["f.exe", text("MZ plain")],
       ["g", text("name,amount\n")],
       ["h.xls", ole(["Contents"])],
+      ["i.xls", cyclic()],
     ];
     for (const [name, body] of refused) {
       const res = await put(o.path, item, body, name);
