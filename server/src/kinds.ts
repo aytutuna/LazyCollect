@@ -244,8 +244,6 @@ function xmlText(bytes: Uint8Array, partial = false): string | null {
 // start, elements with quoted attributes (case-sensitive names, none repeated), whitespace between them, and matching end tags.
 // Comments, processing instructions, declarations, CDATA, text, stray "<" or "&" and unbalanced tags make the part unreadable,
 // so the check and Office can't see different relationships in it.
-type XNode = { name: string; attrs: Map<string, string>; children: XNode[] };
-
 const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 
 // an attribute value with its references decoded and look-alike letters folded; null for a stray "&" or a bad character
@@ -266,18 +264,28 @@ function value(raw: string): string | null {
   return bad ? null : swapped.normalize("NFKC");
 }
 
+// How much of an xml part will be looked at: tags nested no deeper than the root and one level of children, elements and
+// attributes in numbers no real part comes near.
+const MAX_ELEMENTS = 10_000;
+const MAX_ATTRS = 32;
+const MAX_NAME = 256;
+
 const XML_SPACE = /[ \t\r\n]/;
 const NAME = /[^\s<>/=!?"'&;:][^\s<>/=!?"'&;]*/y;
 export const localName = (n: string) => n.slice(n.lastIndexOf(":") + 1);
 
-// With firstChildOnly the part may be cut short: reading stops once the root's first child has been read, and its tag is the last
-// thing that has to be well formed.
-function parseXml(text: string, firstChildOnly = false): XNode | null {
+type Visit = (depth: number, name: string, attrs: Map<string, string>) => "go" | "stop" | "refuse";
+
+// Reads the part start tag by start tag, calling `visit` for each, and builds no tree: it refuses at the first tag that nests
+// deeper than the root and one level of children, at the 10,001st element, or at the 33rd attribute, so a part made of millions
+// of tags costs no more than the first few thousand. Returns true when the part was read to its end (or the visitor stopped it).
+function scanXml(text: string, visit: Visit): boolean {
   let at = 0;
   const decl = /^<\?xml[ \t\r\n][^<>]*\?>/.exec(text);
   if (decl) at = decl[0].length;
-  const top: XNode = { name: "", attrs: new Map(), children: [] };
-  const stack: XNode[] = [top];
+  const open: string[] = [];
+  let roots = 0;
+  let count = 0;
   const skip = () => {
     const from = at;
     while (at < text.length && XML_SPACE.test(text[at])) at++;
@@ -286,27 +294,28 @@ function parseXml(text: string, firstChildOnly = false): XNode | null {
   const name = () => {
     NAME.lastIndex = at;
     const m = NAME.exec(text);
-    if (!m) return null;
+    if (!m || m[0].length > MAX_NAME) return null;
     at += m[0].length;
     return m[0];
   };
   for (;;) {
     skip();
     if (at >= text.length) break;
-    if (text[at++] !== "<") return null;
+    if (text[at++] !== "<") return false;
     if (text[at] === "/") {
       at++;
       const n = name();
-      if (!n || stack.length < 2 || stack[stack.length - 1].name !== n) return null;
+      if (!n || open[open.length - 1] !== n) return false;
       skip();
-      if (text[at++] !== ">") return null;
-      stack.pop();
+      if (text[at++] !== ">") return false;
+      open.pop();
       continue;
     }
-    if (text[at] === "!" || text[at] === "?") return null;
+    if (text[at] === "!" || text[at] === "?") return false;
     const n = name();
-    if (!n) return null;
-    const node: XNode = { name: n, attrs: new Map(), children: [] };
+    if (!n || open.length >= 2 || ++count > MAX_ELEMENTS) return false;
+    if (open.length === 0 && ++roots > 1) return false;
+    const attrs = new Map<string, string>();
     let empty = false;
     for (;;) {
       const spaced = skip();
@@ -320,24 +329,57 @@ function parseXml(text: string, firstChildOnly = false): XNode | null {
         break;
       }
       const key = spaced ? name() : null;
-      if (!key || node.attrs.has(key)) return null;
+      if (!key || attrs.has(key) || attrs.size >= MAX_ATTRS) return false;
       skip();
-      if (text[at++] !== "=") return null;
+      if (text[at++] !== "=") return false;
       skip();
       const quote = text[at++];
-      if (quote !== '"' && quote !== "'") return null;
+      if (quote !== '"' && quote !== "'") return false;
       const close = text.indexOf(quote, at);
-      if (close < 0) return null;
+      if (close < 0) return false;
       const v = value(text.slice(at, close));
-      if (v === null) return null;
-      node.attrs.set(key, v);
+      if (v === null) return false;
+      attrs.set(key, v);
       at = close + 1;
     }
-    stack[stack.length - 1].children.push(node);
-    if (firstChildOnly && stack.length === 2) return top.children[0];
-    if (!empty) stack.push(node);
+    const verdict = visit(open.length + 1, n, attrs);
+    if (verdict === "refuse") return false;
+    if (verdict === "stop") return true;
+    if (!empty) open.push(n);
   }
-  return !firstChildOnly && stack.length === 1 && top.children.length === 1 ? top.children[0] : null;
+  return open.length === 0 && roots === 1;
+}
+
+// the root and its children of a package's content types or relationships; null when anything else is in it
+function childrenOf(text: string, root: string, child: (tag: string) => boolean): Map<string, string>[] | null {
+  const out: Map<string, string>[] = [];
+  let ok = true;
+  const done = scanXml(text, (depth, name, attrs) => {
+    if (depth === 1) {
+      ok = localName(name) === root;
+      return ok ? "go" : "refuse";
+    }
+    // a child holds nothing of its own, and its attributes are plain names, apart from namespace declarations
+    ok = child(localName(name)) && [...attrs.keys()].every((k) => !k.includes(":") || k.startsWith("xmlns:"));
+    if (ok) out.push(attrs);
+    return ok ? "go" : "refuse";
+  });
+  return done && ok ? out : null;
+}
+
+// the local names of the root and of its first child, from the start of a part that may be cut short
+function rootAndFirstChild(text: string): { root: string; child: string } | null {
+  let root = "";
+  let child = "";
+  scanXml(text, (depth, name) => {
+    if (depth === 1) {
+      root = localName(name);
+      return "go";
+    }
+    child = localName(name);
+    return "stop";
+  });
+  return root && child ? { root, child } : null;
 }
 
 // parts that carry or can start code
@@ -428,13 +470,12 @@ async function check(b: Uint8Array, depth: number, budget: Budget): Promise<Verd
     if ((budget.xml -= e.size) < 0) return BAD;
     const bytes = await bytesOf(b, e, XML_PART, budget);
     const text = bytes && xmlText(bytes);
-    const tree = text ? parseXml(text) : null;
     const isTypes = e === types;
-    if (!tree || localName(tree.name) !== (isTypes ? "Types" : "Relationships")) return BAD;
-    for (const item of tree.children) {
-      const tag = localName(item.name);
-      if (item.children.length || !(isTypes ? tag === "Default" || tag === "Override" : tag === "Relationship")) return BAD;
-      const attrs = item.attrs;
+    const list = text ? childrenOf(text, isTypes ? "Types" : "Relationships", (tag) => (isTypes ? tag === "Default" || tag === "Override" : tag === "Relationship")) : null;
+    if (!list) return BAD;
+    for (const attrs of list) {
+      // nothing is trimmed on the way: a value that begins or ends in white space is not one Office would read the same way
+      if (["Type", "Target", "TargetMode", "ContentType"].some((k) => /^\s|\s$/u.test(attrs.get(k) ?? ""))) return BAD;
       const kind = (isTypes ? attrs.get("ContentType") : attrs.get("Type")) ?? "";
       if (CHUNK.test(kind)) chunk = true;
       if (MACRO_TYPE.test(kind)) return MACROS;
@@ -456,10 +497,9 @@ async function check(b: Uint8Array, depth: number, budget: Budget): Promise<Verd
     if (!linked.has(e.name.toLowerCase()) && !/(^|\/)externalLinks\/[^/]+\.xml$/iu.test(e.name)) continue;
     const bytes = await peek(b, e, Math.min(e.size, PEEK));
     const text = bytes && xmlText(bytes, true);
-    const root = text === null || !bytes ? null : parseXml(text, true);
-    const child = localName(root?.children[0]?.name ?? "");
-    if (child === "ddeLink" || child === "oleLink") return MACROS;
-    if (!root || localName(root.name) !== "externalLink" || child !== "externalBook") return BAD;
+    const found = text === null || !bytes ? null : rootAndFirstChild(text);
+    if (found && (found.child === "ddeLink" || found.child === "oleLink")) return MACROS;
+    if (!found || found.root !== "externalLink" || found.child !== "externalBook") return BAD;
   }
 
   for (const e of entries) {

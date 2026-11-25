@@ -493,3 +493,65 @@ describe("one strict reader for the small xml parts", () => {
     refused(await run(await link(`<externalLink><ddeLink/></externalLink>`), "a.xlsx"));
   });
 });
+
+describe("the xml reader is bounded and trims nothing", () => {
+  const RNS = "http://schemas.openxmlformats.org/package/2006/relationships";
+  const CNS = "http://schemas.openxmlformats.org/package/2006/content-types";
+  const CRLF = String.fromCharCode(13, 10);
+  const TAB = String.fromCharCode(9);
+  const doc = (ct: string | Uint8Array, relsXml: string | Uint8Array) =>
+    zip([
+      { name: "[Content_Types].xml", body: ct },
+      { name: "word/document.xml", body: "<d/>" },
+      { name: "word/settings.xml", body: "<w:settings/>" },
+      { name: "word/_rels/settings.xml.rels", body: relsXml },
+    ]);
+  const r = (inner: string) => `<?xml version="1.0"?><Relationships xmlns="${RNS}">${inner}</Relationships>`;
+  const ct = types(DOCX_CT);
+
+  it("still takes every spelling Office uses", async () => {
+    const decl = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    const ctOk = `${decl}${CRLF}<Types xmlns="${CNS}"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension='xml' ContentType='application/xml'/>${CRLF}${TAB}<Override${CRLF}${TAB}PartName="/word/document.xml"${TAB}ContentType="${OFFICE}.wordprocessingml.document.main+xml" />${CRLF}</Types>${CRLF}`;
+    const rOk = `${decl}${CRLF}<Relationships xmlns="${RNS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/a?b=1&amp;c=&#x1F600;" TargetMode="External"/><Relationship Id='rId2' Type='${TPL}' Target='file:///C:${BS}Users${BS}a${BS}Templates${BS}Firm%20Letter.dotx' TargetMode='External'></Relationship></Relationships>`;
+    accepted(await run(await doc(ctOk, rOk)));
+    accepted(await run(await doc(new Uint8Array([0xef, 0xbb, 0xbf, ...enc(ctOk)]), rOk)));
+    const u16 = (s: string) => new Uint8Array([0xff, 0xfe, ...[...s].flatMap((c) => [c.charCodeAt(0) & 255, c.charCodeAt(0) >> 8])]);
+    accepted(await run(await doc(u16(ctOk.replace("UTF-8", "UTF-16")), u16(rOk.replace("UTF-8", "UTF-16").replace("&#x1F600;", "")))));
+    accepted(await run(await doc(ctOk, `<Relationships xmlns="${RNS}"><Relationship Id="rId1" Type="http://purl.oclc.org/ooxml/officeDocument/relationships/styles" Target="styles.xml"/></Relationships>`)));
+    accepted(await run(await doc(ctOk, `<r:Relationships xmlns:r="${RNS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac"><r:Relationship Id="rId1" Type="http://x/hyperlink" Target="a"/></r:Relationships>`)));
+    accepted(await run(await doc(ctOk, `<Relationships xmlns="${RNS}"/>`)));
+  });
+
+  it("trims nothing: a value that starts or ends in white space is refused", async () => {
+    refused(await run(await doc(ct, r(`<Relationship Id="a" Type="${TPL} " Target="https://evil.example/t.dotm" TargetMode="External"/>`))));
+    refused(await run(await doc(ct, r(`<Relationship Id="a" Type=" ${TPL}" Target="https://evil.example/t.dotm" TargetMode="External"/>`))));
+    refused(await run(await doc(ct, r(`<Relationship Id="a" Type="${TPL}&#10;" Target="https://evil.example/t.dotm" TargetMode="External"/>`))));
+    refused(await run(await doc(ct, r(`<Relationship Id="a" Type="http://x/hyperlink" Target=" a" TargetMode="External"/>`))));
+  });
+
+  it("takes no attribute in another namespace on a relationship or a type, other than a namespace declaration", async () => {
+    refused(await run(await doc(ct, `<Relationships xmlns="${RNS}" xmlns:q="${RNS}"><Relationship Id="a" q:Type="${TPL}" Type="http://x/hyperlink" Target="https://evil"/></Relationships>`)));
+    accepted(await run(await doc(ct, `<Relationships xmlns="${RNS}"><Relationship xmlns:q="x" Id="a" Type="http://x/hyperlink" Target="a"/></Relationships>`)));
+  });
+
+  it("refuses spellings that hide a type or a target, and an oversized name", async () => {
+    refused(await run(await doc(ct, r(`<Relationship Id="a" Type="http:&#x2F;&#x2f;schemas.openxmlformats.org/officeDocument/2006/relationships/attached&#x0000054;emplate" Target="https:&#47;/evil" TargetMode="External"/>`))));
+    refused(await run(await doc(ct, r(`<Relationship Id="a"Type="${TPL}" Target="https://evil"/>`))));
+    refused(await run(await doc(ct, `<?xml version="1.0" encoding="UTF-16"?>` + r(`<Relationship Id="a" Type="${TPL}" Target="https://evil"/>`).replace(/^<\?xml[^>]*>/, ""))));
+    refused(await run(await doc(ct, r(`<Relationship ${"x".repeat(100000)}="1" Id="a" Type="http://x/hyperlink" Target="a"/>`))));
+    refused(await run(await doc(ct, `<Relationships xmlns="${RNS}" xmlns:\u{1F600}="${RNS}"><\u{1F600}:Relationship Id="a" Type="${TPL}" Target="https://evil"/></Relationships>`)));
+  });
+
+  it("stops at the first tag that nests too deep or the first thousands of elements, without building a tree", async () => {
+    const flat = `<Types xmlns="${CNS}">` + "<a/>".repeat(500_000) + "</Types>";
+    refused(await timed(async () => run(await doc(flat, `<Relationships xmlns="${RNS}"/>`)), 5000));
+    const deep = `<Types xmlns="${CNS}">` + "<a>".repeat(600_000);
+    refused(await timed(async () => run(await doc(deep, `<Relationships xmlns="${RNS}"/>`)), 5000));
+    const nested = `<Types xmlns="${CNS}"><Default Extension="xml" ContentType="application/xml"><x/></Default></Types>`;
+    refused(await run(await doc(nested, `<Relationships xmlns="${RNS}"/>`)));
+    const attrs = `<Types xmlns="${CNS}"><Default ` + Array.from({ length: 150_000 }, (_, i) => `a${i}=""`).join(" ") + "/></Types>";
+    refused(await timed(async () => run(await doc(attrs, `<Relationships xmlns="${RNS}"/>`)), 5000));
+    const many = `<Types xmlns="${CNS}">` + Array.from({ length: 10_001 }, (_, i) => `<Override PartName="/p${i}.xml" ContentType="application/xml"/>`).join("") + "</Types>";
+    refused(await run(await doc(many, `<Relationships xmlns="${RNS}"/>`)));
+  });
+});
