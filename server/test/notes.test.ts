@@ -195,7 +195,7 @@ describe("the account's side of the thread", () => {
     const row = (await env.DB_NA.prepare("SELECT firm_id, client_id FROM requests").first<any>())!;
     await env.DB_NA
       .prepare(
-        `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 50)
+        `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200)
          INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at)
          SELECT lower(hex(randomblob(16))), ?, ?, ?, 'email', 'rejected', 100 + i, 1, 'x', 'sent', 1, ? FROM n`,
       )

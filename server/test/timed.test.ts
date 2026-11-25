@@ -25,6 +25,32 @@ describe("timed run watch", () => {
     expect(await res.json<any>()).toMatchObject({ ok: true, last_good_run: expect.any(Number) });
   });
 
+  it("runs a step with a longer period only on its minutes, and records only the steps that ran", async () => {
+    const ran: string[] = [];
+    const every10: Step = ["slow", async () => void ran.push("slow"), 10];
+    const each: Step = ["fast", async () => void ran.push("fast")];
+    await runTimed(env, 7 * 10 * MINUTE + 3 * MINUTE, [every10, each]);
+    expect(ran).toEqual(["fast"]);
+    expect((await status()).slow).toBeUndefined();
+    await runTimed(env, 8 * 10 * MINUTE, [every10, each]);
+    expect(ran).toEqual(["fast", "slow", "fast"]);
+  });
+
+  it("does nothing while the last run is still working, and takes over from one that died", async () => {
+    const ran: string[] = [];
+    const step: Step = ["step", async () => void ran.push("ran")];
+    const now = Date.now();
+    await env.CONTROL.prepare("INSERT INTO timed_status (step, ok_at) VALUES ('lock', ?)").bind(now - 2 * MINUTE).run();
+    await runTimed(env, now, [step]);
+    expect(ran).toEqual([]);
+    await env.CONTROL.prepare("UPDATE timed_status SET ok_at = ? WHERE step = 'lock'").bind(now - 11 * MINUTE).run();
+    await runTimed(env, now, [step]);
+    expect(ran).toEqual(["ran"]);
+    // finished, so the next run is not held back
+    await runTimed(env, now + MINUTE, [step]);
+    expect(ran).toEqual(["ran", "ran"]);
+  });
+
   it("has no good pass to name before the first one", async () => {
     expect(await lastGoodRun(env)).toEqual({ last_good_run: null, age_minutes: null });
   });

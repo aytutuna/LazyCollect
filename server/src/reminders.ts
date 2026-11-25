@@ -12,6 +12,8 @@ import { DAY, HOUR, MINUTE } from "./util";
 const MAX_NOTICE_TRIES = 3;
 
 const BATCH = 100;
+// reminders and sent-back emails one run may send; the run starts every minute, and the rest wait for the next one
+export const PER_RUN = 60;
 const REJECT_QUIET = 10 * MINUTE;
 
 export type Sender = {
@@ -110,12 +112,16 @@ async function markStops(env: Env, db: D1Database, rows: Row[]) {
   });
 }
 
+type Room = { left: number };
+
+// notices first, then the emails to clients, which share the run's room
 export async function runReminders(env: Env, now = Date.now()) {
+  const room: Room = { left: PER_RUN };
   for (const region of regionIds) {
     const { db } = regionOf(env, region);
-    await remindPass(env, region, db, now);
-    await rejectedPass(env, region, db, now);
     await noticePass(env, db, now);
+    await rejectedPass(env, region, db, now, room);
+    await remindPass(env, region, db, now, room);
   }
 }
 
@@ -137,14 +143,15 @@ async function stillUsable(env: Env, firmId: string, now: number) {
   return Boolean(f && usable(f, now));
 }
 
-async function remindPass(env: Env, region: Region, db: D1Database, now: number) {
+async function remindPass(env: Env, region: Region, db: D1Database, now: number, room: Room) {
+  if (room.left <= 0) return;
   const { results } = await db
     .prepare(
       `SELECT ${ROW}, r.reminder_seq AS seq ${JOIN}
        WHERE r.next_reminder_at <= ? AND r.status = 'open' AND r.reminders_on = 1 AND r.deleted_at IS NULL
-       ORDER BY r.next_reminder_at LIMIT ${BATCH}`,
+       ORDER BY r.next_reminder_at LIMIT ?`,
     )
-    .bind(now)
+    .bind(now, room.left)
     .all<Row>();
   await markStops(env, db, results);
   const senders = await sendersOf(env, region, results.map((r) => r.firm_id));
@@ -210,6 +217,7 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
     if (outcome === "capped") return move(now + HOUR);
     if (outcome === "later") busy = true;
     if (outcome === "failed" || outcome === "busy" || outcome === "later") return;
+    if (outcome === "sent") room.left--;
     await db
       .prepare("UPDATE requests SET reminder_seq = ?, next_reminder_at = ? WHERE firm_id = ? AND id = ? AND reminder_seq = ?")
       .bind(r.seq + 1, kind === "deadline" ? null : nextReminder(now, r.deadline, tz, false), r.firm_id, r.id, r.seq)
@@ -218,13 +226,14 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
 }
 
 // Rejections are held for a quiet spell so several in a row go out as one email.
-async function rejectedPass(env: Env, region: Region, db: D1Database, now: number) {
+async function rejectedPass(env: Env, region: Region, db: D1Database, now: number, room: Room) {
+  if (room.left <= 0) return;
   const { results } = await db
     .prepare(
       `SELECT ${ROW}, r.rejected_seq AS seq, r.reject_mark_at AS mark, r.status ${JOIN}
-       WHERE r.reject_mark_at <= ? AND r.deleted_at IS NULL ORDER BY r.reject_mark_at LIMIT ${BATCH}`,
+       WHERE r.reject_mark_at <= ? AND r.deleted_at IS NULL ORDER BY r.reject_mark_at LIMIT ?`,
     )
-    .bind(now - REJECT_QUIET)
+    .bind(now - REJECT_QUIET, room.left)
     .all<Row & { status: string }>();
   await markStops(env, db, results);
   const senders = await sendersOf(env, region, results.map((r) => r.firm_id));
@@ -266,6 +275,7 @@ async function rejectedPass(env: Env, region: Region, db: D1Database, now: numbe
     if (outcome === "capped") return hold(now + HOUR);
     if (outcome === "later") busy = true;
     if (outcome === "failed" || outcome === "busy" || outcome === "later") return;
+    if (outcome === "sent") room.left--;
     await db
       .prepare(
         `UPDATE requests SET rejected_seq = ?, reject_mark_at = CASE WHEN reject_mark_at = ? THEN NULL ELSE reject_mark_at END

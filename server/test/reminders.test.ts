@@ -726,17 +726,46 @@ describe("email caps", () => {
     expect(sent).toHaveLength(1);
   });
 
-  it("stops a trial account at 50 emails a day and a subscribed one at 500", async () => {
-    const { cookie, req, client } = await ready();
+  // staff invitations count with the invitations to clients
+  const staffMail = (count: number, sentAt: number) =>
+    env.DB_NA.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${count})
+       INSERT INTO staff_mail (id, firm_id, sent_at) SELECT lower(hex(randomblob(16))), (SELECT firm_id FROM requests), ?1 FROM n`,
+    )
+      .bind(sentAt)
+      .run();
+
+  it("stops a trial account at 50 invitations a day and a subscribed one at 500", async () => {
+    const { cookie, req } = await ready();
     mockOutbound();
-    await fill(req.id, client.id, 50, Date.now() - HOUR);
+    await staffMail(50, Date.now() - HOUR);
     const res = await invite(cookie, req.id);
     expect(res.status).toBe(429);
     expect((await res.json<any>()).error).toBe("email_limit");
     await env.CONTROL.prepare("UPDATE firms SET stripe_subscription_id = 'sub_1'").run();
     expect((await invite(cookie, req.id)).status).toBe(200);
-    await fill(req.id, client.id, 450, Date.now() - HOUR, 1000);
+    await staffMail(449, Date.now() - HOUR);
     expect((await invite(cookie, req.id)).status).toBe(429);
+  });
+
+  it("counts reminders and notes apart from invitations: 200 a day on a trial, 2,000 once subscribed", async () => {
+    const { cookie, req, client } = await ready();
+    mockOutbound();
+    await fill(req.id, client.id, 200, Date.now() - HOUR);
+    expect((await invite(cookie, req.id)).status).toBe(200);
+    const now = at(2027, 1, 5, 10, 5);
+    await pin(req.id, at(2027, 1, 5, 10));
+    await fill(req.id, client.id, 200, now - HOUR, 1000);
+    const sent = mockOutbound();
+    await runReminders(env, now);
+    expect(sent).toHaveLength(0);
+    await env.CONTROL.prepare("UPDATE firms SET stripe_subscription_id = 'sub_1'").run();
+    await fill(req.id, client.id, 1800, now - HOUR, 5000);
+    await runReminders(env, now + HOUR + MINUTE);
+    expect(sent).toHaveLength(0);
+    await env.DB_NA.prepare("DELETE FROM messages WHERE seq = 5001").run();
+    await runReminders(env, now + 2 * HOUR + MINUTE);
+    expect(sent).toHaveLength(1);
   });
 
   it("leaves a capped reminder due and sends it once there is room", async () => {
@@ -746,13 +775,13 @@ describe("email caps", () => {
     sent.length = 0;
     await pin(req.id, at(2027, 1, 5, 10));
     const now = at(2027, 1, 5, 10, 5);
-    await fill(req.id, client.id, 49, now - HOUR);
+    await fill(req.id, client.id, 199, now - HOUR);
     await runReminders(env, now);
     expect(sent).toHaveLength(1);
     await pin(req.id, at(2027, 1, 12, 10), 1);
     sent.length = 0;
     const later = at(2027, 1, 12, 10, 5);
-    await fill(req.id, client.id, 50, later - HOUR, 1000);
+    await fill(req.id, client.id, 200, later - HOUR, 1000);
     await runReminders(env, later);
     expect(sent).toHaveLength(0);
     const row = await requestRow(req.id);
@@ -778,7 +807,7 @@ describe("email caps", () => {
     const now = atHour(day, 11, TZ);
     await env.DB_NA.prepare("UPDATE requests SET reject_mark_at = ?").bind(now - HOUR).run();
     await env.DB_NA.prepare(
-      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 50)
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200)
        INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at)
        SELECT lower(hex(randomblob(16))), (SELECT firm_id FROM requests), ?1, ?2, 'email', 'rejected', 100 + i, 1, 'x', 'sent', 1, ?3 FROM n`,
     )

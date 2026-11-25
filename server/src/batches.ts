@@ -25,7 +25,7 @@ const MAX_BATCH = 1000;
 const MAX_BATCH_PER_DAY = 2000;
 const MAX_SEND_AHEAD = 90 * DAY;
 // sends per cron run, so one run stays short
-const PER_TICK = 25;
+const PER_TICK = 30;
 const MAX_TRIES = 3;
 // rows per statement, so a bound list stays small
 const CHUNK = 200;
@@ -346,6 +346,9 @@ export async function runBatches(env: Env, now = Date.now()) {
       .all<Due>();
     const senders = await sendersOf(env, region, results.map((b) => b.firm_id));
     let budget = PER_TICK;
+    // the run's invitations are shared equally among the accounts that have a batch due
+    const share = Math.max(1, Math.floor(PER_TICK / new Set(results.map((b) => b.firm_id)).size));
+    const taken = new Map<string, number>();
     const full = new Set<string>();
     // a batch that cannot go now is put off, so it stops taking one of the 50 places in every run
     const later = (b: Due, at: number, blocked = false) =>
@@ -365,8 +368,11 @@ export async function runBatches(env: Env, now = Date.now()) {
         } else if (full.has(b.firm_id)) {
           await later(b, tomorrow(now, sender.tz));
         } else {
-          const left = await sendSome(env, region, db, b, sender, budget, now);
+          const room = Math.min(budget, share - (taken.get(b.firm_id) ?? 0));
+          if (room <= 0) continue;
+          const left = await sendSome(env, region, db, b, sender, room, now);
           budget -= left.used;
+          taken.set(b.firm_id, (taken.get(b.firm_id) ?? 0) + left.used);
           if (left.full) full.add(b.firm_id);
           // the end of the queue for the next run, or a day out when the daily limit was reached
           await later(b, left.full ? tomorrow(now, sender.tz) : left.busy ? now + 15 * MINUTE : now);

@@ -13,9 +13,12 @@ export const MANUAL_SEQ = 1_000_000;
 const MAX_ATTEMPTS = 3;
 const STALE = 30 * MINUTE;
 
-// emails per account in any 24 hours, and invites per request; the shared sender key must not be a relay
+// emails per account in any 24 hours, and invites per request; the shared sender key must not be a relay. Invitations (staff
+// invitations too) are counted apart from reminders and notes, so a busy deadline week doesn't use up the room for new requests.
 const TRIAL_DAILY = 50;
 const PAID_DAILY = 500;
+const TRIAL_NOTES = 200;
+const PAID_NOTES = 2000;
 const INVITES_PER_REQUEST = 3;
 
 export type Kind = "invite" | "reminder" | "deadline" | "rejected" | "answer";
@@ -128,11 +131,12 @@ export type Outcome = "sent" | "failed" | "later" | "done" | "busy" | "gave_up" 
 type Slot = { db: D1Database; firmId: string; requestId: string; clientId: string; kind: Kind; seq: number | null };
 
 // Counted inside the statement that claims the slot, so parallel sends can't pass a cap together; the slot itself is left out of the count.
-const ROOM = `((SELECT COUNT(*) FROM messages WHERE firm_id = ?2 AND status IN ('sent', 'sending') AND sent_at > ?10 AND NOT (request_id = ?3 AND kind = ?5 AND seq IS ?6))
-    + (SELECT COUNT(*) FROM staff_mail WHERE firm_id = ?2 AND sent_at > ?10)) < ?11
+const ROOM = `((SELECT COUNT(*) FROM messages WHERE firm_id = ?2 AND (kind = 'invite') = (?5 = 'invite') AND status IN ('sent', 'sending') AND sent_at > ?10 AND NOT (request_id = ?3 AND kind = ?5 AND seq IS ?6))
+    + (SELECT COUNT(*) FROM staff_mail WHERE firm_id = ?2 AND sent_at > ?10 AND ?5 = 'invite')) < ?11
   AND (?5 != 'invite' OR (SELECT COUNT(*) FROM messages WHERE firm_id = ?2 AND request_id = ?3 AND kind = 'invite' AND status IN ('sent', 'sending') AND sent_at > ?10 AND seq IS NOT ?6) < ${INVITES_PER_REQUEST})`;
 
-const dailyCap = (subscribed: string | null | undefined) => (subscribed ? PAID_DAILY : TRIAL_DAILY);
+const dailyCap = (subscribed: string | null | undefined, kind: Kind) =>
+  kind === "invite" ? (subscribed ? PAID_DAILY : TRIAL_DAILY) : subscribed ? PAID_NOTES : TRIAL_NOTES;
 
 // A staff invite takes a slot under the same cap as the messages above; null when the account is out of room.
 export async function claimStaffMail(env: Env, db: D1Database, firmId: string, now = Date.now()): Promise<string | null> {
@@ -141,10 +145,10 @@ export async function claimStaffMail(env: Env, db: D1Database, firmId: string, n
   const res = await db
     .prepare(
       `INSERT INTO staff_mail (id, firm_id, sent_at) SELECT ?1, ?2, ?3
-       WHERE ((SELECT COUNT(*) FROM messages WHERE firm_id = ?2 AND status IN ('sent', 'sending') AND sent_at > ?4)
+       WHERE ((SELECT COUNT(*) FROM messages WHERE firm_id = ?2 AND kind = 'invite' AND status IN ('sent', 'sending') AND sent_at > ?4)
          + (SELECT COUNT(*) FROM staff_mail WHERE firm_id = ?2 AND sent_at > ?4)) < ?5`,
     )
-    .bind(id, firmId, now, now - DAY, dailyCap(paid?.stripe_subscription_id))
+    .bind(id, firmId, now, now - DAY, dailyCap(paid?.stripe_subscription_id, "invite"))
     .run();
   return res.meta.changes === 1 ? id : null;
 }
@@ -154,13 +158,13 @@ export async function hasRoom(env: Env, db: D1Database, firmId: string, requestI
   const paid = await env.CONTROL.prepare("SELECT stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<{ stripe_subscription_id: string | null }>();
   const r = (await db
     .prepare(
-      `SELECT (SELECT COUNT(*) FROM messages WHERE firm_id = ?1 AND status IN ('sent', 'sending') AND sent_at > ?3)
+      `SELECT (SELECT COUNT(*) FROM messages WHERE firm_id = ?1 AND kind = 'invite' AND status IN ('sent', 'sending') AND sent_at > ?3)
          + (SELECT COUNT(*) FROM staff_mail WHERE firm_id = ?1 AND sent_at > ?3) AS day,
        (SELECT COUNT(*) FROM messages WHERE firm_id = ?1 AND request_id = ?2 AND kind = 'invite' AND status IN ('sent', 'sending') AND sent_at > ?3) AS invites`,
     )
     .bind(firmId, requestId, now - DAY)
     .first<{ day: number; invites: number }>())!;
-  return r.day < dailyCap(paid?.stripe_subscription_id) && r.invites < INVITES_PER_REQUEST;
+  return r.day < dailyCap(paid?.stripe_subscription_id, "invite") && r.invites < INVITES_PER_REQUEST;
 }
 
 // The row goes in as 'sending' before the provider is called; the unique key lets only one run claim a slot.
@@ -171,7 +175,7 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
   const id = randomId();
   const paid = await env.CONTROL.prepare("SELECT stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<{ stripe_subscription_id: string | null }>();
   // both statements below read the same numbered values
-  const args = [id, firmId, requestId, slot.clientId, kind, slot.seq, TEMPLATE_VERSION, hash, now, now - DAY, dailyCap(paid?.stripe_subscription_id), now - STALE];
+  const args = [id, firmId, requestId, slot.clientId, kind, slot.seq, TEMPLATE_VERSION, hash, now, now - DAY, dailyCap(paid?.stripe_subscription_id, kind), now - STALE];
   const inserted = await db
     .prepare(
       `INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at)

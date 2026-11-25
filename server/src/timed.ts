@@ -6,14 +6,18 @@ import { classOf, collect, endCollect } from "./pulse";
 import { runReminders } from "./reminders";
 import { sweepFiles } from "./sweep";
 import { runTrialNotices } from "./trial";
-import { DAY, HOUR } from "./util";
+import { DAY, HOUR, MINUTE } from "./util";
 
 export const ALERT_TO = "support@alazy.app";
 
 // a step that keeps failing is mailed about once an hour
 const ALERT_EVERY = HOUR;
 
-export type Step = [name: string, run: (env: Env, now: number) => Promise<unknown>];
+// a run that began more than this ago is taken to have died
+const LOCK_STALE = 10 * MINUTE;
+
+// every is how many minutes apart a step runs; the run itself starts every minute
+export type Step = [name: string, run: (env: Env, now: number) => Promise<unknown>, every?: number];
 
 export const steps: Step[] = [
   [
@@ -28,21 +32,43 @@ export const steps: Step[] = [
         env.CONTROL.prepare("DELETE FROM passkey_challenges WHERE expires_at < ?").bind(now),
         env.CONTROL.prepare("DELETE FROM stripe_events WHERE received_at < ?").bind(now - 30 * DAY),
       ]),
+    10,
   ],
-  ["files", sweepFiles],
-  ["purge", purgeExpired],
-  ["closed", purgeClosed],
-  ["batches", runBatches],
+  ["files", sweepFiles, 10],
+  ["purge", purgeExpired, 10],
+  ["closed", purgeClosed, 10],
   ["reminders", runReminders],
-  ["trial", runTrialNotices],
+  ["batches", runBatches],
+  ["trial", runTrialNotices, 10],
 ];
 
 const message = (e: unknown) => (e instanceof Error ? e.message : "error");
 
-// one failing step must not stop the others; only the message is logged
+// A run that finds the last one still working does nothing; the lock is a row in timed_status that a finished run clears.
+async function lock(env: Env, now: number) {
+  const claim = await env.CONTROL.prepare("INSERT INTO timed_status (step, ok_at) VALUES ('lock', ?1) ON CONFLICT (step) DO UPDATE SET ok_at = ?1 WHERE ok_at IS NULL OR ok_at <= ?2")
+    .bind(now, now - LOCK_STALE)
+    .run();
+  return claim.meta.changes === 1;
+}
+
 export async function runTimed(env: Env, now = Date.now(), list: Step[] = steps) {
+  if (!(await lock(env, now))) return;
+  try {
+    await runSteps(env, now, list);
+  } finally {
+    await env.CONTROL.prepare("UPDATE timed_status SET ok_at = NULL WHERE step = 'lock' AND ok_at = ?").bind(now).run().catch((e) => console.error(message(e)));
+  }
+}
+
+// one failing step must not stop the others; only the message is logged
+async function runSteps(env: Env, now: number, list: Step[]) {
   const failed: { name: string; error: string }[] = [];
-  for (const [name, run] of list) {
+  const minute = Math.floor(now / MINUTE);
+  const ran: string[] = [];
+  for (const [name, run, every = 1] of list) {
+    if (minute % every !== 0) continue;
+    ran.push(name);
     collect();
     let error: string | null = null;
     try {
@@ -56,18 +82,18 @@ export async function runTimed(env: Env, now = Date.now(), list: Step[] = steps)
     if (error || items.length) failed.push({ name, error: [error, ...items].filter(Boolean).join(", ") });
   }
   try {
-    await record(env, now, list, failed);
+    await record(env, now, ran, failed);
   } catch (e) {
     console.error(message(e));
   }
 }
 
-async function record(env: Env, now: number, list: Step[], failed: { name: string; error: string }[]) {
+async function record(env: Env, now: number, ran: string[], failed: { name: string; error: string }[]) {
   const bad = new Set(failed.map((f) => f.name));
   // a step that works again may be mailed about the next time it fails
   const upsert = "INSERT INTO timed_status (step, ok_at) VALUES (?1, ?2) ON CONFLICT (step) DO UPDATE SET ok_at = ?2, alerted_at = NULL";
   await env.CONTROL.batch([
-    ...list.filter(([name]) => !bad.has(name)).map(([name]) => env.CONTROL.prepare(upsert).bind(name, now)),
+    ...ran.filter((name) => !bad.has(name)).map((name) => env.CONTROL.prepare(upsert).bind(name, now)),
     ...failed.map((f) =>
       env.CONTROL.prepare("INSERT INTO timed_status (step, failed_at, error) VALUES (?1, ?2, ?3) ON CONFLICT (step) DO UPDATE SET failed_at = ?2, error = ?3").bind(f.name, now, f.error),
     ),

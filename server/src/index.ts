@@ -120,5 +120,5 @@ app.get("/c/*", async (c) => {
 
 export default {
   fetch: app.fetch,
-  scheduled: (_event: ScheduledController, env: Env) => runTimed(env),
+  scheduled: (event: ScheduledController, env: Env) => runTimed(env, event.scheduledTime),
 };
