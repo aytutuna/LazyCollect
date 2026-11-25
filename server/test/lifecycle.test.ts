@@ -129,9 +129,13 @@ describe("upload edge cases", () => {
     expect(await state()).toBe("open");
   });
 
-  it("keeps taking uploads after the firm's plan lapses", async () => {
+  it("stops taking uploads once the firm's plan has lapsed, and takes them again after a payment", async () => {
     const { req, path } = await openRequest();
     await env.CONTROL.prepare("UPDATE firms SET plan_status = 'canceled', trial_ends_at = 1").run();
+    const refused = await upload(path, req.items[0].id, pdf(300));
+    expect(refused.status).toBe(402);
+    expect(await refused.json()).toEqual({ error: "paused" });
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'active'").run();
     expect((await upload(path, req.items[0].id, pdf(300))).status).toBe(201);
   });
 

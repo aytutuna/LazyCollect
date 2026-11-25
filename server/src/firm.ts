@@ -28,6 +28,11 @@ export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at" | "past_due
   }
 }
 
+export async function planUsable(env: Env, firmId: string, now: number): Promise<boolean> {
+  const f = await env.CONTROL.prepare("SELECT plan_status, trial_ends_at, past_due_since, closed_at FROM firms WHERE id = ?").bind(firmId).first<Parameters<typeof usable>[0]>();
+  return Boolean(f && usable(f, now));
+}
+
 // An owner who signed in once and did nothing: alone in the account, no clients, requests or templates, no billing, no passkeys, nothing pending.
 export function untouchedSql(firmId: string, now: number) {
   return {

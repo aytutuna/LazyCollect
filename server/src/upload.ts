@@ -3,6 +3,7 @@ import { rateLimited } from "./auth";
 import { auditClient } from "./audit";
 import { linkOf } from "./client";
 import { ByteSource, CHUNK, cipherLength, encryptStream, fileKey } from "./crypt";
+import { planUsable } from "./firm";
 import { firmDek } from "./keys";
 import { regionOf } from "./regions";
 import type { AppEnv } from "./session";
@@ -115,6 +116,7 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
   const earlier = await replay();
   if (earlier) return earlier;
   if (item.status === "approved") return c.json({ error: "approved" }, 409);
+  if (!(await planUsable(c.env, req.firm_id, Date.now()))) return c.json({ error: "paused" }, 402);
   const counts = await db
     .prepare(
       `SELECT (SELECT COUNT(*) FROM files WHERE firm_id = ?1 AND item_id = ?2 AND deleted_at IS NULL) AS item,
