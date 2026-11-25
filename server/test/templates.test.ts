@@ -108,7 +108,7 @@ describe("built-in templates", () => {
     const { cookie, client } = await setup();
     const req = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "t", deadline: inDays(5), template_id: "t1-personal" } })).json<any>();
     const rl = req.items.find((i: any) => i.label.startsWith("RL-1 "));
-    expect(req.items[rl.show_if_pos].label).toBe("Were you a resident of Quebec on December 31, 2026?");
+    expect(req.items[rl.show_if_pos].label).toBe("Were you a resident of Quebec on December 31, 2025?");
     expect(rl.show_if_value).toBe("yes");
     expect(rl.hidden).toBe(true);
   });
