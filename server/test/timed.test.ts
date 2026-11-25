@@ -106,10 +106,31 @@ describe("timed run watch", () => {
     const sent = mockOutbound();
     const now = Date.now();
     await runTimed(env, now, [broken]);
+    // a step that is good again for a minute and fails again is the same trouble, mailed once an hour
     await runTimed(env, now + 10 * MINUTE, [["files", async () => {}]]);
-    expect((await status()).files.alerted_at).toBeNull();
+    expect((await status()).files.alerted_at).not.toBeNull();
     await runTimed(env, now + 20 * MINUTE, [broken]);
+    expect(sent).toHaveLength(1);
+    // one that has been good for the hour is mailed about afresh
+    await runTimed(env, now + 90 * MINUTE, [["files", async () => {}]]);
+    expect((await status()).files.alerted_at).toBeNull();
+    await runTimed(env, now + 100 * MINUTE, [broken]);
     expect(sent).toHaveLength(2);
+  });
+
+  it("keeps a run of put-off emails from looking like a good pass, so an outage trips the watch and a blip clears", async () => {
+    const t = Date.now();
+    await runTimed(env, t - MINUTE, [ok]);
+    const outage: Step = ["reminders", async (_e, now) => { if (Math.round((now - t) / MINUTE) % 15 === 0) itemFailed("EmailDeferred"); }];
+    mockOutbound();
+    for (let m = 0; m <= 60; m++) await runTimed(env, t + m * MINUTE, [outage]);
+    expect((await lastGoodRun(env, t + 60 * MINUTE, [outage])).age_minutes).toBeGreaterThan(30);
+
+    await env.CONTROL.prepare("DELETE FROM timed_status").run();
+    await runTimed(env, t - MINUTE, [ok]);
+    const blip: Step = ["reminders", async (_e, now) => { if (now === t) itemFailed("EmailDeferred"); }];
+    for (let m = 0; m <= 30; m++) await runTimed(env, t + m * MINUTE, [blip]);
+    expect((await lastGoodRun(env, t + 30 * MINUTE, [blip])).age_minutes).toBeLessThan(5);
   });
 
   it("counts single items that fail inside a step that goes on", async () => {

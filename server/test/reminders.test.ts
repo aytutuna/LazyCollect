@@ -464,8 +464,9 @@ describe("reminders", () => {
       mockOutbound(true, status);
       await runReminders(env, at(2027, 1, 5, 10, min));
     }
+    // the second request is to the same client, whose first email may have gone out, so it is not tried while that is unsettled
     const rows = (await messages()).filter((m) => m.kind === "reminder");
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(1);
     expect(rows.every((m) => m.status === "failed" && m.attempts === 0)).toBe(true);
     expect((await requestRow(req.id)).reminder_seq).toBe(0);
     const sent = mockOutbound();
@@ -500,6 +501,36 @@ describe("reminders", () => {
     const sent = mockOutbound();
     await runReminders(env, at(2027, 1, 5, 11, 10));
     expect(sent).toHaveLength(1);
+  });
+
+  it("spreads the tries of a timed-out email over the hour when the run is every minute, and uses none of them", async () => {
+    const { cookie, req } = await ready();
+    mockOutbound();
+    await invite(cookie, req.id);
+    await pin(req.id, at(2027, 1, 5, 10));
+    const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(Object.assign(new Error("timed out"), { name: "TimeoutError" }));
+    const tried: number[] = [];
+    for (let min = 5; min < 65; min++) {
+      const before = spy.mock.calls.length;
+      await runReminders(env, at(2027, 1, 5, 10, min));
+      if (spy.mock.calls.length > before) tried.push(min);
+    }
+    expect(tried).toEqual([5, 20, 35, 50]);
+    expect((await messages()).filter((m) => m.kind === "reminder")).toMatchObject([{ status: "failed", attempts: 0 }]);
+  });
+
+  it("does not send a deadline note over a reminder whose answer was lost, in another slot", async () => {
+    const { cookie, req } = await ready();
+    mockOutbound();
+    await invite(cookie, req.id);
+    await pin(req.id, at(2027, 1, 20, 10));
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("connection lost"));
+    await runReminders(env, at(2027, 1, 20, 10, 5));
+    // the deadline falls between the two tries, so the retry would be a deadline note in a new slot
+    await env.DB_NA.prepare("UPDATE requests SET deadline = ?").bind(at(2027, 1, 20, 10, 10)).run();
+    const sent = mockOutbound();
+    await runReminders(env, at(2027, 1, 20, 10, 25));
+    expect(sent).toHaveLength(0);
   });
 
   it("recovers a failed send on the next run", async () => {
@@ -566,6 +597,18 @@ describe("rejected items email", () => {
     expect(sent.filter((m) => m.subject.startsWith("Please resend"))).toHaveLength(1);
     expect((await messages()).filter((m) => m.kind === "rejected")).toMatchObject([{ seq: 1, status: "sent" }]);
     expect((await requestRow(o.req.id)).reject_mark_at).toBeNull();
+  });
+
+  it("waits a quarter of an hour between the tries of a sent-back email, with a run every minute", async () => {
+    const o = await rejectBoth();
+    const day = addDays(dayOf(Date.now(), TZ), 1);
+    const start = atHour(day, 10, TZ);
+    await env.DB_NA.prepare("UPDATE requests SET reject_mark_at = ?").bind(start).run();
+    mockOutbound(true, 422);
+    for (let min = 11; min < 25; min++) await runReminders(env, start + min * MINUTE);
+    expect((await messages()).filter((m) => m.kind === "rejected")).toMatchObject([{ status: "failed", attempts: 1 }]);
+    for (let min = 25; min <= 26; min++) await runReminders(env, start + min * MINUTE);
+    expect((await messages()).filter((m) => m.kind === "rejected")).toMatchObject([{ status: "failed", attempts: 2 }]);
   });
 
   it("sends nothing when the items were fixed in the meantime", async () => {
@@ -677,13 +720,32 @@ describe("upload notice failures", () => {
     await upload(o.path, o.req.items[0].id, pdf(500));
     mockOutbound(true, 422);
     const now = Date.now();
-    for (const min of [0, 10, 20, 30]) await runReminders(env, now + min * MINUTE);
+    // runs a minute apart: the notice waits a quarter of an hour between its three tries
+    for (let min = 0; min <= 14; min++) await runReminders(env, now + min * MINUTE);
+    expect((await requestRow(o.req.id)).notice_tries).toBe(1);
+    for (let min = 15; min <= 45; min++) await runReminders(env, now + min * MINUTE);
     const row = await requestRow(o.req.id);
     expect(row.notice_due_at).toBeNull();
     expect(row.notice_tries).toBe(0);
     const sent = mockOutbound();
     await runReminders(env, now + 3 * HOUR);
     expect(sent).toHaveLength(0);
+  });
+});
+
+describe("upload notices when the provider is out of reach", () => {
+  it("uses no try over an hour of runs a minute apart, and tells the owner once it is back", async () => {
+    const o = await openRequest();
+    await upload(o.path, o.req.items[0].id, pdf(500));
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("connection lost"));
+    const now = Date.now();
+    for (let min = 0; min <= 60; min++) await runReminders(env, now + min * MINUTE);
+    const row = await requestRow(o.req.id);
+    expect(row.notice_tries).toBe(0);
+    expect(row.notice_due_at).not.toBeNull();
+    const sent = mockOutbound();
+    await runReminders(env, now + 80 * MINUTE);
+    expect(sent).toHaveLength(1);
   });
 });
 

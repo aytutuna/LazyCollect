@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { purgeClosed } from "../src/account";
 import { runBatches } from "../src/batches";
 import { purgeExpired } from "../src/purge";
@@ -313,6 +313,34 @@ describe("sending a batch", () => {
     for (const min of [20, 40]) await runBatches(env, NOW + min * MINUTE);
     expect(await one(batch.id, cookie)).toMatchObject({ status: "done", failed: 1, sent: 0 });
     expect((await q("SELECT reason, tries FROM batch_items"))[0]).toEqual({ reason: "send_failed", tries: 3 });
+  });
+});
+
+describe("a batch while the provider is out of reach", () => {
+  const invites = (sent: ReturnType<typeof mockOutbound>) => sent.filter((m) => m.subject.startsWith("Documents requested"));
+  it("uses no try for a timeout or a dropped connection, and waits 15 minutes between runs", async () => {
+    const { cookie, ids } = await ready(1);
+    const batch = await (await create(cookie, body(ids))).json<any>();
+    const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(Object.assign(new Error("timed out"), { name: "TimeoutError" }));
+    const at: number[] = [];
+    for (let min = 0; min < 60; min++) {
+      const before = spy.mock.calls.length;
+      await runBatches(env, NOW + min * MINUTE);
+      if (spy.mock.calls.length > before) at.push(min);
+    }
+    expect(at).toEqual([0, 15, 30, 45]);
+    const sent = mockOutbound();
+    await runBatches(env, NOW + 80 * MINUTE);
+    expect(invites(sent)).toHaveLength(1);
+    expect(await one(batch.id, cookie)).toMatchObject({ status: "done", sent: 1 });
+  });
+
+  it("answers a provider that is busy the same way", async () => {
+    const { cookie, ids } = await ready(1);
+    await create(cookie, body(ids));
+    mockOutbound(true, 503);
+    for (let min = 0; min < 40; min++) await runBatches(env, NOW + min * MINUTE);
+    expect((await q("SELECT tries, state FROM batch_items"))[0]).toEqual({ tries: 0, state: "pending" });
   });
 });
 

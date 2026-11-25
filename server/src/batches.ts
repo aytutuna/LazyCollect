@@ -527,6 +527,14 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
             busy = true;
             break;
           }
+          if (outcome === "busy") {
+            // another run is sending this one: it is left alone for a while and no try is used up
+            await db
+              .prepare("UPDATE batch_items SET reason = ? WHERE firm_id = ? AND request_id = ? AND state = 'pending'")
+              .bind(`sending:${now + RETRY_WAIT - LEASE}`, b.firm_id, r.request_id)
+              .run();
+            continue;
+          }
           // a refusal: the item is held back for a while (the hold lapses LEASE after its time), so its tries are spread over half an hour
           const tries = r.tries + 1;
           await db

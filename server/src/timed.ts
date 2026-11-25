@@ -4,7 +4,7 @@ import { runBatches } from "./batches";
 import { sendMail } from "./email";
 import { purgeExpired } from "./purge";
 import { classOf, collect, endCollect } from "./pulse";
-import { runReminders } from "./reminders";
+import { RETRY_WAIT, runReminders } from "./reminders";
 import { sweepFiles } from "./sweep";
 import { runTrialNotices } from "./trial";
 import { DAY, HOUR, MINUTE } from "./util";
@@ -96,13 +96,21 @@ async function runSteps(env: Env, now: number, list: Step[]) {
 async function record(env: Env, now: number, ran: string[], failed: { name: string; error: string }[]) {
   const bad = new Set(failed.map((f) => f.name));
   // a step that works again may be mailed about the next time it fails
-  const upsert = "INSERT INTO timed_status (step, ok_at) VALUES (?1, ?2) ON CONFLICT (step) DO UPDATE SET ok_at = ?2, alerted_at = NULL";
+  // and only once it has been good for as long as the alerts are spaced, so a step that flickers is not mailed about every minute
+  const upsert = `INSERT INTO timed_status (step, ok_at) VALUES (?1, ?2) ON CONFLICT (step) DO UPDATE SET ok_at = ?2,
+    alerted_at = CASE WHEN failed_at IS NULL OR failed_at <= ?3 THEN NULL ELSE alerted_at END`;
+  // An email the provider could not take is put off for a quarter of an hour, so the minutes between look clean. A deferral keeps
+  // the pass from counting as good for a little longer than that: an outage trips the watch, a blip clears itself.
+  const deferred = failed.some((f) => f.error.includes("EmailDeferred"));
+  const before = await env.CONTROL.prepare("SELECT failed_at FROM timed_status WHERE step = 'deferred'").first<{ failed_at: number | null }>();
+  const sticky = deferred || (before?.failed_at != null && now - before.failed_at < RETRY_WAIT + 5 * MINUTE);
   await env.CONTROL.batch([
-    ...ran.filter((name) => !bad.has(name)).map((name) => env.CONTROL.prepare(upsert).bind(name, now)),
+    ...ran.filter((name) => !bad.has(name)).map((name) => env.CONTROL.prepare(upsert).bind(name, now, now - ALERT_EVERY)),
+    ...(deferred ? [env.CONTROL.prepare("INSERT INTO timed_status (step, failed_at) VALUES ('deferred', ?1) ON CONFLICT (step) DO UPDATE SET failed_at = ?1").bind(now)] : []),
     ...failed.map((f) =>
       env.CONTROL.prepare("INSERT INTO timed_status (step, failed_at, error) VALUES (?1, ?2, ?3) ON CONFLICT (step) DO UPDATE SET failed_at = ?2, error = ?3").bind(f.name, now, f.error),
     ),
-    ...(failed.length ? [] : [env.CONTROL.prepare(upsert).bind("run", now)]),
+    ...(failed.length || sticky ? [] : [env.CONTROL.prepare(upsert).bind("run", now, now - ALERT_EVERY)]),
   ]);
   const due = [];
   for (const f of failed) {

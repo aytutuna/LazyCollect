@@ -1,5 +1,5 @@
 import { classOf, itemFailed } from "./pulse";
-import { sendMail } from "./email";
+import { Transient, sendMail } from "./email";
 import { asked } from "./expand";
 import { usable } from "./firm";
 import { linkUrl } from "./links";
@@ -182,12 +182,17 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number,
         .first();
       if (manual) return move(null);
     }
+    // An email that failed on a dropped connection or a busy provider may have gone out all the same, so it holds off the next one
+    // as a sent one does, for the whole 36 hours, though the provider's own key for repeats lasts a day. Its own slot is left out,
+    // or it could never be tried again.
     const recent = await db
       .prepare(
-        `SELECT request_id, sent_at, seq FROM messages WHERE firm_id = ? AND client_id = ? AND kind IN ('reminder', 'deadline') AND status IN ('sent', 'sending') AND sent_at > ?${kind === "deadline" ? " AND seq >= ?" : ""}
+        `SELECT request_id, sent_at, seq FROM messages WHERE firm_id = ? AND client_id = ? AND kind IN ('reminder', 'deadline')
+         AND (status IN ('sent', 'sending') OR (status = 'failed' AND (error LIKE 'email request failed%' OR error LIKE 'email deferred%') AND NOT (request_id = ? AND kind = ? AND seq = ?)))
+         AND sent_at > ?${kind === "deadline" ? " AND (seq >= ? OR status = 'failed')" : ""}
          ORDER BY sent_at DESC LIMIT 1`,
       )
-      .bind(r.firm_id, r.client_id, now - SPACING, ...(kind === "deadline" ? [MANUAL_SEQ] : []))
+      .bind(r.firm_id, r.client_id, r.id, kind, r.seq + 1, now - SPACING, ...(kind === "deadline" ? [MANUAL_SEQ] : []))
       .first<{ request_id: string; sent_at: number; seq: number }>();
     if (recent) {
       const morning = kind === "reminder" && recent.seq < MANUAL_SEQ && recent.request_id === r.id && sameDay(dayOf(now, tz), dayOf(r.deadline, tz));
@@ -303,10 +308,10 @@ async function noticePass(env: Env, db: D1Database, now: number) {
          (SELECT COUNT(*) FROM notes q WHERE q.firm_id = r.firm_id AND q.request_id = r.id AND q.author = 'client' AND q.created_at > COALESCE(r.notified_at, 0)) AS q,
          (SELECT COUNT(*) FROM items i WHERE i.firm_id = r.firm_id AND i.request_id = r.id AND i.status = 'unavailable' AND i.unavailable_at > COALESCE(r.notified_at, 0)) AS u,
          (SELECT COUNT(*) FROM items i WHERE i.firm_id = r.firm_id AND i.request_id = r.id AND i.kind != 'file' AND i.answer IS NOT NULL AND ${visible("i")} AND i.answer_at > COALESCE(r.notified_at, 0)) AS a
-       ${JOIN} WHERE r.notice_due_at IS NOT NULL AND (r.notified_at IS NULL OR r.notified_at <= ?) AND r.deleted_at IS NULL
+       ${JOIN} WHERE r.notice_due_at IS NOT NULL AND r.notice_due_at <= ? AND (r.notified_at IS NULL OR r.notified_at <= ?) AND r.deleted_at IS NULL
        ORDER BY r.notice_due_at LIMIT ${NOTICES}`,
     )
-    .bind(now - HOUR)
+    .bind(now, now - HOUR)
     .all<{ id: string; firm_id: string; title: string; notified_at: number | null; due: number; tries: number; client_name: string; n: number; q: number; u: number; a: number }>();
   const owners = await ownersOf(env, results.map((r) => r.firm_id));
 
@@ -332,14 +337,16 @@ async function noticePass(env: Env, db: D1Database, now: number) {
         text: `${what}.\n\nOpen it here:\n${env.APP_URL}/requests/${r.id}\n`,
       });
     } catch (e) {
-      const tries = r.tries + 1;
+      // a provider out of reach uses no try; a refusal uses one, and either way the note waits before the next
+      const out = e instanceof Transient;
+      const tries = out ? r.tries : r.tries + 1;
       const spent = tries >= MAX_NOTICE_TRIES;
       console.error(`owner notice ${tries}/${MAX_NOTICE_TRIES} failed: ${e instanceof Error ? e.message : "error"}`);
-      itemFailed(classOf(e));
-      // put the note back so the next run tries again, until the tries are used up
+      itemFailed(out ? "EmailDeferred" : classOf(e));
+      // put the note back, due again after the wait, until the tries are used up
       await db
         .prepare("UPDATE requests SET notified_at = ?, notice_due_at = ?, notice_tries = ? WHERE firm_id = ? AND id = ?")
-        .bind(spent ? now : r.notified_at, spent ? null : r.due, spent ? 0 : tries, r.firm_id, r.id)
+        .bind(spent ? now : r.notified_at, spent ? null : now + RETRY_WAIT, spent ? 0 : tries, r.firm_id, r.id)
         .run();
     }
   });
