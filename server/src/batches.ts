@@ -265,7 +265,7 @@ batches.post("/batches", async (c) => {
   );
   const res = await db.batch(stmts);
   if (!res[0].meta.changes) return c.json({ error: "batch_limit" }, 429);
-  return c.json(await loadBatch(c, batchId), 201);
+  return c.json({ ...(await loadBatch(c, batchId)), stale_years: later.stale }, 201);
 });
 
 batches.get("/batches", async (c) => {

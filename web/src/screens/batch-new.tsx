@@ -154,10 +154,10 @@ export function NewBatch() {
       else body.request_id = requestId;
     }
     const made = await run(async () => {
-      const batch = await post<Batch>("/batches", body);
+      const batch = await post<Batch & { stale_years?: string[] }>("/batches", body);
       carried.clients = new Map();
       carried.requests = new Map();
-      go(`/batches/${batch.id}`);
+      go(`/batches/${batch.id}${batch.stale_years?.length ? `?stale=${encodeURIComponent(batch.stale_years.join(" | "))}` : ""}`);
     });
     if (made) setAsking(false);
   }

@@ -17,7 +17,7 @@ import { audit } from "./audit";
 import type { AppEnv } from "./session";
 import { ownsExamples, parseExample } from "./examples";
 import { parseKind, parseTags, checkConditions, type Item } from "./questions";
-import { tax, type Facts } from "./taxyear";
+import { markedChoice, tax, type Facts } from "./taxyear";
 import { randomId } from "./util";
 import { exampleGone, invalid, locale, maybe, notFound, readBody, setClause, text } from "./validate";
 
@@ -69,7 +69,8 @@ export function parseItem(v: unknown): Item | undefined {
   const example = parseExample(o.example);
   const tags = kind && parseTags(o, kind.kind ?? "file", Boolean(kind.show_if));
   if (!kind || !tags || example === undefined) return undefined;
-  return { label, ...(help ? { help } : {}), required: o.required ?? true, ...kind, ...(example ? { example } : {}), ...tags };
+  const item: Item = { label, ...(help ? { help } : {}), required: o.required ?? true, ...kind, ...(example ? { example } : {}), ...tags };
+  return markedChoice(item) ? undefined : item;
 }
 
 export function parseItems(v: unknown): Item[] | undefined {

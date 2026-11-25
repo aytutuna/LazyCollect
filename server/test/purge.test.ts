@@ -315,6 +315,7 @@ describe("held files", () => {
     expect(row).toMatchObject({ file_id: file.id, reason: "removed", expires_at: row.held_at + HELD_FOR });
     expect(await sha(await read(row.id))).toBe(await sha(body));
 
+    await env.DB_NA.prepare("DELETE FROM files").run();
     await sweepFiles(env, row.held_at + HELD_FOR - 1);
     expect(await heldObjects()).toBe(1);
     await sweepFiles(env, row.held_at + HELD_FOR);
@@ -354,6 +355,17 @@ describe("held files", () => {
     await env.FILES_NA.put(row.r2_key, new Uint8Array([1]));
     await holdFiles(env, "na", [row], "removed", first.held_at + 10 * DAY);
     expect((await held()).map((h) => h.expires_at).sort((a, b) => a - b)).toEqual([5, first.held_at + 10 * DAY + HELD_FOR]);
+  });
+
+  it("starts the 30 days again when a file whose copy is still held is removed", async () => {
+    const { req, path } = await openRequest();
+    const file = await (await upload(path, req.items[0].id, pdf(500))).json<any>();
+    const row = (await env.DB_NA.prepare("SELECT id, firm_id, request_id, item_id, r2_key, name, mime, size, uploaded_by, uploaded_at FROM files").first<any>())!;
+    await holdFiles(env, "na", [row], "removed", 1000);
+    await holdFiles(env, "na", [row], "removed", 1000 + 10 * DAY);
+    const rows = await held();
+    expect(rows.map((h) => h.expires_at)).toEqual([1000 + 10 * DAY + HELD_FOR]);
+    expect(file.id).toBeTruthy();
   });
 
   it("keeps the files of a purged request for 30 more days, readable after the account's key is gone", async () => {

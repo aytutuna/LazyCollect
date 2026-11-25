@@ -32,6 +32,13 @@ export async function holdFiles(env: Env, region: Region, files: FileRow[], reas
     .prepare("SELECT file_id FROM held_files WHERE expires_at > ? AND file_id IN (SELECT value FROM json_each(?))")
     .bind(now, JSON.stringify(files.map((f) => f.id)))
     .all<{ file_id: string }>();
+  // a copy still held starts its 30 days again from this removal
+  if (done.results.length) {
+    await db
+      .prepare("UPDATE held_files SET expires_at = ? WHERE expires_at > ? AND file_id IN (SELECT value FROM json_each(?))")
+      .bind(now + HELD_FOR, now, JSON.stringify(done.results.map((r) => r.file_id)))
+      .run();
+  }
   const held = new Set(done.results.map((r) => r.file_id));
   for (const f of files) {
     if (held.has(f.id)) continue;

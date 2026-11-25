@@ -33,7 +33,9 @@ const used = (s: string, known: Set<string>) => [...s.matchAll(MARKER)].some((m)
 // the year markers of a text filled in, for wording typed after a request was made; other markers stay as typed
 export const hasYear = (s: string) => [...s.matchAll(MARKER)].some((m) => YEAR.test(m[1]));
 export const fillYear = (s: string, year: number) => s.replace(MARKER, (whole, name: string) => (YEAR.test(name) ? String(year + Number(name.slice(4) || 0)) : whole));
-const texts = (i: Item) => [i.label, i.help ?? "", ...(i.options ?? [])];
+const texts = (i: Item) => [i.label, i.help ?? ""];
+// a year marker in an option or a condition's value is refused when the item is saved, since the two have to stay the same text
+export const markedChoice = (i: Item): boolean => [...(i.options ?? []), i.show_if?.value ?? ""].some(hasYear);
 
 export const hasMarkers = (items: Item[], facts: Facts = {}) => items.some((i) => texts(i).some((s) => used(s, names(facts))));
 
@@ -46,9 +48,8 @@ export function resolveItems(items: Item[], year: number, facts: Facts): (Item &
     const used = new Set<string>();
     const label = fill(i.label, year, facts, known, used);
     const help = i.help === undefined ? undefined : fill(i.help, year, facts, known, used);
-    const options = i.options?.map((o) => fill(o, year, facts, known, used));
-    if (label === i.label && help === i.help && (options ?? []).every((o, at) => o === i.options![at])) return i;
-    return { ...i, label, ...(help === undefined ? {} : { help }), ...(options ? { options } : {}), tpl: JSON.stringify({ label: i.label, help: i.help ?? null, facts: [...used] }) };
+    if (label === i.label && help === i.help) return i;
+    return { ...i, label, ...(help === undefined ? {} : { help }), tpl: JSON.stringify({ label: i.label, help: i.help ?? null, facts: [...used] }) };
   });
 }
 

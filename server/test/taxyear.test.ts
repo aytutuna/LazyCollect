@@ -184,7 +184,22 @@ describe("an item reworded after the request was made", () => {
     expect((await added.json<any>()).label).toBe(`Slip ${Y}`);
     const plain = await (await make(cookie, (await q("SELECT client_id FROM requests"))[0].client_id, { items: [item("A")] })).json<any>();
     const res = await api(`/api/requests/${plain.id}/items`, { method: "POST", cookie, body: { label: "Slip {year}", required: true } });
-    expect([res.status, (await res.json<any>()).error]).toEqual([400, "tax_year_needed"]);
+    expect([res.status, (await res.json<any>()).error]).toEqual([400, "tax_year_missing"]);
+  });
+
+  it("is not held to a marker already in its stored text when something else is edited", async () => {
+    const { cookie, client } = await setup();
+    const req = await (await make(cookie, client.id, { title: "t", items: [item("A", "Year")] })).json<any>();
+    await env.DB_NA.prepare("UPDATE items SET help = 'Year {year}'").run();
+    const at = req.items[0];
+    const res = await api(`/api/requests/${req.id}/items/${at.id}`, { method: "PATCH", cookie, body: { help: "Year {year}", required: false } });
+    expect(res.status).toBe(200);
+  });
+
+  it("is refused when a marker sits in an option or a condition's value", async () => {
+    const { cookie, client } = await setup();
+    const bad = { label: "Q", required: true, kind: "choice", options: ["Before {year}", "After"] };
+    expect((await make(cookie, client.id, { items: [bad] })).status).toBe(400);
   });
 
   it("is listed when Repeat finds it still names a year near the old one", async () => {
@@ -250,6 +265,7 @@ describe("a batch for a tax year", () => {
     for (const id of ids) made.push(await (await make(cookie, id, { template_id: "t2-year-end", tax_year: Y, title: `T2 ${Y}`, deadline: inDays(40) })).json<any>());
     const res = await api("/api/batches", { method: "POST", cookie, body: { request_ids: made.map((r) => r.id), title: "Repeat", reminders_on: false } });
     expect(res.status).toBe(201);
+    expect((await res.json<any>()).stale_years).toEqual([]);
     const next = await q("SELECT id, title, tax_year FROM requests WHERE tax_year = ? ORDER BY id", Y + 1);
     expect(next.map((r) => [r.title, r.tax_year])).toEqual([[`T2 ${Y + 1}`, Y + 1], [`T2 ${Y + 1}`, Y + 1]]);
     const rows = await q("SELECT label FROM items WHERE request_id IN (SELECT id FROM requests WHERE tax_year = ?)", Y + 1);

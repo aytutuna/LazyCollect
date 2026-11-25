@@ -295,7 +295,7 @@ requests.post("/requests/:id/items", async (c) => {
   if (!req) return notFound(c);
   if (!editable(req)) return c.json({ error: "locked" }, 409);
   const item = await withYear(c, req.id, parsed);
-  if (!item) return c.json({ error: "tax_year_needed" }, 400);
+  if (!item) return c.json({ error: "tax_year_missing" }, 400);
   const id = randomId();
   const firmId = c.get("firm").id;
   const db = c.get("db");
@@ -371,9 +371,6 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
   const req = await findRequest(c);
   if (!req) return notFound(c);
   if (!editable(req)) return c.json({ error: "locked" }, 409);
-  const typed = await withYear(c, req.id, fields as { label?: string; help?: string | null });
-  if (!typed) return c.json({ error: "tax_year_needed" }, 400);
-  Object.assign(fields, typed);
   const db = c.get("db");
   const firmId = c.get("firm").id;
   if (!(await ownsExamples(db, firmId, [fields.example as string | null]))) return exampleGone(c);
@@ -387,6 +384,10 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
   if (fields.label === (cur.label_base ?? cur.label)) delete fields.label;
   const sameHelp = "help" in fields && (fields.help ?? null) === cur.help;
   if (sameHelp) delete fields.help;
+  // only wording that changed is looked at for markers
+  const typed = await withYear(c, req.id, { ...("label" in fields ? { label: fields.label } : {}), ...("help" in fields ? { help: fields.help } : {}) });
+  if (!typed) return c.json({ error: "tax_year_missing" }, 400);
+  Object.assign(fields, typed);
   // the dates belong to documents that ask for them, and the months only to one counted from its issue date
   if (["expires_on", "issued_on", "valid_months"].some((k) => k in fields)) {
     if (!cur.expiry_rule || ("valid_months" in fields && cur.expiry_rule !== "issue")) return invalid(c);
