@@ -15,6 +15,9 @@ ${pkcs8}
         wrangler: { configPath: "./wrangler.toml" },
         miniflare: {
           bindings: {
+            // a local .dev.vars would otherwise replace these
+            APP_URL: "https://collect.alazy.app",
+            APP_ATTEST_OFF: "",
             TEST_MIGRATIONS: migrations,
             TEST_MIGRATIONS_NA: naMigrations,
             TURNSTILE_SECRET: "1x0000000000000000000000000000000AA",
