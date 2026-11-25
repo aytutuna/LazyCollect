@@ -117,10 +117,10 @@ async function emailReply(env: Env, db: D1Database, firm: Firm, req: { id: strin
   const [sender] = (await sendersOf(env, region, [firm.id])).values();
   if (!canSend(sender, now)) return "not_set_up";
   const client = await db
-    .prepare("SELECT name, email, email_ok_at, email_stop_at FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
+    .prepare("SELECT name, email, email_ok_at, email_stop_at, email_bounced_at FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
     .bind(firm.id, req.client_id)
-    .first<{ name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null }>();
-  if (!client?.email || !client.email_ok_at) return "no_email";
+    .first<{ name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null; email_bounced_at: number | null }>();
+  if (!client?.email || !client.email_ok_at || client.email_bounced_at) return "no_email";
   if (client.email_stop_at || (await addressStopped(env, db, firm.id, client.email))) return "unsubscribed";
   const link = await liveToken(env, db, firm.id, req.id, now);
   if (!link) return "no_link";

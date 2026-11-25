@@ -4,6 +4,7 @@ import { activity } from "./activity";
 import { native } from "./app";
 import { auth } from "./auth";
 import { batches } from "./batches";
+import { resendWebhook } from "./bounce";
 import { billing, stripeWebhook } from "./billing";
 import { answers } from "./answers";
 import { client } from "./client";
@@ -50,6 +51,8 @@ app.use("/api/*", async (c, next) => {
 });
 // Stripe's calls carry no cookie or X-Collect header, so this goes in before the csrf check and is verified by its signature
 app.route("/api", stripeWebhook);
+// the same for Resend's bounce notices, checked by their signature
+app.route("/api", resendWebhook);
 app.use("/api/*", csrf, loadSession);
 app.get("/api/health", (c) => c.json({ ok: true, commit: c.env.COMMIT ?? null }));
 app.get("/api/health/keys", async (c) => {

@@ -72,14 +72,15 @@ type Row = {
   email: string | null;
   email_ok_at: number | null;
   email_stop_at: number | null;
+  email_bounced_at: number | null;
   client_deleted: number | null;
   stopped?: boolean;
 };
 
-const ROW = `r.id, r.firm_id, r.client_id, r.title, r.deadline, c.name AS client_name, c.email, c.email_ok_at, c.email_stop_at, c.deleted_at AS client_deleted`;
+const ROW = `r.id, r.firm_id, r.client_id, r.title, r.deadline, c.name AS client_name, c.email, c.email_ok_at, c.email_stop_at, c.email_bounced_at, c.deleted_at AS client_deleted`;
 const JOIN = `FROM requests r JOIN clients c ON c.firm_id = r.firm_id AND c.id = r.client_id`;
 
-const reachable = (r: Row) => Boolean(r.email && r.email_ok_at && !r.email_stop_at && !r.stopped && !r.client_deleted);
+const reachable = (r: Row) => Boolean(r.email && r.email_ok_at && !r.email_stop_at && !r.email_bounced_at && !r.stopped && !r.client_deleted);
 
 // an address that asked to stop stays stopped for the account, whatever client row holds it now
 async function markStops(env: Env, db: D1Database, rows: Row[]) {

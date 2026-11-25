@@ -99,13 +99,13 @@ batches.post("/batches", async (c) => {
   const plans: Omit<Plan, "position" | "state" | "reason">[] = [];
   const mailable = new Map<string, boolean>();
 
-  type ClientRow = { id: string; name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null };
+  type ClientRow = { id: string; name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null; email_bounced_at: number | null };
   const loadClients = async (list: string[]) => {
     const { results } = await db
-      .prepare("SELECT id, name, email, email_ok_at, email_stop_at FROM clients WHERE firm_id = ? AND deleted_at IS NULL AND id IN (SELECT value FROM json_each(?)) ORDER BY name COLLATE NOCASE, id")
+      .prepare("SELECT id, name, email, email_ok_at, email_stop_at, email_bounced_at FROM clients WHERE firm_id = ? AND deleted_at IS NULL AND id IN (SELECT value FROM json_each(?)) ORDER BY name COLLATE NOCASE, id")
       .bind(firm.id, JSON.stringify(list))
       .all<ClientRow>();
-    for (const cl of results) mailable.set(cl.id, Boolean(cl.email && cl.email_ok_at && !cl.email_stop_at));
+    for (const cl of results) mailable.set(cl.id, Boolean(cl.email && cl.email_ok_at && !cl.email_stop_at && !cl.email_bounced_at));
     return results;
   };
 
@@ -326,6 +326,7 @@ type Row = {
   email: string | null;
   email_ok_at: number | null;
   email_stop_at: number | null;
+  email_bounced_at: number | null;
   client_deleted: number | null;
 };
 
@@ -382,7 +383,7 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
   if (!claim.meta.changes) return { used: 0, full: false, busy: false };
   const { results } = await db
     .prepare(
-      `SELECT i.request_id, i.client_id, i.tries, i.linked_at, r.title, r.deadline, r.status, r.deleted_at, cl.name AS client_name, cl.email, cl.email_ok_at, cl.email_stop_at, cl.deleted_at AS client_deleted
+      `SELECT i.request_id, i.client_id, i.tries, i.linked_at, r.title, r.deadline, r.status, r.deleted_at, cl.name AS client_name, cl.email, cl.email_ok_at, cl.email_stop_at, cl.email_bounced_at, cl.deleted_at AS client_deleted
        FROM batch_items i JOIN requests r ON r.firm_id = i.firm_id AND r.id = i.request_id JOIN clients cl ON cl.firm_id = i.firm_id AND cl.id = i.client_id
        WHERE i.firm_id = ? AND i.batch_id = ? AND i.state = 'pending' ORDER BY i.position LIMIT ?`,
     )
@@ -418,7 +419,7 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
         await settle(r, "skipped", "already_sent");
       } else if (r.deadline <= now) {
         await settle(r, "skipped", "deadline_passed");
-      } else if (!r.email || !r.email_ok_at || r.email_stop_at || (await addressStopped(env, db, b.firm_id, r.email))) {
+      } else if (!r.email || !r.email_ok_at || r.email_stop_at || r.email_bounced_at || (await addressStopped(env, db, b.firm_id, r.email))) {
         await settle(r, "no_email", "no_email");
       } else if (!(await hasRoom(env, db, b.firm_id, r.request_id, now))) {
         full = true;

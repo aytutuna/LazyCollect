@@ -10,7 +10,7 @@ import { blank, invalid, locale, maybe, notFound, readBody, setClause, text } fr
 
 export const clients = new Hono<AppEnv>();
 
-const COLS = "id, name, email, phone, reference, locale, email_ok_at, email_stop_at, sms_ok_at, consent_by, created_at";
+const COLS = "id, name, email, phone, reference, locale, email_ok_at, email_stop_at, email_bounced_at, sms_ok_at, consent_by, created_at";
 export const MAX_CLIENTS = 10000;
 const PHONE_RE = /^[\d\s()+.-]{7,40}$/;
 
@@ -147,6 +147,7 @@ clients.patch("/clients/:id", async (c) => {
     if (tel !== row.phone) fields.sms_ok_at = null;
   }
   // the stop belongs to the old address; the client row starts clean with the new one
+  if (email !== row.email) fields.email_bounced_at = null;
   const leaving = row.email_stop_at && row.email && email !== row.email ? await stopHash(c.env, row.email) : null;
   if (leaving) fields.email_stop_at = null;
   if (!Object.keys(fields).length) return invalid(c);
@@ -162,6 +163,18 @@ clients.patch("/clients/:id", async (c) => {
     ...(consent.set.length || consent.cleared.length ? [audit(c, "client.consent", "client", row.id, consent)] : []),
   ]);
   return c.json(await db.prepare(`SELECT ${COLS} FROM clients WHERE id = ?`).bind(row.id).first());
+});
+
+// the person says the address is right after all (a full mailbox that has since been emptied, say)
+clients.post("/clients/:id/retry-email", async (c) => {
+  const db = c.get("db");
+  const res = await db
+    .prepare("UPDATE clients SET email_bounced_at = NULL WHERE firm_id = ? AND id = ? AND deleted_at IS NULL AND email_bounced_at IS NOT NULL")
+    .bind(c.get("firm").id, c.req.param("id"))
+    .run();
+  if (res.meta.changes !== 1) return notFound(c);
+  await audit(c, "client.update", "client", c.req.param("id"), { fields: ["email_bounced_at"] }).run();
+  return c.json({ ok: true });
 });
 
 clients.delete("/clients/:id", async (c) => {
