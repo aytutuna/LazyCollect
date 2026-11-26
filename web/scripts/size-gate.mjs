@@ -1,11 +1,9 @@
-// Fails when the Rust scanner's WebAssembly and its JavaScript outgrow their budget, gzipped. Run it after
-// `VITE_RUST_SCANNER=1 npm run build`. It also prints what the onnxruntime-web scanner costs today and the two models, for comparison.
+// Fails when what the Rust scanner makes a client download (its WebAssembly, its JavaScript and its corner model, gzipped) is
+// more than the onnxruntime-web scanner's WebAssembly and int8 model, which is what the page downloads today. Run it after
+// `VITE_RUST_SCANNER=1 npm run build`, which carries both.
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
-
-// measured 2026-11-26 on LazyKit 61484693: 2.78 MB of WebAssembly and 3 kB of JavaScript, with about 7 % to spare
-const BUDGET = 3_000_000;
 
 const web = fileURLToPath(new URL("..", import.meta.url));
 const assets = readdirSync(`${web}dist/assets`);
@@ -25,9 +23,11 @@ const int8 = modelOf(models.sha256.slice(0, 12), "docaligner-int8.onnx");
 const tract = modelOf(models.tractSha256.slice(0, 12), "docaligner-tract.onnx");
 
 const kb = (n) => `${(n / 1000).toFixed(0)} kB`;
-console.log(`Rust scanner: ${kb(wasm)} wasm + ${kb(glue)} js = ${kb(wasm + glue)} gzipped, budget ${kb(BUDGET)}, plus the tract model ${kb(tract)}`);
-console.log(`onnxruntime-web scanner: ${kb(ort)} wasm gzipped, plus the int8 model ${kb(int8)}`);
-if (wasm + glue > BUDGET) {
-  console.error("the Rust scanner is over its size budget");
+const rust = wasm + glue + tract;
+const today = ort + int8;
+console.log(`Rust scanner: ${kb(wasm)} wasm + ${kb(glue)} js + ${kb(tract)} model = ${kb(rust)} gzipped`);
+console.log(`onnxruntime-web scanner: ${kb(ort)} wasm + ${kb(int8)} model = ${kb(today)} gzipped`);
+if (rust > today) {
+  console.error("the Rust scanner downloads more than the onnxruntime-web scanner");
   process.exit(1);
 }

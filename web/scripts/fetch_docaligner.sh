@@ -7,9 +7,9 @@
 # Neither model is checked in; without them the scanner finds no page by itself (the corner editor still works) and the
 # tests that need the model skip. Needs Python 3 with venv; set PYTHON to pick one (onnx has no wheels for the newest
 # releases). Runs in bash on Linux, macOS and Git Bash on Windows.
-# With the argument `tract` it makes the other file instead: the same fp32 model with tract's Einsum fix (scripts/patch_einsum.py,
-# LazyKit's tools/patch_einsum.py at 61484693), the Rust scanner's, at public/models/<first 12 hex>/docaligner-tract.onnx,
-# checked against "tractSha256" in model.json. It needs only Python 3.
+# With the argument `tract` it also makes the Rust scanner's file: the int8 model with tract's Einsum fix (scripts/patch_einsum.py,
+# LazyKit's tools/patch_einsum.py at 61484693), at public/models/<first 12 hex>/docaligner-tract.onnx, checked against
+# "tractSha256" in model.json. The patch only changes protobuf lengths, so the file is as small as the int8 one.
 set -euo pipefail
 
 copy="https://github.com/aytutuna/LazyCollect/releases/download/deps-docaligner-1.1.1"
@@ -48,33 +48,17 @@ if [ ! -f "$source" ] || [ "$(sha256 "$source")" != "$expected" ]; then
   echo "$name: fetched"
 fi
 
-if [ "${1:-}" = tract ]; then
-  if [ ! -f "$tract_out" ] || [ "$(sha256 "$tract_out")" != "$expected_tract" ]; then
-    "${PYTHON:-python3}" -I "$web/scripts/patch_einsum.py" "$source" "$tract_out"
-    hash=$(sha256 "$tract_out")
-    if [ "$hash" != "$expected_tract" ]; then
-      rm -f "$tract_out"
-      echo "docaligner-tract.onnx: checksum mismatch: $hash" >&2
-      exit 1
-    fi
-  fi
-  ls -l "$tract_out" | awk '{print "docaligner-tract.onnx: " $5 " bytes"}'
-  exit 0
-fi
-
 if [ -f "$out" ] && [ "$(sha256 "$out")" = "$expected_int8" ]; then
   echo "docaligner-int8.onnx: up to date"
-  exit 0
-fi
-
-# the venv is trusted only once pip has finished, and is rebuilt when the requirements change
-venv="$web/.cache/venv"
-wanted=$(sha256 "$web/scripts/requirements.txt")
-if [ ! -f "$venv/stamp" ] || [ "$(cat "$venv/stamp")" != "$wanted" ]; then
-  rm -rf "$venv"
-  "${PYTHON:-python3}" -m venv "$venv"
-  "$venv"/*/python -m pip install -q -r "$web/scripts/requirements.txt"
-  echo "$wanted" > "$venv/stamp"
+else
+  # the venv is trusted only once pip has finished, and is rebuilt when the requirements change
+  venv="$web/.cache/venv"
+  wanted=$(sha256 "$web/scripts/requirements.txt")
+  if [ ! -f "$venv/stamp" ] || [ "$(cat "$venv/stamp")" != "$wanted" ]; then
+    rm -rf "$venv"
+    "${PYTHON:-python3}" -m venv "$venv"
+    "$venv"/*/python -m pip install -q -r "$web/scripts/requirements.txt"
+    echo "$wanted" > "$venv/stamp"
 fi
 "$venv"/*/python "$web/scripts/shrink_model.py" "$source" "$out"
 hash=$(sha256 "$out")
@@ -84,3 +68,17 @@ if [ "$hash" != "$expected_int8" ]; then
   exit 1
 fi
 ls -l "$out" | awk '{print "docaligner-int8.onnx: " $5 " bytes"}'
+fi
+
+if [ "${1:-}" = tract ]; then
+  if [ ! -f "$tract_out" ] || [ "$(sha256 "$tract_out")" != "$expected_tract" ]; then
+    "${PYTHON:-python3}" -I "$web/scripts/patch_einsum.py" "$out" "$tract_out"
+    hash=$(sha256 "$tract_out")
+    if [ "$hash" != "$expected_tract" ]; then
+      rm -f "$tract_out"
+      echo "docaligner-tract.onnx: checksum mismatch: $hash" >&2
+      exit 1
+    fi
+  fi
+  ls -l "$tract_out" | awk '{print "docaligner-tract.onnx: " $5 " bytes"}'
+fi
