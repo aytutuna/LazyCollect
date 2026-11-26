@@ -7,6 +7,9 @@
 # Neither model is checked in; without them the scanner finds no page by itself (the corner editor still works) and the
 # tests that need the model skip. Needs Python 3 with venv; set PYTHON to pick one (onnx has no wheels for the newest
 # releases). Runs in bash on Linux, macOS and Git Bash on Windows.
+# With the argument `tract` it makes the other file instead: the same fp32 model with tract's Einsum fix (scripts/patch_einsum.py,
+# LazyKit's tools/patch_einsum.py at 61484693), the Rust scanner's, at public/models/<first 12 hex>/docaligner-tract.onnx,
+# checked against "tractSha256" in model.json. It needs only Python 3.
 set -euo pipefail
 
 copy="https://github.com/aytutuna/LazyCollect/releases/download/deps-docaligner-1.1.1"
@@ -26,7 +29,10 @@ sha256() {
   fi
 }
 
-mkdir -p "$web/.cache" "$(dirname "$out")"
+expected_tract=$(sed -n 's/.*"tractSha256": *"\([0-9a-f]*\)".*/\1/p' "$web/src/scan/model.json")
+tract_out="$web/public/models/${expected_tract:0:12}/docaligner-tract.onnx"
+
+mkdir -p "$web/.cache" "$(dirname "$out")" "$(dirname "$tract_out")"
 if [ ! -f "$source" ] || [ "$(sha256 "$source")" != "$expected" ]; then
   if ! curl -fsSL --retry 3 --retry-all-errors --retry-delay 10 -o "$source.part" "$copy/$name"; then
     echo "$name: our copy is not available, trying the upstream release" >&2
@@ -40,6 +46,20 @@ if [ ! -f "$source" ] || [ "$(sha256 "$source")" != "$expected" ]; then
   fi
   mv "$source.part" "$source"
   echo "$name: fetched"
+fi
+
+if [ "${1:-}" = tract ]; then
+  if [ ! -f "$tract_out" ] || [ "$(sha256 "$tract_out")" != "$expected_tract" ]; then
+    "${PYTHON:-python3}" -I "$web/scripts/patch_einsum.py" "$source" "$tract_out"
+    hash=$(sha256 "$tract_out")
+    if [ "$hash" != "$expected_tract" ]; then
+      rm -f "$tract_out"
+      echo "docaligner-tract.onnx: checksum mismatch: $hash" >&2
+      exit 1
+    fi
+  fi
+  ls -l "$tract_out" | awk '{print "docaligner-tract.onnx: " $5 " bytes"}'
+  exit 0
 fi
 
 if [ -f "$out" ] && [ "$(sha256 "$out")" = "$expected_int8" ]; then
