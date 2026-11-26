@@ -733,6 +733,20 @@ describe("upload notice failures", () => {
   });
 });
 
+describe("upload notice tries", () => {
+  it("starts again from three tries after a notice goes through", async () => {
+    const o = await openRequest();
+    await upload(o.path, o.req.items[0].id, pdf(500));
+    mockOutbound(true, 422);
+    const now = Date.now();
+    await runReminders(env, now);
+    expect((await requestRow(o.req.id)).notice_tries).toBe(1);
+    mockOutbound();
+    await runReminders(env, now + 16 * MINUTE);
+    expect((await requestRow(o.req.id)).notice_tries).toBe(0);
+  });
+});
+
 describe("upload notices when the provider is out of reach", () => {
   it("uses no try over an hour of runs a minute apart, and tells the owner once it is back", async () => {
     const o = await openRequest();

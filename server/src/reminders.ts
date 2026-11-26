@@ -336,6 +336,7 @@ async function noticePass(env: Env, db: D1Database, now: number) {
         subject: what.replace(/[\r\n]+/g, " "),
         text: `${what}.\n\nOpen it here:\n${env.APP_URL}/requests/${r.id}\n`,
       });
+      if (r.tries) await db.prepare("UPDATE requests SET notice_tries = 0 WHERE firm_id = ? AND id = ?").bind(r.firm_id, r.id).run();
     } catch (e) {
       // a provider out of reach uses no try; a refusal uses one, and either way the note waits before the next
       const out = e instanceof Transient;
