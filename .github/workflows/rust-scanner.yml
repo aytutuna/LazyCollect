@@ -71,7 +71,7 @@ jobs:
         run: |
           cargo build --locked --release --target wasm32-unknown-unknown
           wasm-bindgen --target web --out-dir ../src/scan/wasm target/wasm32-unknown-unknown/release/collect_scan_wasm.wasm
-          wasm-opt -Oz --all-features ../src/scan/wasm/collect_scan_wasm_bg.wasm -o ../src/scan/wasm/collect_scan_wasm_bg.opt.wasm
+          wasm-opt -Oz --enable-simd --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-multivalue --enable-reference-types ../src/scan/wasm/collect_scan_wasm_bg.wasm -o ../src/scan/wasm/collect_scan_wasm_bg.opt.wasm
           mv ../src/scan/wasm/collect_scan_wasm_bg.opt.wasm ../src/scan/wasm/collect_scan_wasm_bg.wasm
       - name: The committed types are the built ones
         run: git diff --exit-code web/src/scan/wasm/collect_scan_wasm.d.ts
