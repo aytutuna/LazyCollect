@@ -218,7 +218,7 @@ describe("a request from a copy that was deleted", () => {
     const first = await (await make(cookie, client.id, { template_id: copy.id, tax_year: 2026 })).json<any>();
     await api(`/api/templates/${copy.id}`, { method: "DELETE", cookie });
     const firmId = (await q("SELECT firm_id FROM requests"))[0].firm_id;
-    expect((await factsOf(env.DB_NA, firmId, copy.id))[2026].rrsp_window).toBe("March 3, 2026 to March 1, 2027");
+    expect((await factsOf(env.DB_NA, firmId, copy.id, "en"))[2026].rrsp_window).toBe("March 3, 2026 to March 1, 2027");
     const res = await repeat(cookie, first.id);
     expect([res.status, (await res.json<any>()).error]).toEqual([409, "tax_year_unknown"]);
     const t2 = await (await make(cookie, client.id, { items: [item("Slip {rrsp_window}")], template_ref: "t1-personal", tax_year: 2026 })).json<any>();

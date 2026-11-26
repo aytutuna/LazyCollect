@@ -1,4 +1,4 @@
-import { asLang, isLang, type Lang } from "./lang";
+import { asLang, writeLang, type Lang } from "./lang";
 import { classOf, itemFailed } from "./pulse";
 import { Hono, type Context } from "hono";
 import { audit } from "./audit";
@@ -99,19 +99,17 @@ batches.post("/batches", async (c) => {
   let kind: "template" | "request" | "repeat" = "template";
   let sourceName: string | null = null;
   let due: number | null = null;
-  // the checklists of a batch come in the language asked for; a copy of a request keeps that request's
-  if (body.locale !== undefined && !isLang(body.locale)) return invalid(c);
-  let lang: Lang = isLang(body.locale) ? body.locale : "en";
-  let items: (Item & { tpl?: string })[] = [];
+  // a template's checklist for each language the batch writes in; a copy of a request keeps that request's language
+  const itemsBy = new Map<Lang, (Item & { tpl?: string })[]>();
   let templateRef: string | null = null;
   let sourceId: string | null = null;
   const plans: Omit<Plan, "position" | "state" | "reason">[] = [];
   const mailable = new Map<string, boolean>();
 
-  type ClientRow = { id: string; name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null; email_bounced_at: number | null };
+  type ClientRow = { id: string; name: string; locale: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null; email_bounced_at: number | null };
   const loadClients = async (list: string[]) => {
     const { results } = await db
-      .prepare("SELECT id, name, email, email_ok_at, email_stop_at, email_bounced_at FROM clients WHERE firm_id = ? AND deleted_at IS NULL AND id IN (SELECT value FROM json_each(?)) ORDER BY name COLLATE NOCASE, id")
+      .prepare("SELECT id, name, locale, email, email_ok_at, email_stop_at, email_bounced_at FROM clients WHERE firm_id = ? AND deleted_at IS NULL AND id IN (SELECT value FROM json_each(?)) ORDER BY name COLLATE NOCASE, id")
       .bind(firm.id, JSON.stringify(list))
       .all<ClientRow>();
     for (const cl of results) mailable.set(cl.id, Boolean(cl.email && cl.email_ok_at && !cl.email_stop_at && !cl.email_bounced_at));
@@ -143,30 +141,36 @@ batches.post("/batches", async (c) => {
     const clients = await loadClients(ids);
     if (clients.length !== ids.length) return notFound(c);
     let sourceNote: string | null = null;
+    let requestLang: Lang | null = null;
     if (body.template_id !== undefined) {
       if (typeof body.template_id !== "string") return invalid(c);
-      const built = builtinsFor(lang).find((t) => t.id === body.template_id);
-      if (built) {
-        items = built.items;
-        sourceName = built.name;
+      templateRef = body.template_id;
+      const home = asLang(firm.locale);
+      const isBuiltin = builtinsFor(home).some((t) => t.id === templateRef);
+      let own: Item[] = [];
+      if (isBuiltin) {
+        sourceName = builtinsFor(home).find((t) => t.id === templateRef)!.name;
       } else {
         const row = await db.prepare("SELECT name, items_json FROM templates WHERE firm_id = ? AND id = ?").bind(firm.id, body.template_id).first<{ name: string; items_json: string }>();
         if (!row) return notFound(c);
-        items = JSON.parse(row.items_json);
+        own = JSON.parse(row.items_json);
         sourceName = row.name;
       }
-      templateRef = body.template_id;
-      // the checklist's markers are filled in for the tax year the account picked
-      const facts = await factsOf(db, firm.id, templateRef);
-      if (hasMarkers(items, facts)) {
-        if (taxYear === null) return c.json({ error: "tax_year_needed" }, 400);
-        if (!taxYears(items, facts).includes(taxYear)) return c.json({ error: "tax_year_unknown" }, 400);
-        try {
-          items = resolveItems(items, taxYear, facts);
-        } catch (e) {
-          if (e instanceof UnknownYear) return c.json({ error: "tax_year_unknown" }, 400);
-          throw e;
+      for (const lang of new Set(clients.map((cl) => writeLang(firm, cl)))) {
+        let items: (Item & { tpl?: string })[] = isBuiltin ? builtinsFor(lang).find((t) => t.id === templateRef)!.items : own;
+        // the checklist's markers are filled in for the tax year the account picked
+        const facts = await factsOf(db, firm.id, templateRef, lang);
+        if (hasMarkers(items, facts)) {
+          if (taxYear === null) return c.json({ error: "tax_year_needed" }, 400);
+          if (!taxYears(items, facts).includes(taxYear)) return c.json({ error: "tax_year_unknown" }, 400);
+          try {
+            items = resolveItems(items, taxYear, facts);
+          } catch (e) {
+            if (e instanceof UnknownYear) return c.json({ error: "tax_year_unknown" }, 400);
+            throw e;
+          }
         }
+        itemsBy.set(lang, items);
       }
     } else {
       kind = "request";
@@ -174,7 +178,7 @@ batches.post("/batches", async (c) => {
       const src = await db.prepare("SELECT id, locale, title, note FROM requests WHERE firm_id = ? AND id = ? AND deleted_at IS NULL").bind(firm.id, body.request_id).first<{ id: string; locale: string; title: string; note: string | null }>();
       if (!src) return notFound(c);
       sourceId = src.id;
-      lang = asLang(src.locale);
+      requestLang = asLang(src.locale);
       sourceName = src.title;
       sourceNote = src.note;
     }
@@ -183,7 +187,7 @@ batches.post("/batches", async (c) => {
       plans.push({
         id: randomId(),
         client_id: cl.id,
-        locale: lang,
+        locale: requestLang ?? writeLang(firm, cl),
         title: title.replaceAll("{year}", year).replaceAll("{client}", cl.name).slice(0, 200),
         note: note ?? (kind === "request" ? sourceNote : null),
         deadline: due,
@@ -203,8 +207,14 @@ batches.post("/batches", async (c) => {
   const later = kind === "repeat" ? await yearOn(db, firm.id, plans.map((p) => ({ id: p.id, src: p.src! }))) : { statements: [], stale: [] };
   if (later === "unknown") return c.json({ error: "tax_year_unknown" }, 409);
   // a template's items for each person wait for people the new requests do not have yet
-  const expanded = expandItems(items, [], today(now, firm.tz).today, lang);
-  if (expanded.rows.length > MAX_ITEMS) return invalid(c);
+  const day = today(now, firm.tz).today;
+  const expandedBy = new Map<Lang, ReturnType<typeof expandItems>>();
+  for (const [lang, items] of itemsBy) {
+    const expanded = expandItems(items, [], day, lang);
+    if (expanded.rows.length > MAX_ITEMS) return invalid(c);
+    expandedBy.set(lang, expanded);
+  }
+  const nothing = { rows: [], perPerson: [] };
   const rows: Plan[] = plans.map((p, position) => {
     const ok = mailable.get(p.client_id);
     return { ...p, position, state: ok ? "pending" : "no_email", reason: ok ? null : "no_email" };
@@ -218,8 +228,14 @@ batches.post("/batches", async (c) => {
       )
       .bind(batchId, firm.id, title, kind, sourceName, due, body.reminders_on ? 1 : 0, sendAt, sendAt, rows.length, userId, now, firm.id, since, rows.length),
   ];
-  for (let at = 0; at < rows.length; at += CHUNK) {
-    const chunk = rows.slice(at, at + CHUNK);
+  // a chunk holds requests of one language, since they share the template's items
+  const chunks: { lang: Lang; rows: Plan[] }[] = [];
+  for (const lang of new Set(rows.map((r) => r.locale))) {
+    const mine = rows.filter((r) => r.locale === lang);
+    for (let at = 0; at < mine.length; at += CHUNK) chunks.push({ lang, rows: mine.slice(at, at + CHUNK) });
+  }
+  for (const { lang, rows: chunk } of chunks) {
+    const expanded = expandedBy.get(lang) ?? nothing;
     stmts.push(
       db
         .prepare(

@@ -16,14 +16,12 @@
   "plan.ended_member": "Le forfait est terminé, donc les nouveaux liens et les changements de date limite sont suspendus. Demandez au titulaire du compte de s'abonner.",
   "plan.ended": "Votre forfait est terminé. Les nouveaux liens et les changements de date limite sont suspendus. Abonnez-vous dans les paramètres pour les réactiver.",
   "plan.past_due": "Votre dernier paiement n'a pas été traité. Mettez à jour vos renseignements de paiement dans les paramètres d'ici le {date} pour continuer à envoyer des liens.",
-
   "nav.label": "Navigation principale",
   "nav.requests": "Demandes",
   "nav.clients": "Clients",
   "nav.templates": "Modèles",
   "nav.settings": "Paramètres",
   "nav.signout": "Se déconnecter",
-
   "rel.today": "Aujourd'hui",
   "rel.tomorrow": "Demain",
   "rel.yesterday": "Hier",
@@ -31,20 +29,17 @@
   "rel.in_days_other": "Dans {n} jours",
   "rel.overdue_days_one": "{n} jour de retard",
   "rel.overdue_days_other": "{n} jours de retard",
-
   "status.draft": "Brouillon",
   "status.open": "Ouverte",
   "status.complete": "Terminée",
   "status.expired": "Expirée",
   "status.closed": "Fermée",
-
   "item.empty": "En attente",
   "item.submitted": "Reçu",
   "item.approved": "Approuvé",
   "item.rejected": "Renvoyé",
   "item.unavailable": "Non disponible",
   "item.waived": "Non requis",
-
   "error.network": "Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.",
   "error.server_error": "Un problème est survenu de notre côté. Réessayez dans un instant.",
   "error.rate_limited": "Trop de tentatives. Attendez une minute et réessayez.",
@@ -92,7 +87,6 @@
   "error.export_too_big": "Ces fichiers totalisent plus de 4 Go et ne peuvent pas tenir dans un seul fichier zip. Téléchargez-les un par un.",
   "error.purging": "Cet élément est en cours de suppression définitive et ne peut donc pas être modifié.",
   "error.upload_id_used": "Ce téléversement a déjà été retiré. Choisissez de nouveau le fichier.",
-
   "signin.title": "Connexion",
   "legal.terms": "Conditions d'utilisation",
   "legal.privacy": "Politique de confidentialité",
@@ -109,10 +103,8 @@
   "signin.code": "Code",
   "signin.verify": "Se connecter",
   "signin.other": "Utiliser un autre courriel",
-
   "setup.title": "Configurer votre compte",
   "setup.intro": "Ajoutez le nom que vos clients reconnaîtront. Vous pourrez le modifier plus tard dans les paramètres.",
-
   "firm.name": "Votre nom ou le nom de votre entreprise",
   "firm.name_hint": "Vos clients le voient dans chaque demande.",
   "firm.business": "Renseignements sur l'entreprise (facultatif)",
@@ -126,7 +118,6 @@
   "firm.tz": "Fuseau horaire",
   "firm.tz_hint": "Les rappels sont envoyés entre 9 h et 19 h dans ce fuseau horaire.",
   "firm.owner_only": "Seul le titulaire du compte peut modifier ces renseignements.",
-
   "tz.America/St_Johns": "Terre-Neuve (St. John's)",
   "tz.America/Halifax": "Atlantique (Halifax)",
   "tz.America/Toronto": "Est (Toronto)",
@@ -147,7 +138,6 @@
   "province.QC": "Québec",
   "province.SK": "Saskatchewan",
   "province.YT": "Yukon",
-
   "settings.title": "Paramètres",
   "settings.account": "Compte",
   "settings.signed_in": "Connecté en tant que {email}.",
@@ -224,7 +214,6 @@
   "activity.action.invite.revoke": "A annulé une invitation",
   "activity.action.invite.accept": "A accepté une invitation et s'est joint au compte",
   "activity.action.staff.remove": "A retiré une personne du compte",
-
   "requests.title": "Demandes",
   "requests.new": "Nouvelle demande",
   "requests.empty_title": "Aucune demande pour l'instant",
@@ -238,7 +227,6 @@
   "requests.deadline": "Date limite",
   "requests.progress": "Progression",
   "requests.due": "À remettre {when}",
-
   "new.title": "Nouvelle demande",
   "new.client": "Client",
   "new.pick_client": "Client",
@@ -255,7 +243,6 @@
   "new.blank": "Liste vide",
   "new.need_item": "Ajoutez au moins un élément.",
   "new.save": "Enregistrer comme brouillon",
-
   "items.label": "Document",
   "items.help": "Aide pour le client",
   "items.required": "Obligatoire",
@@ -264,7 +251,6 @@
   "items.down": "Descendre",
   "items.remove": "Retirer",
   "items.add": "Ajouter un élément",
-
   "detail.edit": "Modifier les détails",
   "detail.link": "Lien du client",
   "detail.link_none": "Aucun lien pour l'instant. Créez-en un pour transmettre la liste à votre client.",
@@ -278,14 +264,12 @@
   "detail.email_address": "Ajoutez votre adresse postale dans les paramètres pour envoyer des courriels aux clients.",
   "detail.email_client": "Pour envoyer un courriel à ce client, ajoutez son adresse courriel et confirmez que vous pouvez le contacter.",
   "detail.email_stopped": "Ce client a demandé de ne plus recevoir de courriels. Copiez le lien et transmettez-le vous-même.",
-  "detail.settings": "Paramètres",
   "detail.emailed": "Envoyé par courriel à {email}. Si le client ne le trouve pas, demandez-lui de vérifier son dossier de courrier indésirable.",
   "detail.email_failed": "Le courriel n'a pas pu être envoyé. Copiez plutôt le lien.",
   "detail.reminders": "Rappels",
   "detail.reminders_on": "Relancer le client par courriel jusqu'à la date limite",
   "detail.reminders_next": "Prochain rappel : {date}",
   "detail.reminders_none": "Aucun rappel n'est prévu.",
-  "detail.messages": "Courriels envoyés",
   "detail.messages_none": "Aucun courriel n'a encore été envoyé.",
   "message.invite": "Lien envoyé",
   "message.reminder": "Rappel",
@@ -334,7 +318,6 @@
   "detail.thread_email_failed": "Enregistré, mais le courriel n'a pas pu être envoyé.",
   "detail.delete": "Supprimer la demande",
   "detail.delete_body": "La demande disparaît de votre liste et le lien du client cesse de fonctionner.",
-
   "clients.title": "Clients",
   "clients.add": "Ajouter un client",
   "clients.edit": "Modifier le client",
@@ -348,7 +331,6 @@
   "clients.delete_title": "Supprimer {name}?",
   "clients.delete_body": "Ses demandes ouvertes seront fermées et ses liens cesseront de fonctionner.",
   "clients.delete": "Supprimer le client",
-
   "templates.title": "Modèles",
   "templates.new": "Nouveau modèle",
   "templates.edit": "Modifier le modèle",
@@ -364,7 +346,6 @@
   "templates.delete_title": "Supprimer {name}?",
   "templates.delete_body": "Les demandes déjà créées à partir de ce modèle ne sont pas touchées.",
   "templates.delete": "Supprimer le modèle",
-
   "client.gone_title": "Lien introuvable",
   "client.gone": "Ce lien a expiré ou a été remplacé. Demandez un nouveau lien à la personne qui vous l'a envoyé.",
   "client.error_title": "Un problème est survenu",
@@ -446,7 +427,6 @@
   "error.not_allowed": "Cela ne peut plus être modifié. Actualisez la page.",
   "error.too_many_notes": "Vous avez envoyé beaucoup de messages. Attendez un peu ou répondez plutôt au courriel.",
   "error.missing_file": "Ce fichier n'est plus enregistré sur cet appareil. Choisissez-le de nouveau.",
-
   "detail.download": "Tout télécharger (zip)",
   "ircc.button": "Préparer pour IRCC",
   "ircc.title": "Préparer pour IRCC",
@@ -485,7 +465,6 @@
   "detail.records": "Dossiers",
   "detail.activity": "Activité",
   "detail.activity_none": "Rien de consigné pour l'instant.",
-
   "trash.title": "Supprimés récemment",
   "trash.intro": "Les demandes et les clients supprimés peuvent être restaurés pendant 30 jours, puis ils sont supprimés définitivement avec leurs fichiers.",
   "trash.requests": "Demandes",
@@ -496,7 +475,6 @@
   "trash.removed": "Suppression définitive après le {date}",
   "trash.restored_request": "Restaurée. Elle reste fermée et ne peut pas recevoir de nouveau lien.",
   "trash.restored_client": "Restauré. Ses demandes restent fermées et ses liens restent désactivés.",
-
   "activity.title": "Activité",
   "activity.intro": "Tout ce qui a été fait dans ce compte, du plus récent au plus ancien.",
   "activity.when": "Quand",
@@ -591,7 +569,6 @@
   "clients.requests_one": "{n} demande",
   "clients.requests_other": "{n} demandes",
   "clients.no_requests": "Aucune demande",
-  "clients.view_requests": "Voir les demandes",
   "viewer.open": "Afficher {name}",
   "viewer.file_of": "Fichier {n} sur {m}",
   "viewer.prev": "Précédent",
@@ -600,7 +577,6 @@
   "viewer.download": "Télécharger",
   "viewer.open_pdf": "Ouvrir le PDF",
   "viewer.new_tab": "Ouvrir dans un nouvel onglet",
-  "viewer.checking": "Chargement du fichier...",
   "viewer.unsupported": "Ce type de fichier ne peut pas être affiché dans le navigateur. Téléchargez-le pour l'ouvrir.",
   "viewer.failed": "Ce fichier n'a pas pu être affiché. Vous pouvez le télécharger à la place.",
   "viewer.alt": "Aperçu de {name}",
@@ -870,7 +846,6 @@
   "batch.stopped_note": "Arrêté : votre compte n'a pas pu envoyer de courriels pendant 30 jours. {n} n'ont pas été envoyés. Leurs brouillons sont toujours là.",
   "batch.cancelled_note": "Arrêté. {n} n'ont pas été envoyés. Leurs brouillons sont toujours là.",
   "batch.all_batches": "Tous les lots",
-  "batch.refresh": "Actualiser",
   "batch.count.pending": "Pas encore envoyés",
   "batch.count.sent": "Envoyés",
   "batch.count.opened": "Ouverts",
@@ -893,7 +868,6 @@
   "batch.state.skipped.deadline_passed": "Ignoré : la date limite est passée",
   "batch.state.failed": "N'a pas pu être envoyé",
   "batch.state.cancelled": "Non envoyé : lot arrêté",
-  "batch.opened": "Ouvert",
   "batch.not_opened": "Non ouvert",
   "batch.review_n": "{n} à examiner",
   "batch.form.title": "Envoyer à plusieurs",
@@ -944,7 +918,6 @@
   "activity.action.request.repeat": "A répété une demande pour l'an prochain",
   "activity.action.client.import": "A importé des clients",
   "detail.opened_label": "Ouvert",
-
   "scan.open": "Numériser",
   "scan.load_failed": "Le numériseur n'a pas pu se charger. Vous pouvez prendre la photo avec l'appareil photo de votre téléphone ou recharger la page pour réessayer.",
   "scan.reload": "Recharger",
@@ -1026,9 +999,7 @@
   "people.waiting": "Cette liste comprend des éléments pour chaque personne. Ils apparaissent dès que vous ajoutez les personnes visées.",
   "people.edit_note": "Changer un rôle ou une date de naissance ne change pas les éléments d'une personne. Pour repartir de zéro avec ses éléments, retirez la personne et ajoutez-la de nouveau.",
   "people.progress": "{role} : {done} sur {total}",
-  "people.general": "Pour tous",
   "people.save": "Enregistrer la personne",
-  "people.pick": "Nom du demandeur principal, tiré du client",
   "people.new_hint": "Ajoutez les personnes visées par cette demande. Les éléments marqués « pour chaque personne » sont créés pour elles.",
   "people.new_waiting": "La liste que vous avez choisie comprend des éléments pour chaque personne. Ajoutez au moins une personne pour les obtenir.",
   "error.has_data": "Les éléments de cette personne contiennent des fichiers ou des réponses. Confirmez pour les retirer aussi.",
@@ -1051,7 +1022,6 @@
   "date.issued": "Date de délivrance",
   "date.issued_hint": "Considéré comme valide pendant {n} mois à compter de cette date.",
   "date.saved": "Date enregistrée.",
-  "date.edit": "Dates",
   "detail.valid_until": "Les documents doivent rester valides jusqu'au",
   "detail.valid_until_hint": "Laissez vide pour six mois après la date limite.",
   "detail.valid_until_value": "{date} (six mois après la date limite)",
@@ -1070,17 +1040,13 @@
   "activity.action.person.edit": "A modifié une personne dans une demande",
   "activity.action.person.remove": "A retiré une personne d'une demande",
   "activity.action.item.dates": "Le client a indiqué la date d'un document",
-
   "lang.label": "Langue",
   "lang.en": "English",
   "lang.fr-CA": "Français",
-  "clients.language": "Langue des courriels et de la page du client",
+  "clients.language": "Langue du client",
   "size.b": "o",
   "size.kb": "ko",
   "size.mb": "Mo",
-  "new.language": "Langue de cette demande",
-  "new.language_hint": "La liste, la page du client et les courriels utilisent cette langue.",
-  "batch.language": "Langue de ces demandes",
   "plan.trial_soon": "Votre essai gratuit se termine le {date}. Abonnez-vous dans les paramètres pour que les liens de vos clients continuent d'accepter des fichiers.",
   "plan.trial_soon_member": "L'essai gratuit se termine le {date}. Demandez au titulaire du compte de s'abonner pour que les clients puissent continuer à envoyer des fichiers.",
   "detail.stale_years": "Ces éléments ont été reformulés et mentionnent encore une année proche de l'ancienne. Vérifiez-les : {items}",
@@ -1118,5 +1084,11 @@
   "client.job_paused": "{name} : en attente sur cet appareil pendant 14 jours au plus, jusqu'à la réouverture de l'envoi de fichiers",
   "client.paused_title": "L'envoi de nouveaux fichiers est suspendu",
   "client.paused": "{firm} n'accepte pas de nouveaux fichiers par ce lien pour le moment. Vous pouvez encore répondre aux questions et écrire à {firm}. Les fichiers déjà choisis restent en attente sur cet appareil pendant 14 jours au plus, sauf si votre navigateur vide son stockage, et ils sont envoyés dès que le lien accepte de nouveau des fichiers.",
-  "client.item_paused": "L'envoi de nouveaux fichiers est suspendu pour le moment."
+  "client.item_paused": "L'envoi de nouveaux fichiers est suspendu pour le moment.",
+  "clients.language_hint": "Utilisée quand votre compte écrit à chaque client dans sa propre langue. Voir les paramètres.",
+  "settings.language": "Langue",
+  "settings.language_hint": "La langue dans laquelle votre compte écrit : courriels aux clients, aide-mémoire prédéfinis, page du client et fichiers texte d'un téléchargement. Ce n'est pas la langue de cet écran.",
+  "settings.language_account": "Langue du compte",
+  "settings.language_clients": "Écrire à chaque client dans sa propre langue",
+  "settings.language_clients_hint": "Choisissez la langue d'un client dans la page Clients. Une demande copiée à partir d'une autre demande garde la langue de celle-ci."
 }

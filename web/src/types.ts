@@ -25,6 +25,8 @@ export type Firm = {
   phone: string | null;
   province: string | null;
   tz: string;
+  locale: string;
+  client_langs: number;
   plan_status: string;
   trial_ends_at: number | null;
 };

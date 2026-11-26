@@ -2,21 +2,25 @@ import { useEffect, useState } from "preact/hooks";
 import { useLocation, useSearch } from "wouter-preact";
 import { get, post, useAction, useLoad } from "../api";
 import { fromInput, inDays, toInput } from "../format";
-import { LOCALES, isLocale, locale, t, type Locale } from "../i18n";
-import type { Client, RequestDetail, Template } from "../types";
+import { locale, t } from "../i18n";
+import type { Client, Firm, RequestDetail, Template } from "../types";
 import { ErrorNote, Field, Loading } from "../ui";
 import { ClientForm } from "./clients";
 import { ItemsEditor, newItem, toEditItems, toPayload, type EditItem } from "./items-editor";
-import { followLanguage } from "./template-language";
+import { followLanguage, requestLanguage } from "./template-language";
 import { PeopleDrafts, newDraft, toPeople, type Draft } from "./people";
+
+const titled = (found: Template) => (found.tax ? `${found.name} ${found.tax.suggested}` : found.name);
 
 export function NewRequest() {
   const [, go] = useLocation();
   const preset = new URLSearchParams(useSearch()).get("template") ?? "";
   const clients = useLoad(() => get<Client[]>("/clients"));
-  const [lang, setLang] = useState<Locale>(locale());
-  const templates = useLoad(() => get<Template[]>(`/templates?locale=${lang}`), [lang]);
+  const firm = useLoad(() => get<Firm>("/firm"));
   const [clientId, setClientId] = useState("");
+  // the account's language, or the client's when the account writes to each client in their own
+  const lang = firm.data ? requestLanguage(firm.data, clients.data?.find((c) => c.id === clientId)) : locale();
+  const templates = useLoad(() => get<Template[]>(`/templates?locale=${lang}`), [lang]);
   const [addingClient, setAddingClient] = useState(false);
   const [templateId, setTemplateId] = useState("");
   const [items, setItems] = useState<EditItem[]>([newItem()]);
@@ -41,7 +45,7 @@ export function NewRequest() {
     }
     setItems(toEditItems(found.items));
     setTaxYear(found.tax?.suggested ?? null);
-    const named = found.tax ? `${found.name} ${found.tax.suggested}` : found.name;
+    const named = titled(found);
     if (!title) {
       setTitle(named);
       setTemplateTitle(named);
@@ -54,17 +58,10 @@ export function NewRequest() {
     if (preset && templates.data && !templateId) pickTemplate(preset);
   }, [templates.data]);
 
-  // a request starts in its client's language
-  function pickClient(id: string) {
-    setClientId(id);
-    const l = clients.data?.find((c) => c.id === id)?.locale;
-    if (isLocale(l)) setLang(l);
-  }
-
   // a built-in checklist already chosen follows a change of language; one that was edited or is the firm's own stays as it is
   useEffect(() => {
     const found = templates.data?.find((x) => x.id === templateId);
-    const follow = followLanguage(found?.builtin ? found : undefined, itemsEdited, title, templateTitle);
+    const follow = followLanguage(found?.builtin ? { name: titled(found) } : undefined, itemsEdited, title, templateTitle);
     if (follow.items) setItems(toEditItems(found!.items));
     if (follow.title !== null) {
       setTitle(follow.title);
@@ -80,7 +77,6 @@ export function NewRequest() {
         title,
         note,
         deadline: fromInput(deadline),
-        locale: lang,
         items: toPayload(items),
         people: toPeople(people),
         ...(templateId ? { template_ref: templateId } : {}),
@@ -113,7 +109,7 @@ export function NewRequest() {
         <h2>{t("new.client")}</h2>
         {clients.data.length > 0 && (
           <Field label={t("new.pick_client")}>
-            <select value={clientId} onChange={(e) => pickClient(e.currentTarget.value)}>
+            <select value={clientId} onChange={(e) => setClientId(e.currentTarget.value)}>
               <option value="">{t("new.choose")}</option>
               {clients.data.map((c) => (
                 <option value={c.id}>{c.name}</option>
@@ -125,7 +121,7 @@ export function NewRequest() {
           <ClientForm
             onSaved={(c) => {
               clients.reload();
-              pickClient(c.id);
+              setClientId(c.id);
               setAddingClient(false);
             }}
             onCancel={() => setAddingClient(false)}
@@ -146,15 +142,6 @@ export function NewRequest() {
           </Field>
           <Field label={t("new.note")} hint={t("new.note_hint")}>
             <textarea rows={3} maxLength={2000} value={note} onInput={(e) => setNote(e.currentTarget.value)} />
-          </Field>
-          <Field label={t("new.language")} hint={t("new.language_hint")}>
-            <select value={lang} onChange={(e) => setLang(e.currentTarget.value as Locale)}>
-              {LOCALES.map((l) => (
-                <option value={l} lang={l}>
-                  {t(`lang.${l}`)}
-                </option>
-              ))}
-            </select>
           </Field>
           <Field label={t("new.deadline")}>
             <input type="date" required min={toInput(Date.now())} max={toInput(inDays(729))} value={deadline} onInput={(e) => setDeadline(e.currentTarget.value)} />

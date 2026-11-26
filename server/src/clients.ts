@@ -55,7 +55,7 @@ clients.post("/clients", async (c) => {
   const email = blank(body.email) ? null : normalizeEmail(body.email);
   const tel = phone(body.phone);
   const reference = maybe(body.reference, 100);
-  const lang = body.locale === undefined ? "en" : locale(body.locale);
+  const lang = body.locale === undefined ? c.get("firm").locale : locale(body.locale);
   if (!name || (email === null && !blank(body.email)) || tel === undefined || reference === undefined || !lang || typeof body.contact_ok !== "boolean") {
     return invalid(c);
   }

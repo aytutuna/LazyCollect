@@ -18,14 +18,12 @@
   "plan.trial_soon": "Your free trial ends on {date}. Subscribe in Settings to keep your clients' links taking files.",
   "plan.trial_soon_member": "The free trial ends on {date}. Ask the account owner to subscribe so clients can keep sending files.",
   "plan.past_due": "Your last payment did not go through. Update your payment details in Settings by {date} to keep sending links.",
-
   "nav.label": "Main",
   "nav.requests": "Requests",
   "nav.clients": "Clients",
   "nav.templates": "Templates",
   "nav.settings": "Settings",
   "nav.signout": "Sign out",
-
   "rel.today": "Today",
   "rel.tomorrow": "Tomorrow",
   "rel.yesterday": "Yesterday",
@@ -33,20 +31,17 @@
   "rel.in_days_other": "In {n} days",
   "rel.overdue_days_one": "{n} day overdue",
   "rel.overdue_days_other": "{n} days overdue",
-
   "status.draft": "Draft",
   "status.open": "Open",
   "status.complete": "Complete",
   "status.expired": "Expired",
   "status.closed": "Closed",
-
   "item.empty": "Waiting",
   "item.submitted": "Submitted",
   "item.approved": "Approved",
   "item.rejected": "Rejected",
   "item.unavailable": "Not available",
   "item.waived": "Not needed",
-
   "error.network": "Could not reach the server. Check your connection and try again.",
   "error.server_error": "Something went wrong on our side. Try again in a moment.",
   "error.rate_limited": "Too many tries. Wait a minute and try again.",
@@ -103,7 +98,6 @@
   "error.export_too_big": "These files add up to more than 4 GB, so they cannot go in one zip. Download them one by one.",
   "error.purging": "This is being removed for good right now, so it cannot be changed.",
   "error.upload_id_used": "That upload was already removed. Choose the file again.",
-
   "signin.title": "Sign in",
   "legal.terms": "Terms of use",
   "legal.privacy": "Privacy policy",
@@ -120,10 +114,8 @@
   "signin.code": "Code",
   "signin.verify": "Sign in",
   "signin.other": "Use a different email",
-
   "setup.title": "Set up your account",
   "setup.intro": "Add the name clients will recognize. You can change this later in Settings.",
-
   "firm.name": "Your name or business name",
   "firm.name_hint": "Clients see this on every request.",
   "firm.business": "Business details (optional)",
@@ -137,7 +129,6 @@
   "firm.tz": "Time zone",
   "firm.tz_hint": "Reminders go out between 9:00 and 19:00 in this time zone.",
   "firm.owner_only": "Only the owner of the account can change these details.",
-
   "tz.America/St_Johns": "Newfoundland (St. John's)",
   "tz.America/Halifax": "Atlantic (Halifax)",
   "tz.America/Toronto": "Eastern (Toronto)",
@@ -158,7 +149,6 @@
   "province.QC": "Quebec",
   "province.SK": "Saskatchewan",
   "province.YT": "Yukon",
-
   "settings.title": "Settings",
   "settings.account": "Account",
   "settings.signed_in": "Signed in as {email}.",
@@ -249,7 +239,6 @@
   "activity.action.invite.revoke": "Cancelled an invite",
   "activity.action.invite.accept": "Accepted an invite and joined",
   "activity.action.staff.remove": "Removed a person from the account",
-
   "requests.title": "Requests",
   "requests.new": "New request",
   "requests.empty_title": "No requests yet",
@@ -263,7 +252,6 @@
   "requests.deadline": "Deadline",
   "requests.progress": "Progress",
   "requests.due": "Due {when}",
-
   "new.title": "New request",
   "new.client": "Client",
   "new.pick_client": "Client",
@@ -283,7 +271,6 @@
   "new.blank": "Blank checklist",
   "new.need_item": "Add at least one item.",
   "new.save": "Save as draft",
-
   "items.label": "Document",
   "items.help": "Help for the client",
   "items.required": "Required",
@@ -292,7 +279,6 @@
   "items.down": "Move down",
   "items.remove": "Remove",
   "items.add": "Add item",
-
   "detail.edit": "Edit details",
   "detail.link": "Client link",
   "detail.link_none": "No link yet. Create one to share the checklist with your client.",
@@ -306,14 +292,12 @@
   "detail.email_address": "Add your mailing address in Settings to email clients.",
   "detail.email_client": "Add an email address for this client, with your confirmation that you may contact them, to email them.",
   "detail.email_stopped": "This client has asked not to get emails. Copy the link and send it yourself.",
-  "detail.settings": "Settings",
   "detail.emailed": "Emailed to {email}. If they can't find it, ask them to look in their junk or spam folder.",
   "detail.email_failed": "The email could not be sent. Copy the link instead.",
   "detail.reminders": "Reminders",
   "detail.reminders_on": "Remind the client by email until the deadline",
   "detail.reminders_next": "Next reminder: {date}",
   "detail.reminders_none": "No reminder is scheduled.",
-  "detail.messages": "Emails sent",
   "detail.messages_none": "Nothing has been emailed yet.",
   "message.invite": "Link sent",
   "message.reminder": "Reminder",
@@ -362,7 +346,6 @@
   "detail.thread_email_failed": "Saved, but the email could not be sent.",
   "detail.delete": "Delete request",
   "detail.delete_body": "The request disappears from your list and its client link stops working.",
-
   "clients.title": "Clients",
   "clients.add": "Add client",
   "clients.edit": "Edit client",
@@ -380,7 +363,6 @@
   "clients.delete_title": "Delete {name}?",
   "clients.delete_body": "Their open requests will be closed and their links will stop working.",
   "clients.delete": "Delete client",
-
   "templates.title": "Templates",
   "templates.new": "New template",
   "templates.edit": "Edit template",
@@ -398,7 +380,6 @@
   "templates.delete_title": "Delete {name}?",
   "templates.delete_body": "Requests already made from it are not affected.",
   "templates.delete": "Delete template",
-
   "client.gone_title": "Link not found",
   "client.gone": "This link has expired or was replaced. Ask the person who sent it for a new link.",
   "client.error_title": "Something went wrong",
@@ -484,7 +465,6 @@
   "error.not_allowed": "That cannot be changed any more. Refresh the page.",
   "error.too_many_notes": "You have sent a lot of messages. Wait a while or reply to the email instead.",
   "error.missing_file": "This file is no longer saved on this device. Choose it again.",
-
   "detail.download": "Download all (zip)",
   "ircc.button": "Prepare for IRCC",
   "ircc.title": "Prepare for IRCC",
@@ -523,7 +503,6 @@
   "detail.records": "Records",
   "detail.activity": "Activity",
   "detail.activity_none": "Nothing recorded yet.",
-
   "trash.title": "Recently deleted",
   "trash.intro": "Deleted requests and clients can be restored for 30 days, then they are removed for good along with their files.",
   "trash.requests": "Requests",
@@ -534,7 +513,6 @@
   "trash.removed": "Removed for good after {date}",
   "trash.restored_request": "Restored. It stays closed and cannot get a new link.",
   "trash.restored_client": "Restored. Their requests stay closed and their links stay off.",
-
   "activity.title": "Activity",
   "activity.intro": "Everything done in this account, newest first.",
   "activity.when": "When",
@@ -629,7 +607,6 @@
   "clients.requests_one": "{n} request",
   "clients.requests_other": "{n} requests",
   "clients.no_requests": "No requests",
-  "clients.view_requests": "View requests",
   "viewer.open": "View {name}",
   "viewer.file_of": "File {n} of {m}",
   "viewer.prev": "Previous",
@@ -638,7 +615,6 @@
   "viewer.download": "Download",
   "viewer.open_pdf": "Open PDF",
   "viewer.new_tab": "Open in a new tab",
-  "viewer.checking": "Loading the file...",
   "viewer.unsupported": "This file type cannot be shown in the browser. Download it to open it.",
   "viewer.failed": "This file could not be shown. You can download it instead.",
   "viewer.alt": "Preview of {name}",
@@ -908,7 +884,6 @@
   "batch.stopped_note": "Stopped: your account could not send emails for 30 days. {n} were not sent. Their drafts are still there.",
   "batch.cancelled_note": "Stopped. {n} were not sent. Their drafts are still there.",
   "batch.all_batches": "All batches",
-  "batch.refresh": "Refresh",
   "batch.count.pending": "Not sent yet",
   "batch.count.sent": "Sent",
   "batch.count.opened": "Opened",
@@ -931,7 +906,6 @@
   "batch.state.skipped.deadline_passed": "Skipped: the deadline passed",
   "batch.state.failed": "Could not be sent",
   "batch.state.cancelled": "Not sent: batch stopped",
-  "batch.opened": "Opened",
   "batch.not_opened": "Not opened",
   "batch.review_n": "{n} to review",
   "batch.form.title": "Send to many",
@@ -982,7 +956,6 @@
   "activity.action.request.repeat": "Repeated a request for next year",
   "activity.action.client.import": "Imported clients",
   "detail.opened_label": "Opened",
-
   "scan.open": "Scan",
   "scan.load_failed": "The scanner could not load. You can take the photo with your phone's camera app, or reload the page to try again.",
   "scan.reload": "Reload",
@@ -1064,9 +1037,7 @@
   "people.waiting": "This checklist has items for each person. They appear once you add the people they are for.",
   "people.edit_note": "Changing a role or birth date does not change which items a person has. To start their items over, remove the person and add them again.",
   "people.progress": "{role}: {done} of {total}",
-  "people.general": "For everyone",
   "people.save": "Save person",
-  "people.pick": "Principal applicant name, from the client",
   "people.new_hint": "Add the people this application is for. Items marked for each person are made for them.",
   "people.new_waiting": "The checklist you picked has items for each person. Add at least one person to get them.",
   "error.has_data": "This person's items hold files or answers. Confirm to remove them as well.",
@@ -1089,7 +1060,6 @@
   "date.issued": "Issue date",
   "date.issued_hint": "Counts as good for {n} months from this date.",
   "date.saved": "Date saved.",
-  "date.edit": "Dates",
   "detail.valid_until": "Documents must stay valid until",
   "detail.valid_until_hint": "Leave empty for six months after the deadline.",
   "detail.valid_until_value": "{date} (six months after the deadline)",
@@ -1108,15 +1078,17 @@
   "activity.action.person.edit": "Changed a person on a request",
   "activity.action.person.remove": "Removed a person from a request",
   "activity.action.item.dates": "Client gave the date of a document",
-
   "lang.label": "Language",
   "lang.en": "English",
   "lang.fr-CA": "Français",
-  "clients.language": "Language for emails and the client page",
+  "clients.language": "Client's language",
   "size.b": "B",
   "size.kb": "kB",
   "size.mb": "MB",
-  "new.language": "Language of this request",
-  "new.language_hint": "The checklist, the client's page and the emails use this language.",
-  "batch.language": "Language of these requests"
+  "clients.language_hint": "Used when your account writes to each client in their own language. See Settings.",
+  "settings.language": "Language",
+  "settings.language_hint": "What your account writes in: emails to clients, the built-in checklists, the client's page and the text files in a download. This is not the language of this screen.",
+  "settings.language_account": "Account language",
+  "settings.language_clients": "Write to each client in the client's own language",
+  "settings.language_clients_hint": "Set a client's language on the Clients page. A request copied from another request keeps that request's language."
 }

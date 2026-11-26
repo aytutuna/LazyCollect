@@ -40,3 +40,8 @@ export const langOf = (c: { req: { header(name: string): string | undefined } })
   const picked = c.req.header("X-Lang");
   return isLang(picked) ? picked : fromAcceptLanguage(c.req.header("Accept-Language"));
 };
+
+type Writer = { locale: string; client_langs: number };
+
+// What an account writes to a client in: its own language, or the client's when the account asked for that.
+export const writeLang = (firm: Writer, client: { locale: string }): Lang => asLang(firm.client_langs ? client.locale : firm.locale);

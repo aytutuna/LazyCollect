@@ -16,7 +16,7 @@ import { missingItems, senderName, sendersOf } from "./reminders";
 import { endNow, syncStatus } from "./status";
 import { nextReminder } from "./tz";
 import type { AppEnv } from "./session";
-import { asLang, isLang } from "./lang";
+import { asLang, writeLang } from "./lang";
 import { UnknownYear, fillYear, hasMarkers, hasYear, resolveItems, taxYears, validYear } from "./taxyear";
 import { builtinsFor, factsOf, parseItem, parseItems, type Item } from "./templates";
 import { DAY, hmac, randomId, randomToken } from "./util";
@@ -65,9 +65,7 @@ requests.post("/requests", async (c) => {
     .bind(firmId, body.client_id)
     .first<{ locale: string }>();
   if (!client) return notFound(c);
-  // the request is in the language asked for, else the client's
-  if (body.locale !== undefined && !isLang(body.locale)) return invalid(c);
-  const lang = isLang(body.locale) ? body.locale : asLang(client.locale);
+  const lang = writeLang(c.get("firm"), client);
 
   let items: (Item & { tpl?: string })[] = [];
   if (body.template_id !== undefined) {
@@ -90,7 +88,7 @@ requests.post("/requests", async (c) => {
     items = parsed;
   }
   // the markers of a checklist are filled in for the tax year the account picked
-  const facts = await factsOf(db, firmId, templateRef);
+  const facts = await factsOf(db, firmId, templateRef, lang);
   if (hasMarkers(items, facts)) {
     if (taxYear === null) return c.json({ error: "tax_year_needed" }, 400);
     if (!taxYears(items, facts).includes(taxYear)) return c.json({ error: "tax_year_unknown" }, 400);

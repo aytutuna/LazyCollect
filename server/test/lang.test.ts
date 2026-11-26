@@ -6,16 +6,17 @@ import { runReminders } from "../src/reminders";
 import { addDays, atHour, dayOf } from "../src/tz";
 import { DAY, MINUTE, randomId } from "../src/util";
 import { builtinTemplates } from "../src/templates";
-import { api, inDays, mockOutbound, pdf, review, setup, start, upload } from "./helpers";
+import { api, cookieFrom, inDays, mockOutbound, pdf, review, setup, start, upload } from "./helpers";
 
 const ADDRESS = "12 King St W\nToronto ON M5H 1A1";
 
-async function ready(clientLocale?: string) {
+// the account writes in `account`; with `perClient` it writes to each client in the client's own language instead
+async function ready(account: string = "en", client_locale?: string, perClient = false) {
   const { cookie } = await setup();
-  await api("/api/firm", { method: "PATCH", cookie, body: { address: ADDRESS, phone: "416-555-0100" } });
+  await api("/api/firm", { method: "PATCH", cookie, body: { address: ADDRESS, phone: "416-555-0100", locale: account, client_langs: perClient } });
   await env.CONTROL.prepare("UPDATE firms SET plan_status = 'active'").run();
   const client = await (
-    await api("/api/clients", { method: "POST", cookie, body: { name: "Amy", email: "amy@mail.test", contact_ok: true, ...(clientLocale ? { locale: clientLocale } : {}) } })
+    await api("/api/clients", { method: "POST", cookie, body: { name: "Amy", email: "amy@mail.test", contact_ok: true, ...(client_locale ? { locale: client_locale } : {}) } })
   ).json<any>();
   return { cookie, client };
 }
@@ -49,31 +50,60 @@ describe("language of a request", () => {
     expect(langOf(c({ "X-Lang": "xx", "Accept-Language": "fr" }))).toBe("fr-CA");
   });
 
-  it("starts in the client's language and keeps it", async () => {
-    const { cookie, client } = await ready("fr-CA");
-    const req = await make(cookie, client);
-    expect(req.locale).toBe("fr-CA");
-    const other = await make(cookie, client, { locale: "en" });
-    expect(other.locale).toBe("en");
-    expect((await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "T", deadline: inDays(5), locale: "de", items: [{ label: "A" }] } })).status).toBe(400);
+  it("starts in the account's language, whatever the client's", async () => {
+    const french = await ready("fr-CA", "en");
+    expect((await make(french.cookie, french.client)).locale).toBe("fr-CA");
+    const english = await ready("en", "fr-CA");
+    expect((await make(english.cookie, english.client)).locale).toBe("en");
+  });
+
+  it("starts in each client's own language when the account asks for that", async () => {
+    const { cookie, client } = await ready("en", "fr-CA", true);
+    expect((await make(cookie, client)).locale).toBe("fr-CA");
+    const other = await (await api("/api/clients", { method: "POST", cookie, body: { name: "Bo", email: "bo@mail.test", contact_ok: true, locale: "en" } })).json<any>();
+    expect((await make(cookie, other)).locale).toBe("en");
+    await api("/api/firm", { method: "PATCH", cookie, body: { client_langs: false } });
+    expect((await make(cookie, client)).locale).toBe("en");
+  });
+
+  it("gives a new account the language of the browser that signed up, and a new client the account's", async () => {
+    const sent = mockOutbound();
+    await api("/api/auth/start", { method: "POST", body: { email: "fr@firm.test", turnstile: "tok" }, headers: { "X-Lang": "fr-CA" } });
+    const res = await api("/api/auth/verify", { method: "POST", body: { email: "fr@firm.test", code: sent[0].text.match(/([0-9]{6})/)![1] }, headers: { "X-Lang": "fr-CA" } });
+    const cookie = cookieFrom(res);
+    expect((await (await api("/api/firm", { cookie })).json<any>()).locale).toBe("fr-CA");
+    expect((await env.CONTROL.prepare("SELECT client_langs FROM firms").first<{ client_langs: number }>())!.client_langs).toBe(0);
+    const client = await (await api("/api/clients", { method: "POST", cookie, body: { name: "Amy", email: "amy@mail.test", contact_ok: true } })).json<any>();
+    expect(client.locale).toBe("fr-CA");
+  });
+
+  it("changes the account's language and the switch for owners only, and only to a language we have", async () => {
+    const { cookie } = await setup();
+    for (const body of [{ locale: "de" }, { locale: "fr" }, { client_langs: "yes" }, { client_langs: 1 }]) {
+      expect([body, (await api("/api/firm", { method: "PATCH", cookie, body })).status]).toEqual([body, 400]);
+    }
+    expect((await api("/api/firm", { method: "PATCH", cookie, body: { locale: "fr-CA", client_langs: true } })).status).toBe(200);
+    const firm = await (await api("/api/firm", { cookie })).json<any>();
+    expect([firm.locale, firm.client_langs]).toEqual(["fr-CA", 1]);
   });
 
   it("writes the translation companions in the request's language", async () => {
-    const { cookie, client } = await ready();
-    const fr = await make(cookie, client, { locale: "fr-CA" });
+    const { cookie, client } = await ready("fr-CA");
+    const fr = await make(cookie, client);
     expect(fr.items.map((i: any) => i.label)).toEqual([
       "Passeport",
       "Le document « Passeport » est-il en anglais ou en français?",
       "Traduction certifiée de Passeport",
       "Déclaration sous serment du traducteur (si le traducteur n'est pas agréé)",
     ]);
-    const en = await make(cookie, client, { locale: "en" });
+    await api("/api/firm", { method: "PATCH", cookie, body: { locale: "en" } });
+    const en = await make(cookie, client);
     expect(en.items[1].label).toBe("Is Passeport in English or French?");
   });
 
   it("renames the companions in the same language when the document is renamed", async () => {
-    const { cookie, client } = await ready();
-    const fr = await make(cookie, client, { locale: "fr-CA" });
+    const { cookie, client } = await ready("fr-CA");
+    const fr = await make(cookie, client);
     const res = await api(`/api/requests/${fr.id}/items/${fr.items[0].id}`, { method: "PATCH", cookie, body: { label: "Acte de naissance" } });
     expect(res.status).toBe(200);
     const after = await (await api(`/api/requests/${fr.id}`, { cookie })).json<any>();
@@ -85,8 +115,8 @@ describe("language of a request", () => {
   });
 
   it("shows the client page the request's language", async () => {
-    const { cookie, client } = await ready();
-    const fr = await make(cookie, client, { locale: "fr-CA" });
+    const { cookie, client } = await ready("fr-CA");
+    const fr = await make(cookie, client);
     const link = await (await api(`/api/requests/${fr.id}/link`, { method: "POST", cookie })).json<any>();
     const view = await (await api(`/api/c/${link.url.split("/c/")[1]}`)).json<any>();
     expect(view.locale).toBe("fr-CA");
@@ -95,6 +125,7 @@ describe("language of a request", () => {
 
 describe("built-in templates", () => {
   it("come in the language asked for, with the same shape", async () => {
+
     const { cookie } = await setup();
     const en = await (await api("/api/templates", { cookie })).json<any[]>();
     const fr = await (await api("/api/templates?locale=fr-CA", { cookie })).json<any[]>();
@@ -104,15 +135,21 @@ describe("built-in templates", () => {
     expect(fr.find((t) => t.id === "t1-personal").locale).toBe("fr-CA");
   });
 
-  it("follow X-Lang when no language is in the query", async () => {
+  it("come in the account's language when none is asked for", async () => {
+    const { cookie } = await ready("fr-CA");
+    const list = await (await api("/api/templates", { cookie })).json<any[]>();
+    expect(list.find((t) => t.id === "t1-personal").locale).toBe("fr-CA");
+  });
+
+  it("do not follow the language of the screen", async () => {
     const { cookie } = await setup();
-    const fr = await (await api("/api/templates", { cookie, headers: { "X-Lang": "fr-CA" } })).json<any[]>();
-    expect(fr.find((t) => t.id === "t1-personal").locale).toBe("fr-CA");
+    const list = await (await api("/api/templates", { cookie, headers: { "X-Lang": "fr-CA" } })).json<any[]>();
+    expect(list.find((t) => t.id === "t1-personal").locale).toBe("en");
   });
 
   it("start a French request with French items", async () => {
-    const { cookie, client } = await ready();
-    const res = await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "T1", deadline: inDays(30), template_id: "t1-personal", locale: "fr-CA" } });
+    const { cookie, client } = await ready("fr-CA");
+    const res = await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "T1", deadline: inDays(30), template_id: "t1-personal", tax_year: 2026 } });
     const req = await res.json<any>();
     const en = builtinTemplates.find((t) => t.id === "t1-personal")!;
     expect(req.items.length).toBeGreaterThanOrEqual(en.items.length);
@@ -135,13 +172,13 @@ describe("emails", () => {
     expect(mail.html).toContain('<html lang="fr-CA">');
     expect(mail.html).toContain("Envoyer vos documents");
     expect(mail.text).toMatch(/\d{1,2}(er)? \S+ 20\d\d/);
-    expect(mail.text).not.toMatch(/1 \S+ 20\d\d/);
+    expect(mail.text).not.toMatch(/1 \S+ 20\d\d/);
   });
 
-  it("send the invite in English when the request is English", async () => {
-    const { cookie, client } = await ready("fr-CA");
+  it("send the invite in English to an English account, whatever the client reads", async () => {
+    const { cookie, client } = await ready("en", "fr-CA");
     const sent = mockOutbound();
-    const req = await make(cookie, client, { locale: "en" });
+    const req = await make(cookie, client);
     await api(`/api/requests/${req.id}/link`, { method: "POST", cookie, body: { send_email: true } });
     expect(sent.at(-1)!.subject).toBe("Documents requested: Impôts 2025");
     expect(sent.at(-1)!.html).toContain('<html lang="en">');
@@ -157,11 +194,11 @@ describe("emails", () => {
     expect(sent[1].subject).toBe("Your Lazy Collect sign-in code");
   });
 
-  it("send a staff invite in the inviter's language", async () => {
+  it("send a staff invite in the account's language", async () => {
     const { cookie } = await setup();
     const sent = mockOutbound();
-    await api("/api/firm", { method: "PATCH", cookie, body: { address: ADDRESS } });
-    const res = await api("/api/staff/invites", { method: "POST", cookie, body: { email: "new@firm.test" }, headers: { "X-Lang": "fr-CA" } });
+    await api("/api/firm", { method: "PATCH", cookie, body: { address: ADDRESS, locale: "fr-CA" } });
+    const res = await api("/api/staff/invites", { method: "POST", cookie, body: { email: "new@firm.test" } });
     expect(res.status).toBe(201);
     expect(sent.at(-1)!.subject).toContain("vous a invité à vous joindre à Tuna Tax sur Lazy Collect");
   });
@@ -273,24 +310,64 @@ describe("the other emails, in French", () => {
     expect(sent[0].text).not.toContain("Voici la réponse");
   });
 
-  it("go out for a batch in the batch's language", async () => {
+  it("go out for a batch in the account's language", async () => {
     const { cookie } = await setup("batch@firm.test");
-    await api("/api/firm", { method: "PATCH", cookie, body: { address: ADDRESS } });
+    await api("/api/firm", { method: "PATCH", cookie, body: { address: ADDRESS, locale: "fr-CA" } });
     await env.CONTROL.prepare("UPDATE firms SET plan_status = 'active'").run();
     await api("/api/clients/import", { method: "POST", cookie, body: { rows: [{ name: "Bo", email: "bo@mail.test" }], import_id: randomId(), contact_ok: true } });
     const ids = (await env.DB_NA.prepare("SELECT id FROM clients WHERE email = 'bo@mail.test'").all<{ id: string }>()).results.map((r) => r.id);
-    const made = await api("/api/batches", { method: "POST", cookie, body: { template_id: "t1-personal", client_ids: ids, title: "{year} impôts", deadline: inDays(400), reminders_on: true, locale: "fr-CA" } });
+    const made = await api("/api/batches", { method: "POST", cookie, body: { template_id: "t1-personal", client_ids: ids, title: "{year} impôts", deadline: inDays(400), reminders_on: true, tax_year: 2026 } });
     expect(made.status).toBe(201);
     const sent = mockOutbound();
     await runBatches(env, atHour(addDays(dayOf(Date.now(), TZ), 1), 10, TZ));
     const mail = sent.find((m) => m.to[0] === "bo@mail.test")!;
-    expect(mail.subject).toMatch(/^Documents demandés : 2027 impôts$/);
+    expect(mail.subject).toMatch(/^Documents demandés : 2026 impôts$/);
     expect(mail.html).toContain('<html lang="fr-CA">');
   });
 
-  it("refuse a batch in a language we do not have", async () => {
-    const { cookie } = await setup("batch2@firm.test");
-    const res = await api("/api/batches", { method: "POST", cookie, body: { template_id: "t1-personal", client_ids: ["x"], title: "t", deadline: inDays(30), locale: "de" } });
-    expect(res.status).toBe(400);
+  it("go out in each client's own language when the account asks for that", async () => {
+    const { cookie } = await setup("batch3@firm.test");
+    await api("/api/firm", { method: "PATCH", cookie, body: { address: ADDRESS, client_langs: true } });
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'active'").run();
+    const ids: string[] = [];
+    for (const [name, email, locale] of [["Bo", "bo@mail.test", "en"], ["Chloé", "chloe@mail.test", "fr-CA"]]) {
+      ids.push((await (await api("/api/clients", { method: "POST", cookie, body: { name, email, locale, contact_ok: true } })).json<any>()).id);
+    }
+    const made = await api("/api/batches", { method: "POST", cookie, body: { template_id: "t1-personal", client_ids: ids, title: "Taxes {year}", deadline: inDays(400), reminders_on: true, tax_year: 2026 } });
+    expect(made.status).toBe(201);
+    const sent = mockOutbound();
+    await runBatches(env, atHour(addDays(dayOf(Date.now(), TZ), 1), 10, TZ));
+    expect(sent.find((m) => m.to[0] === "bo@mail.test")!.subject).toBe("Documents requested: Taxes 2026");
+    expect(sent.find((m) => m.to[0] === "chloe@mail.test")!.subject).toBe("Documents demandés : Taxes 2026");
+    const rows = (await env.DB_NA.prepare("SELECT r.locale, i.label FROM requests r JOIN items i ON i.request_id = r.id WHERE i.position = 0 ORDER BY r.locale").all<{ locale: string; label: string }>()).results;
+    expect(rows).toEqual([
+      { locale: "en", label: "Notice of assessment for 2025" },
+      { locale: "fr-CA", label: "Avis de cotisation de 2025" },
+    ]);
+  });
+});
+
+describe("the zip's text files", () => {
+  it("are written in the account's language", async () => {
+    const { cookie, client } = await ready("fr-CA");
+    mockOutbound();
+    const req = await make(cookie, client);
+    const link = await (await api(`/api/requests/${req.id}/link`, { method: "POST", cookie })).json<any>();
+    await api(`/api/c/${link.url.split("/c/")[1]}/notes`, { method: "POST", body: { body: "Une question" } });
+    await api(`/api/requests/${req.id}/notes`, { method: "POST", cookie, body: { body: "Voici la réponse" } });
+    const res = await api(`/api/requests/${req.id}/export`, { cookie });
+    const raw = new TextDecoder("latin1").decode(new Uint8Array(await res.arrayBuffer()));
+    expect(raw).toContain("messages.txt");
+    expect(raw).toMatch(/UTC, client\nUne question\n/);
+    expect(raw).toContain("UTC, compte\n");
+  });
+});
+
+describe("imported clients", () => {
+  it("start in the account's language", async () => {
+    const { cookie } = await setup("import@firm.test");
+    await api("/api/firm", { method: "PATCH", cookie, body: { locale: "fr-CA" } });
+    await api("/api/clients/import", { method: "POST", cookie, body: { rows: [{ name: "Bo", email: "bo@mail.test" }], import_id: randomId(), contact_ok: true } });
+    expect((await env.DB_NA.prepare("SELECT locale FROM clients WHERE email = 'bo@mail.test'").first<{ locale: string }>())!.locale).toBe("fr-CA");
   });
 });

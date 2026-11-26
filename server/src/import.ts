@@ -102,12 +102,12 @@ importer.post("/clients/import", async (c) => {
     db
       .prepare(
         `INSERT INTO clients (id, firm_id, name, email, phone, reference, locale, email_ok_at, sms_ok_at, consent_by, created_by, created_at)
-         SELECT lower(hex(randomblob(16))), ?1, json_extract(value, '$.name'), json_extract(value, '$.email'), json_extract(value, '$.phone'), json_extract(value, '$.reference'), 'en',
+         SELECT lower(hex(randomblob(16))), ?1, json_extract(value, '$.name'), json_extract(value, '$.email'), json_extract(value, '$.phone'), json_extract(value, '$.reference'), ?5,
            CASE WHEN json_extract(value, '$.email') IS NOT NULL THEN ?2 END, CASE WHEN json_extract(value, '$.phone') IS NOT NULL THEN ?2 END,
            CASE WHEN json_extract(value, '$.email') IS NOT NULL OR json_extract(value, '$.phone') IS NOT NULL THEN ?3 END, ?3, ?2
          FROM json_each(?4) WHERE (SELECT COUNT(*) FROM clients WHERE firm_id = ?1) + key < ${MAX_CLIENTS}`,
       )
-      .bind(firm.id, now, userId, JSON.stringify(adds)),
+      .bind(firm.id, now, userId, JSON.stringify(adds), firm.locale),
     db
       .prepare(
         `UPDATE clients SET phone = COALESCE(clients.phone, j.phone), reference = COALESCE(clients.reference, j.reference),

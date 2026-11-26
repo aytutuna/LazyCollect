@@ -2,7 +2,7 @@ import { useState } from "preact/hooks";
 import { Link, useLocation, useSearch } from "wouter-preact";
 import { get, post, useAction, useLoad } from "../api";
 import { fromInput, inDays, toInput, toLocalInput } from "../format";
-import { LOCALES, locale, t, type Locale } from "../i18n";
+import { t } from "../i18n";
 import { usePaged, useSearchBox } from "../paged";
 import { MAX_SELECT, carried, collect, useSelection } from "../selection";
 import type { Batch, ClientRow, Me, RequestRow, Template } from "../types";
@@ -114,8 +114,7 @@ export function NewBatch() {
   const [, go] = useLocation();
   const repeat = new URLSearchParams(useSearch()).get("repeat") === "1";
   const me = useLoad(() => get<Me>("/me"));
-  const [lang, setLang] = useState<Locale>(locale());
-  const templates = useLoad(() => get<Template[]>(`/templates?locale=${lang}`), [lang]);
+  const templates = useLoad(() => get<Template[]>("/templates"));
   const clients = useSelection<ClientRow>(repeat ? new Map() : carried.clients);
   const [source, setSource] = useState<"template" | "request">("template");
   const [templateId, setTemplateId] = useState("");
@@ -150,7 +149,6 @@ export function NewBatch() {
       body.deadline = fromInput(deadline);
       if (source === "template") {
         body.template_id = templateId;
-        body.locale = lang;
         if (chosen?.tax) body.tax_year = taxYear ?? chosen.tax.suggested;
       }
       else body.request_id = requestId;
@@ -207,16 +205,6 @@ export function NewBatch() {
               </button>
             </div>
             {source === "template" ? (
-              <>
-              <Field label={t("batch.language")}>
-                <select value={lang} onChange={(e) => setLang(e.currentTarget.value as Locale)}>
-                  {LOCALES.map((l) => (
-                    <option value={l} lang={l}>
-                      {t(`lang.${l}`)}
-                    </option>
-                  ))}
-                </select>
-              </Field>
               <Field label={t("batch.pick_template")}>
                 <select
                   value={templateId}
@@ -241,7 +229,6 @@ export function NewBatch() {
                 </select>
                 {templates.data.find((x) => x.id === templateId)?.items.some((i) => i.per_person) && <span class="hint">{t("batch.person_items")}</span>}
               </Field>
-              </>
             ) : (
               <RequestPicker value={requestId} onChange={setRequestId} />
             )}

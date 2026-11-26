@@ -1,4 +1,5 @@
 import { UnknownYear, restate, validYear } from "./taxyear";
+import { asLang, type Lang } from "./lang";
 import { factsOf } from "./templates";
 
 // What a new request made from an older one needs so that its checklist is for the next tax year: the year itself, and the
@@ -6,21 +7,21 @@ import { factsOf } from "./templates";
 // reworded are left as they are, so the ones that still name a year around the old one are listed for the account to look at.
 export async function yearOn(db: D1Database, firmId: string, pairs: { id: string; src: string }[]): Promise<{ statements: D1PreparedStatement[]; stale: string[] } | "unknown"> {
   const { results } = await db
-    .prepare("SELECT id, tax_year, template_ref FROM requests WHERE firm_id = ? AND tax_year IS NOT NULL AND id IN (SELECT value FROM json_each(?))")
+    .prepare("SELECT id, tax_year, template_ref, locale FROM requests WHERE firm_id = ? AND tax_year IS NOT NULL AND id IN (SELECT value FROM json_each(?))")
     .bind(firmId, JSON.stringify(pairs.map((p) => p.src)))
-    .all<{ id: string; tax_year: number; template_ref: string | null }>();
-  const groups = new Map<string, { year: number; ref: string | null; srcs: string[] }>();
+    .all<{ id: string; tax_year: number; template_ref: string | null; locale: string }>();
+  const groups = new Map<string, { year: number; ref: string | null; lang: Lang; srcs: string[] }>();
   for (const r of results) {
-    const key = `${r.tax_year}|${r.template_ref}`;
-    groups.set(key, groups.get(key) ?? { year: r.tax_year, ref: r.template_ref, srcs: [] });
+    const key = `${r.tax_year}|${r.template_ref}|${r.locale}`;
+    groups.set(key, groups.get(key) ?? { year: r.tax_year, ref: r.template_ref, lang: asLang(r.locale), srcs: [] });
     groups.get(key)!.srcs.push(r.id);
   }
   const out: D1PreparedStatement[] = [];
   const stale = new Set<string>();
-  for (const { year, ref, srcs } of groups.values()) {
+  for (const { year, ref, lang, srcs } of groups.values()) {
     const next = year + 1;
     if (!validYear(next)) return "unknown";
-    const facts = await factsOf(db, firmId, ref);
+    const facts = await factsOf(db, firmId, ref, lang);
     const made = JSON.stringify(pairs.filter((p) => srcs.includes(p.src)).map((p) => p.id));
     const { results: tpls } = await db
       .prepare("SELECT DISTINCT tpl_json FROM items WHERE firm_id = ? AND tpl_json IS NOT NULL AND request_id IN (SELECT value FROM json_each(?))")

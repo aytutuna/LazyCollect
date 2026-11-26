@@ -174,8 +174,8 @@ async function signIn(c: Context<AppEnv>, email: string, app: App | null): Promi
     // have won the email; then the firm made here is dropped again.
     await db.batch([
       db
-        .prepare("INSERT INTO firms (id, plan_status, trial_ends_at, created_at) VALUES (?, 'trialing', ?, ?)")
-        .bind(firmId, now + TRIAL_DAYS * DAY, now),
+        .prepare("INSERT INTO firms (id, locale, plan_status, trial_ends_at, created_at) VALUES (?, ?, 'trialing', ?, ?)")
+        .bind(firmId, langOf(c), now + TRIAL_DAYS * DAY, now),
       user
         ? db.prepare("UPDATE users SET firm_id = ?, role = 'owner', disabled_at = NULL WHERE id = ? AND disabled_at IS NOT NULL").bind(firmId, user.id)
         : db
@@ -192,7 +192,7 @@ async function signIn(c: Context<AppEnv>, email: string, app: App | null): Promi
     user = (await find())!;
     if (user.firm_id === firmId) {
       // the account is made and the code was checked; a failed email must not stop the sign-in
-      await sendTrialNotice(c.env, { id: firmId, tz: "America/Toronto", trial_ends_at: now + TRIAL_DAYS * DAY }, "start").catch((e) => console.error(e instanceof Error ? e.message : "error"));
+      await sendTrialNotice(c.env, { id: firmId, tz: "America/Toronto", locale: langOf(c), trial_ends_at: now + TRIAL_DAYS * DAY }, "start").catch((e) => console.error(e instanceof Error ? e.message : "error"));
     }
   }
   if (user.disabled_at) return null;
