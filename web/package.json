@@ -8,6 +8,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "detect": "node scripts/detect.mjs",
+    "detect:rust": "node scripts/detect-rust.mjs",
+    "size": "node scripts/size-gate.mjs",
     "camera": "node scripts/camera.mjs",
     "a11y": "node scripts/a11y.mjs"
   },

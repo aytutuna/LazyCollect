@@ -1,0 +1,84 @@
+name: Rust scanner
+
+on:
+  push:
+    branches: [main, 'ci/**']
+    paths:
+      - 'web/scan-wasm/**'
+      - 'web/src/scan/**'
+      - 'web/scripts/**'
+      - 'web/package.json'
+      - 'web/package-lock.json'
+      - '.github/workflows/rust-scanner.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'web/scan-wasm/**'
+      - 'web/src/scan/**'
+      - 'web/scripts/**'
+      - 'web/package.json'
+      - 'web/package-lock.json'
+      - '.github/workflows/rust-scanner.yml'
+
+permissions:
+  contents: read
+
+env:
+  WASM_BINDGEN_CLI: 0.2.130
+
+jobs:
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: rustup toolchain install 1.100.0 --profile minimal --component clippy,rustfmt --target wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: web/scan-wasm
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-${{ env.WASM_BINDGEN_CLI }}
+      - run: wasm-bindgen --version 2>/dev/null | grep -qx "wasm-bindgen ${{ env.WASM_BINDGEN_CLI }}" || cargo install wasm-bindgen-cli --version ${{ env.WASM_BINDGEN_CLI }} --locked
+      - name: Check the binding
+        working-directory: web/scan-wasm
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --target wasm32-unknown-unknown -- -D warnings
+      - name: Build the WebAssembly
+        working-directory: web/scan-wasm
+        run: |
+          cargo build --locked --release --target wasm32-unknown-unknown
+          wasm-bindgen --target web --out-dir ../src/scan/wasm target/wasm32-unknown-unknown/release/collect_scan_wasm.wasm
+      - name: The committed types are the built ones
+        run: git diff --exit-code web/src/scan/wasm/collect_scan_wasm.d.ts
+      - run: npm ci
+        working-directory: web
+      - name: Fetch the corner models
+        working-directory: web
+        run: |
+          bash scripts/fetch_docaligner.sh
+          bash scripts/fetch_docaligner.sh tract
+      - name: Typecheck and test
+        working-directory: web
+        env:
+          LAZYCOLLECT_REQUIRE_RUST: '1'
+        run: |
+          npm run typecheck
+          npm test
+      - name: Build with the Rust scanner and check its size
+        working-directory: web
+        env:
+          VITE_RUST_SCANNER: '1'
+          VITE_TURNSTILE_SITEKEY: ci
+        run: |
+          npm run build
+          npm run size
+      - name: Check both scanners in Chrome
+        working-directory: web
+        run: npm run detect:rust
