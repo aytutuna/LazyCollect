@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { t } from "../i18n";
 import { acceptable } from "./corners";
-import type { Detector } from "./detector";
-import { aspect, scaled, warp, type Quad } from "./geometry";
+import type { Engine } from "./engine";
+import { aspect, scaled, type Quad } from "./geometry";
 import { readPixels, release, shotOf, type Shot } from "./pipeline";
-import { frameIssues, pageIssues, type Issue } from "./quality";
+import type { Issue } from "./quality";
 
 export type Capture = { shot: Shot; quad: Quad | null; confidence: number | null };
 
@@ -17,7 +17,7 @@ const HOLD_MS = 1000;
 
 type Seen = { quad: Quad; confidence: number; issues: Issue[]; at: number };
 
-export function CameraView({ detector, onCapture, onUnavailable, say }: { detector: Detector; onCapture: (c: Capture) => void | Promise<void>; onUnavailable: (why: "denied" | "none") => void; say: (text: string) => void }) {
+export function CameraView({ detector, onCapture, onUnavailable, say }: { detector: Engine; onCapture: (c: Capture) => void | Promise<void>; onUnavailable: (why: "denied" | "none") => void; say: (text: string) => void }) {
   const video = useRef<HTMLVideoElement>(null);
   const [dims, setDims] = useState<[number, number]>([4, 3]);
   const [seen, setSeen] = useState<Seen | null>(null);
@@ -87,11 +87,12 @@ export function CameraView({ detector, onCapture, onUnavailable, say }: { detect
       const now = Date.now();
       if (found && acceptable(found, frame.width, frame.height)) {
         const quad = scaled(found.quad, frame.width, frame.height);
-        const issues = frameIssues(quad, found.confidence, frame.width, frame.height);
+        const issues = await detector.frameIssues(quad, found.confidence, frame.width, frame.height);
         const ratio = aspect(quad, frame.width, frame.height);
         const long = 640;
-        const flat = warp(frame, quad, ratio >= 1 ? long : Math.round(long * ratio), ratio >= 1 ? Math.round(long / ratio) : long);
-        if (flat) issues.push(...pageIssues(flat));
+        const flat = await detector.warp(frame, quad, ratio >= 1 ? long : Math.round(long * ratio), ratio >= 1 ? Math.round(long / ratio) : long);
+        if (flat) issues.push(...(await detector.pageIssues(flat)));
+        if (!alive || !stream) return false;
         // a message must hold for two checks in a row before it replaces the last, so it does not flicker
         const key = issues.join();
         advice = key === advice.key ? { key, times: advice.times + 1 } : { key, times: 1 };

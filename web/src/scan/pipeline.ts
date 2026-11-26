@@ -1,6 +1,6 @@
-import { applyFilter, type Filter } from "./filters";
-import { aspect, edge, rotate, warp, type Pixels, type Quad } from "./geometry";
-import type { Detector } from "./detector";
+import type { Filter } from "./filters";
+import { aspect, edge, rotate, type Pixels, type Quad } from "./geometry";
+import type { Engine } from "./engine";
 import { placement } from "./refine";
 
 // The photo a page is cut from is kept at no more than this on its long side
@@ -69,7 +69,7 @@ async function decode(shot: Shot): Promise<Pixels> {
 
 // A page the model found in `shot`: its corners moved onto the page's edges by the worker (Lazy Scan's QuadRefiner), whether
 // to place it straight away, and the decoded photo for cutting the page out of, so the JPEG is read once.
-export async function placeFound(detector: Detector, shot: Shot, quad: Quad, confidence: number): Promise<{ quad: Quad; sure: boolean; pixels: Pixels | undefined }> {
+export async function placeFound(detector: Engine, shot: Shot, quad: Quad, confidence: number): Promise<{ quad: Quad; sure: boolean; pixels: Pixels | undefined }> {
   const pixels = await decode(shot);
   const back = await detector.refine(pixels, quad);
   return { ...placement(back?.refinement ?? null, quad, confidence, shot.width, shot.height), pixels: back?.image };
@@ -82,19 +82,19 @@ function pageSize(quad: Quad, shot: Shot, long: number): [number, number] {
 }
 
 // the page cut out of the photo, flat and unfiltered, small enough to filter quickly while the person looks at it
-export async function flatPreview(shot: Shot, quad: Quad, turns: number, decoded?: Pixels): Promise<Pixels | null> {
+export async function flatPreview(engine: Engine, shot: Shot, quad: Quad, turns: number, decoded?: Pixels): Promise<Pixels | null> {
   const [w, h] = pageSize(quad, shot, PREVIEW);
-  const flat = warp(decoded ?? (await decode(shot)), quad, w, h);
+  const flat = await engine.warp(decoded ?? (await decode(shot)), quad, w, h);
   return flat && rotate(flat, turns);
 }
 
 // the page as it is uploaded
-export async function finalPage(shot: Shot, quad: Quad, turns: number, filter: Filter): Promise<Blob> {
+export async function finalPage(engine: Engine, shot: Shot, quad: Quad, turns: number, filter: Filter): Promise<Blob> {
   const own = Math.max(edge(quad, 0), edge(quad, 1), edge(quad, 2), edge(quad, 3));
   const [w, h] = pageSize(quad, shot, Math.min(MAX_OUT, Math.max(MIN_OUT, Math.round(own))));
-  const flat = warp(await decode(shot), quad, w, h);
+  const flat = await engine.warp(await decode(shot), quad, w, h);
   if (!flat) throw new Error("warp");
-  const canvas = toCanvas(applyFilter(rotate(flat, turns), filter));
+  const canvas = toCanvas(await engine.filter(rotate(flat, turns), filter));
   try {
     return await toBlob(canvas, 0.85);
   } finally {

@@ -4,11 +4,11 @@ import type { Prepared } from "../upload";
 import { CameraView, type Capture } from "./CameraView";
 import { CornerEditor } from "./CornerEditor";
 import { acceptable } from "./corners";
-import { Detector } from "./detector";
-import { FILTERS, applyFilter, type Filter } from "./filters";
+import { createEngine } from "./engine";
+import { FILTERS, type Filter } from "./filters";
 import { rotate, scaled, startQuad, type Pixels, type Quad } from "./geometry";
 import { draw, finalPage, flatPreview, pause, placeFound, readPixels, release, shotOf, toCanvas, type Shot } from "./pipeline";
-import { frameIssues, pageIssues, type Issue } from "./quality";
+import type { Issue } from "./quality";
 
 type Page = {
   id: number;
@@ -52,7 +52,7 @@ function Preview({ img, label }: { img: Pixels; label: string }) {
 export function Scanner({ label, onClose, onDone }: { label: string; onClose: () => void; onDone: (files: Prepared[]) => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const picker = useRef<HTMLInputElement>(null);
-  const [detector] = useState(() => new Detector());
+  const [detector] = useState(() => createEngine());
   const [step, setStep] = useState<"camera" | "nocamera" | "edit" | "review">("camera");
   const [why, setWhy] = useState<"denied" | "none" | null>(null);
   const [pages, setPages] = useState<Page[]>([]);
@@ -101,10 +101,11 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
   }
 
   async function makePage(shot: Shot, quad: Quad, confidence: number | null, turns = 0, filter: Filter = "enhanced", decoded?: Pixels): Promise<Page | null> {
-    const base = await flatPreview(shot, quad, turns, decoded);
+    const base = await flatPreview(detector, shot, quad, turns, decoded);
     if (!base) return null;
-    const shown = applyFilter(base, filter);
-    return { id: ++seq, shot, quad, turns, filter, base, shown, thumb: thumbOf(shown), issues: [...frameIssues(quad, confidence, shot.width, shot.height), ...pageIssues(base)], accepted: false };
+    const shown = await detector.filter(base, filter);
+    const issues = [...(await detector.frameIssues(quad, confidence, shot.width, shot.height)), ...(await detector.pageIssues(base))];
+    return { id: ++seq, shot, quad, turns, filter, base, shown, thumb: thumbOf(shown), issues, accepted: false };
   }
 
   // a new page, or the page being re-cut, from corners already placed
@@ -174,7 +175,7 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
       await new Promise((done) => requestAnimationFrame(() => setTimeout(done)));
     }
     const started = performance.now();
-    const shown = applyFilter(base, filter);
+    const shown = await detector.filter(base, filter);
     slow.current = performance.now() - started > 100;
     setWorking("");
     return shown;
@@ -217,7 +218,7 @@ export function Scanner({ label, onClose, onDone }: { label: string; onClose: ()
       for (let i = 0; i < pages.length; i++) {
         setWorking(t("scan.preparing", { n: i + 1, m: pages.length }));
         const p = pages[i];
-        const blob = await finalPage(p.shot, p.quad, p.turns, p.filter);
+        const blob = await finalPage(detector, p.shot, p.quad, p.turns, p.filter);
         if (gone.current) return;
         files.push({ blob, name: `${label}${pages.length > 1 ? ` ${i + 1}` : ""}.jpg`, jpeg: true });
         await pause();
