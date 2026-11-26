@@ -475,6 +475,23 @@ describe("reminders", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("keeps retrying a put-off email for a day, then gives up on it", async () => {
+    const { cookie, req } = await ready();
+    mockOutbound();
+    await invite(cookie, req.id);
+    await pin(req.id, at(2027, 1, 5, 10));
+    mockOutbound(true, 503);
+    await runReminders(env, at(2027, 1, 5, 10, 5));
+    await runReminders(env, at(2027, 1, 6, 10));
+    let rows = (await messages()).filter((m) => m.kind === "reminder");
+    expect(rows[0]).toMatchObject({ status: "failed", attempts: 0, deferred_at: at(2027, 1, 5, 10, 5) });
+    expect((await requestRow(req.id)).reminder_seq).toBe(0);
+    await runReminders(env, at(2027, 1, 6, 10, 20));
+    rows = (await messages()).filter((m) => m.kind === "reminder");
+    expect(rows[0]).toMatchObject({ status: "failed", attempts: 3 });
+    expect((await requestRow(req.id)).reminder_seq).toBe(1);
+  });
+
   it("leaves a pre-M4 link alone when the client has no email", async () => {
     const { cookie, client, req } = await ready();
     mockOutbound();

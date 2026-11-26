@@ -12,6 +12,8 @@ export const MANUAL_SEQ = 1_000_000;
 
 const MAX_ATTEMPTS = 3;
 const STALE = 30 * MINUTE;
+// Resend keeps an idempotency key for a day, so a send put off for longer than that can't be repeated safely
+const DEFER_LIMIT = DAY;
 
 // emails per account in any 24 hours, and invites per request; the shared sender key must not be a relay. Invitations (staff
 // invitations too) are counted apart from reminders and notes, so a busy deadline week doesn't use up the room for new requests.
@@ -240,14 +242,25 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
   } catch (e) {
     const error = e instanceof Error ? e.message : "error";
     console.error(error);
-    // a busy provider does not use up one of the attempts
-    const later = e instanceof Transient;
+    // a busy provider does not use up one of the attempts, until it has gone on for as long as the idempotency key lives
+    let later = e instanceof Transient;
+    let spent = 0;
+    if (later) {
+      const row = await db.prepare("SELECT deferred_at FROM messages WHERE id = ?").bind(messageId).first<{ deferred_at: number | null }>();
+      const since = row?.deferred_at ?? now;
+      if (now - since >= DEFER_LIMIT) {
+        later = false;
+        spent = MAX_ATTEMPTS;
+      } else {
+        await db.prepare("UPDATE messages SET deferred_at = ? WHERE id = ?").bind(since, messageId).run();
+      }
+    }
     itemFailed(later ? "EmailDeferred" : "EmailRefused");
     await db
-      .prepare("UPDATE messages SET status = 'failed', error = ?, attempts = attempts - ? WHERE id = ?")
-      .bind(error.slice(0, 200), later ? 1 : 0, messageId)
+      .prepare(`UPDATE messages SET status = 'failed', error = ?, attempts = ${spent ? "?" : "attempts - ?"} WHERE id = ?`)
+      .bind(error.slice(0, 200), spent || (later ? 1 : 0), messageId)
       .run();
-    return { outcome: later ? "later" : "failed", seq: seq! };
+    return { outcome: later ? "later" : spent ? "gave_up" : "failed", seq: seq! };
   }
 }
 

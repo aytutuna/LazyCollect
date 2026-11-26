@@ -170,6 +170,29 @@ describe("timed run watch", () => {
     expect((await lastGoodRun(env, morning)).last_good_run).toBeNull();
   });
 
+  it("clears the watch once a message put off for a day is given up on", async () => {
+    const { cookie, client } = await setup();
+    await api("/api/firm", { method: "PATCH", cookie, body: { address: "12 King St W\nToronto ON M5H 1A1" } });
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'active'").run();
+    const req = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "2025 taxes", deadline: inDays(10), items: [{ label: "Passport", required: true }] } })).json<any>();
+    await api(`/api/requests/${req.id}/link`, { method: "POST", cookie });
+    const morning = atHour({ y: 2027, m: 1, d: 5 }, 10, "America/Toronto");
+    await env.DB_NA.batch([
+      env.DB_NA.prepare("UPDATE requests SET deadline = ?, next_reminder_at = ?, reminder_seq = 0").bind(morning + 15 * 86_400_000, morning),
+      env.DB_NA.prepare("UPDATE links SET expires_at = ?").bind(morning + 60 * 86_400_000),
+    ]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_i, init) => (JSON.parse(String(init?.body)).to.includes(ALERT_TO) ? Response.json({ id: "a" }) : new Response("busy", { status: 503 })));
+    const reminders: Step[] = [["reminders", runReminders]];
+    await runTimed(env, morning + 5 * MINUTE, reminders);
+    await runTimed(env, morning + 24 * HOUR - 10 * MINUTE, reminders);
+    expect((await lastGoodRun(env, morning)).last_good_run).toBeNull();
+    // past the day the message is given up on; that pass reports it, and the ones after it are clean
+    await runTimed(env, morning + 24 * HOUR + 10 * MINUTE, reminders);
+    const good = morning + 24 * HOUR + 12 * MINUTE;
+    await runTimed(env, good, reminders);
+    expect((await lastGoodRun(env, good)).last_good_run).toBe(good);
+  });
+
   it("still finishes when the alert email cannot be sent", async () => {
     mockOutbound(true, 400);
     await expect(runTimed(env, Date.now(), [broken, ok])).resolves.toBeUndefined();
