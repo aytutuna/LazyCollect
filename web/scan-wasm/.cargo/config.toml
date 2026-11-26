@@ -1,0 +1,3 @@
+# onnxruntime-web's wasm is the SIMD build too, so the browsers that run that one run this
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]

@@ -1,0 +1,26 @@
+[package]
+name = "collect-scan-wasm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+license-file = "../../LICENSE"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+lazy-image = { git = "https://github.com/aytutuna/LazyKit", rev = "61484693d9be23b85852b93bad9cc3e6e3bfe47f" }
+lazy-scan = { git = "https://github.com/aytutuna/LazyKit", rev = "61484693d9be23b85852b93bad9cc3e6e3bfe47f", features = ["tract"] }
+lazy-scan-model = { git = "https://github.com/aytutuna/LazyKit", rev = "61484693d9be23b85852b93bad9cc3e6e3bfe47f", features = ["tract"] }
+# The wasm-bindgen CLI has to be the same release as this crate.
+wasm-bindgen = "=0.2.130"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "s"
+strip = "debuginfo"
+panic = "abort"
+
+[workspace]

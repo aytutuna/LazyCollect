@@ -9,3 +9,7 @@ web/.cache
 ios/.build
 ios/*.xcodeproj
 ios/Sources/CollectScanModel/Models/*.onnx
+
+web/scan-wasm/target
+web/src/scan/wasm/*
+!web/src/scan/wasm/collect_scan_wasm.d.ts
