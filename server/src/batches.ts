@@ -535,6 +535,14 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
               .run();
             continue;
           }
+          if (outcome === "gave_up") {
+            // put off for a day: no more tries
+            await db
+              .prepare("UPDATE batch_items SET tries = ?, state = 'failed', reason = 'send_failed' WHERE firm_id = ? AND request_id = ? AND state = 'pending'")
+              .bind(MAX_TRIES, b.firm_id, r.request_id)
+              .run();
+            continue;
+          }
           // a refusal: the item is held back for a while (the hold lapses LEASE after its time), so its tries are spread over half an hour
           const tries = r.tries + 1;
           await db

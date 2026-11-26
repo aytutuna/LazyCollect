@@ -180,10 +180,10 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
   const args = [id, firmId, requestId, slot.clientId, kind, slot.seq, TEMPLATE_VERSION, hash, now, now - DAY, dailyCap(paid?.paid, kind), now - STALE];
   const inserted = await db
     .prepare(
-      `INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at)
+      `INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at, first_try_at)
        SELECT ?1, ?2, ?3, ?4, 'email', ?5,
          COALESCE(?6, (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE firm_id = ?2 AND request_id = ?3 AND kind = ?5 AND channel = 'email')),
-         ?7, ?8, 'sending', 1, ?9
+         ?7, ?8, 'sending', 1, ?9, ?9
        WHERE ${ROOM}
        ON CONFLICT (firm_id, request_id, kind, seq, channel) DO NOTHING`,
     )
@@ -246,13 +246,10 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
     let later = e instanceof Transient;
     let spent = 0;
     if (later) {
-      const row = await db.prepare("SELECT deferred_at FROM messages WHERE id = ?").bind(messageId).first<{ deferred_at: number | null }>();
-      const since = row?.deferred_at ?? now;
-      if (now - since >= DEFER_LIMIT) {
+      const row = await db.prepare("SELECT first_try_at FROM messages WHERE id = ?").bind(messageId).first<{ first_try_at: number | null }>();
+      if (now - (row?.first_try_at ?? now) >= DEFER_LIMIT) {
         later = false;
         spent = MAX_ATTEMPTS;
-      } else {
-        await db.prepare("UPDATE messages SET deferred_at = ? WHERE id = ?").bind(since, messageId).run();
       }
     }
     itemFailed(later ? "EmailDeferred" : "EmailRefused");

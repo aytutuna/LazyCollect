@@ -484,10 +484,25 @@ describe("reminders", () => {
     await runReminders(env, at(2027, 1, 5, 10, 5));
     await runReminders(env, at(2027, 1, 6, 10));
     let rows = (await messages()).filter((m) => m.kind === "reminder");
-    expect(rows[0]).toMatchObject({ status: "failed", attempts: 0, deferred_at: at(2027, 1, 5, 10, 5) });
+    expect(rows[0]).toMatchObject({ status: "failed", attempts: 0, first_try_at: at(2027, 1, 5, 10, 5) });
     expect((await requestRow(req.id)).reminder_seq).toBe(0);
     await runReminders(env, at(2027, 1, 6, 10, 20));
     rows = (await messages()).filter((m) => m.kind === "reminder");
+    expect(rows[0]).toMatchObject({ status: "failed", attempts: 3 });
+    expect((await requestRow(req.id)).reminder_seq).toBe(1);
+  });
+
+  it("counts the day from the first attempt, even one that never reported back", async () => {
+    const { cookie, req } = await ready();
+    mockOutbound();
+    await invite(cookie, req.id);
+    await pin(req.id, at(2027, 1, 5, 10));
+    await env.DB_NA.prepare(
+      "INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at, first_try_at) SELECT lower(hex(randomblob(16))), firm_id, id, client_id, 'email', 'reminder', 1, 1, 'x', 'sending', 1, ?1, ?2 FROM requests",
+    ).bind(at(2027, 1, 3, 9), at(2027, 1, 4, 9)).run();
+    mockOutbound(true, 503);
+    await runReminders(env, at(2027, 1, 5, 10, 5));
+    const rows = (await messages()).filter((m) => m.kind === "reminder");
     expect(rows[0]).toMatchObject({ status: "failed", attempts: 3 });
     expect((await requestRow(req.id)).reminder_seq).toBe(1);
   });

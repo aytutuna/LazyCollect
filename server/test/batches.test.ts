@@ -335,6 +335,17 @@ describe("a batch while the provider is out of reach", () => {
     expect(await one(batch.id, cookie)).toMatchObject({ status: "done", sent: 1 });
   });
 
+  it("fails the client at once when the provider has been busy for a day", async () => {
+    const { cookie, ids } = await ready(1);
+    const batch = await (await create(cookie, body(ids))).json<any>();
+    mockOutbound(true, 503);
+    for (let min = 0; min < 24 * 60; min += 15) await runBatches(env, NOW + min * MINUTE);
+    expect((await q("SELECT tries, state FROM batch_items"))[0]).toEqual({ tries: 0, state: "pending" });
+    await runBatches(env, NOW + 24 * HOUR + 15 * MINUTE);
+    expect((await q("SELECT reason, tries, state FROM batch_items"))[0]).toEqual({ reason: "send_failed", tries: 3, state: "failed" });
+    expect(await one(batch.id, cookie)).toMatchObject({ status: "done", failed: 1, sent: 0 });
+  });
+
   it("answers a provider that is busy the same way", async () => {
     const { cookie, ids } = await ready(1);
     await create(cookie, body(ids));
