@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { builtinTemplates } from "../src/templates";
 import { builtinTemplatesFr } from "../templates/fr";
 
+const markers = (i: { label: string; help?: string }) => [...`${i.label} ${i.help ?? ""}`.matchAll(/[{][a-z0-9_+-]+[}]/g)].map((m) => m[0]).sort();
+
 describe("French built-in templates", () => {
   it("has a twin for every template, in the same order", () => {
     expect(builtinTemplatesFr.map((t) => t.id)).toEqual(builtinTemplates.map((t) => t.id));
@@ -26,8 +28,14 @@ describe("French built-in templates", () => {
         expect([where, twin.example]).toEqual([where, item.example]);
         expect([where, twin.options?.length]).toEqual([where, item.options?.length]);
         expect([where, Boolean(twin.help)]).toEqual([where, Boolean(item.help)]);
+        expect([where, markers(twin)]).toEqual([where, markers(item)]);
         expect(twin.label.length).toBeGreaterThan(0);
       });
+    });
+
+    it(`${en.id} has the same years and facts`, () => {
+      const shape = (facts: Record<number, Record<string, string>> | undefined) => Object.entries(facts ?? {}).map(([year, f]) => [year, Object.keys(f).sort()]);
+      expect(shape(fr.facts)).toEqual(shape(en.facts));
     });
 
     it(`${en.id} is translated`, () => {

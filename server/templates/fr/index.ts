@@ -1,3 +1,5 @@
+import type { Item } from "../../src/questions";
+import type { Facts } from "../../src/taxyear";
 import ircCitizenship from "./ircc-citizenship";
 import ircExpressEntry from "./ircc-express-entry";
 import ircPgwp from "./ircc-pgwp";
@@ -14,7 +16,7 @@ import t1SelfEmployed from "./t1-self-employed.json";
 import t2YearEnd from "./t2-year-end";
 
 // same order as builtinTemplates in src/templates.ts
-export const builtinTemplatesFr = [
+export const builtinTemplatesFr: { id: string; name: string; items: Item[]; facts?: Facts }[] = [
   t1Personal,
   t1SelfEmployed,
   t2YearEnd,

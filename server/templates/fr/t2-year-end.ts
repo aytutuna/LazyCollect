@@ -12,7 +12,7 @@ export default template("t2-year-end", "T2 fin d'exercice de la société", [
   doc("Balance de vérification ou fichier de tenue de livres", "Une exportation de votre logiciel de comptabilité, ou le chiffrier que vous tenez."),
   doc("Relevés bancaires de chaque mois de l'exercice", "Tous les comptes de l'entreprise, de janvier jusqu'au dernier mois de la fin d'exercice.", undefined, true, "bank-statement"),
   doc("Relevés de cartes de crédit de chaque mois de l'exercice", "Toutes les cartes de l'entreprise."),
-  doc("Déclaration T2 et avis de cotisation de l'an dernier", "La déclaration produite et l'avis de l'ARC, si nous ne les avons pas préparés."),
+  doc("Déclaration T2 et avis de cotisation de {year-1}", "La déclaration produite et l'avis de l'ARC, si nous ne les avons pas préparés."),
   doc("Relevés de prêts et d'hypothèques", "Solde à la fin de l'exercice et intérêts payés.", undefined, false),
 
   ask(assets),
