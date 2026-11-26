@@ -9,6 +9,9 @@ on:
       - 'web/scripts/**'
       - 'web/package.json'
       - 'web/package-lock.json'
+      - 'web/vite.config.ts'
+      - 'web/vitest.config.ts'
+      - 'web/tsconfig.json'
       - '.github/workflows/rust-scanner.yml'
   pull_request:
     branches: [main]
@@ -18,6 +21,9 @@ on:
       - 'web/scripts/**'
       - 'web/package.json'
       - 'web/package-lock.json'
+      - 'web/vite.config.ts'
+      - 'web/vitest.config.ts'
+      - 'web/tsconfig.json'
       - '.github/workflows/rust-scanner.yml'
 
 permissions:
@@ -25,6 +31,7 @@ permissions:
 
 env:
   WASM_BINDGEN_CLI: 0.2.130
+  BINARYEN: version_133
 
 jobs:
   wasm:
@@ -40,11 +47,20 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: web/scan-wasm
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.cargo/bin/wasm-bindgen
-          key: wasm-bindgen-${{ env.WASM_BINDGEN_CLI }}
-      - run: wasm-bindgen --version 2>/dev/null | grep -qx "wasm-bindgen ${{ env.WASM_BINDGEN_CLI }}" || cargo install wasm-bindgen-cli --version ${{ env.WASM_BINDGEN_CLI }} --locked
+      - name: Install wasm-bindgen and wasm-opt
+        run: |
+          mkdir -p "$RUNNER_TEMP/tools/wasm-bindgen" "$RUNNER_TEMP/tools/binaryen"
+          cd "$RUNNER_TEMP/tools"
+          wb="wasm-bindgen-${WASM_BINDGEN_CLI}-x86_64-unknown-linux-musl"
+          bin="binaryen-${BINARYEN}-x86_64-linux"
+          curl -fsSL --retry 3 -o wb.tar.gz "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${WASM_BINDGEN_CLI}/${wb}.tar.gz"
+          curl -fsSL --retry 3 -o bin.tar.gz "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN}/${bin}.tar.gz"
+          echo "9687f3bb551b9f66f37ed32a40d7913a00f7962db653054e56857bc306c3227f  wb.tar.gz" | sha256sum -c -
+          echo "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489  bin.tar.gz" | sha256sum -c -
+          tar xzf wb.tar.gz --strip-components=1 -C wasm-bindgen
+          tar xzf bin.tar.gz --strip-components=1 -C binaryen
+          echo "$RUNNER_TEMP/tools/wasm-bindgen" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/tools/binaryen/bin" >> "$GITHUB_PATH"
       - name: Check the binding
         working-directory: web/scan-wasm
         run: |
@@ -55,6 +71,8 @@ jobs:
         run: |
           cargo build --locked --release --target wasm32-unknown-unknown
           wasm-bindgen --target web --out-dir ../src/scan/wasm target/wasm32-unknown-unknown/release/collect_scan_wasm.wasm
+          wasm-opt -Oz --all-features ../src/scan/wasm/collect_scan_wasm_bg.wasm -o ../src/scan/wasm/collect_scan_wasm_bg.opt.wasm
+          mv ../src/scan/wasm/collect_scan_wasm_bg.opt.wasm ../src/scan/wasm/collect_scan_wasm_bg.wasm
       - name: The committed types are the built ones
         run: git diff --exit-code web/src/scan/wasm/collect_scan_wasm.d.ts
       - run: npm ci
