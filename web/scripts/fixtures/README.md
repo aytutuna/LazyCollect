@@ -10,3 +10,6 @@ These files are changed from the original: scaled down and re-encoded.
 Jean-Christophe Burie, Joseph Chazalon, Mickael Coustaty, Sebastien Eskenazi, Muhammad Muzzamil Luqman, Maroua Mehri,
 Nibal Nayef, Jean-Marc Ogier, Sophea Prum and Marcal Rusinol: "ICDAR2015 Competition on Smartphone Document Capture
 and OCR (SmartDoc)", 13th International Conference on Document Analysis and Recognition (ICDAR), 2015.
+
+`enhancer.json` is LazyKit's testdata/scan/enhancer.json at 61484693, unchanged: the page clean-up checksums of Lazy Scan's drawn
+test pages, which the Rust scanner's tests (src/scan/rust.test.ts) hold the WebAssembly to.

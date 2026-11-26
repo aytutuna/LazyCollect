@@ -1,15 +1,18 @@
 import model from "./model.json";
 import type { Found } from "./corners";
-import type { Pixels, Quad } from "./geometry";
+import type { Engine } from "./engine";
+import { applyFilter, type Filter } from "./filters";
+import { warp, type Pixels, type Quad } from "./geometry";
+import { frameIssues, pageIssues, type Issue } from "./quality";
 import type { Refinement } from "./refine";
 import type { Reply, Request } from "./detect.worker";
 
 // the path carries the file's hash (scripts/fetch_docaligner.sh), so a new model is a new, immutable URL
 const MODEL = `/models/${model.sha256.slice(0, 12)}/docaligner-int8.onnx`;
 
-// The page finder, running in a worker. `ready` says whether the model loaded; without it `detect` answers null and the
-// scanner falls back to placing the corners by hand.
-export class Detector {
+// The page finder, running in a worker, and the TypeScript cut-out, clean-up and checks. `ready` says whether the model loaded;
+// without it `detect` answers null and the scanner falls back to placing the corners by hand.
+export class Detector implements Engine {
   private worker = new Worker(new URL("./detect.worker.ts", import.meta.url), { type: "module" });
   private waiting = new Map<number, (reply: Reply | null) => void>();
   private next = 0;
@@ -53,6 +56,22 @@ export class Detector {
       this.send({ type: "refine", id, image, quad }, [image.data.buffer]);
     });
     return reply?.type === "refined" ? { refinement: reply.refinement, image: reply.image } : null;
+  }
+
+  async warp(image: Pixels, quad: Quad, width: number, height: number): Promise<Pixels | null> {
+    return warp(image, quad, width, height);
+  }
+
+  async filter(image: Pixels, filter: Filter): Promise<Pixels> {
+    return applyFilter(image, filter);
+  }
+
+  async frameIssues(quad: Quad, confidence: number | null, width: number, height: number): Promise<Issue[]> {
+    return frameIssues(quad, confidence, width, height);
+  }
+
+  async pageIssues(page: Pixels): Promise<Issue[]> {
+    return pageIssues(page);
   }
 
   close() {

@@ -10,7 +10,8 @@
     "resolveJsonModule": true,
     "strict": true,
     "noEmit": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": { "#rust-engine": ["./src/scan/rust-engine.ts"] }
   },
   "include": ["src", "vite.config.ts", "vitest.config.ts"]
 }
