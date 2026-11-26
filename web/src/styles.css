@@ -1397,3 +1397,12 @@ td.pick {
 .flag {
   margin: 0.25rem 0 0;
 }
+
+.lang {
+  margin-left: auto;
+}
+
+.lang select {
+  width: auto;
+  min-height: 2.25rem;
+}

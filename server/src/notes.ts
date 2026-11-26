@@ -1,3 +1,4 @@
+import { asLang } from "./lang";
 import { Hono } from "hono";
 import { audit, auditClient } from "./audit";
 import { rateLimited } from "./auth";
@@ -112,7 +113,7 @@ notes.post("/requests/:id/notes", async (c) => {
 
 type Firm = { id: string; region: string; tz: string };
 
-async function emailReply(env: Env, db: D1Database, firm: Firm, req: { id: string; client_id: string; title: string; deadline: number }, now: number) {
+async function emailReply(env: Env, db: D1Database, firm: Firm, req: { id: string; client_id: string; locale: string; title: string; deadline: number }, now: number) {
   const region = firm.region as Region;
   const [sender] = (await sendersOf(env, region, [firm.id])).values();
   if (!canSend(sender, now)) return "not_set_up";
@@ -139,6 +140,7 @@ async function emailReply(env: Env, db: D1Database, firm: Firm, req: { id: strin
       { db, firmId: firm.id, requestId: req.id, clientId: req.client_id, kind: "answer", seq: null },
       {
         kind: "answer",
+        lang: asLang(req.locale),
         sender: senderName(sender),
         address: sender.address,
         phone: sender.phone,

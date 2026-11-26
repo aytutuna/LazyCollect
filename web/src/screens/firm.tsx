@@ -1,9 +1,9 @@
 import { useState } from "preact/hooks";
 import { Link } from "wouter-preact";
 import { get, patch, put, useAction, useLoad } from "../api";
-import { t } from "../i18n";
+import { LOCALES, isLocale, t, type Locale } from "../i18n";
 import type { Firm, Me } from "../types";
-import { Confirm, ErrorNote, Field, LegalLink, Loading } from "../ui";
+import { Check, Confirm, ErrorNote, Field, LegalLink, Loading } from "../ui";
 import { CloseAccount, Plan } from "./billing";
 import { Security } from "./security";
 import { Staff } from "./staff";
@@ -172,6 +172,50 @@ function Retention({ canEdit }: { canEdit: boolean }) {
   );
 }
 
+// what the account writes in: its own language, or each client's
+function Languages({ firm, canEdit }: { firm: Firm; canEdit: boolean }) {
+  const [lang, setLang] = useState<Locale>(isLocale(firm.locale) ? firm.locale : "en");
+  const [perClient, setPerClient] = useState(firm.client_langs === 1);
+  const [saved, setSaved] = useState(false);
+  const { busy, error, run } = useAction();
+
+  async function submit(e: Event) {
+    e.preventDefault();
+    setSaved(false);
+    if (await run(() => patch("/firm", { locale: lang, client_langs: perClient }))) setSaved(true);
+  }
+
+  return (
+    <section class="narrow-form">
+      <h2>{t("settings.language")}</h2>
+      <p class="muted">{t("settings.language_hint")}</p>
+      <form onSubmit={submit}>
+        {!canEdit && <p class="muted">{t("settings.retention_owner")}</p>}
+        <fieldset disabled={!canEdit}>
+          <Field label={t("settings.language_account")}>
+            <select value={lang} onChange={(e) => setLang(e.currentTarget.value as Locale)}>
+              {LOCALES.map((l) => (
+                <option value={l} lang={l}>
+                  {t(`lang.${l}`)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Check label={t("settings.language_clients")} checked={perClient} onChange={setPerClient} />
+          <p class="muted">{t("settings.language_clients_hint")}</p>
+        </fieldset>
+        <ErrorNote error={error} />
+        {saved && <p class="ok">{t("saved")}</p>}
+        {canEdit && (
+          <button class="primary" disabled={busy}>
+            {t("settings.retention_save")}
+          </button>
+        )}
+      </form>
+    </section>
+  );
+}
+
 type Kinds = { kinds: { id: string; on: boolean; suggested: boolean; extensions: string[] }[] };
 
 function FileKinds({ canEdit }: { canEdit: boolean }) {
@@ -242,6 +286,7 @@ export function Settings({ me, onSaved, onRefresh, onSignOut, onClosed }: { me: 
         <h2>{t("settings.firm")}</h2>
         {data ? <FirmForm firm={data} canEdit={me.user.role === "owner"} onSaved={onSaved} /> : error ? <ErrorNote error={error} /> : <Loading />}
       </section>
+      {data && <Languages firm={data} canEdit={me.user.role === "owner"} />}
       <Security me={me} />
       <Retention canEdit={me.user.role === "owner"} />
       <FileKinds canEdit={me.user.role === "owner"} />

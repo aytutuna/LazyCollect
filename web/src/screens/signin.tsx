@@ -3,7 +3,7 @@ import { ApiError, del, get, post, useAction } from "../api";
 import { t } from "../i18n";
 import { askPasskey, createPasskey, passkeyFail, passkeysSupported } from "../passkey";
 import { Turnstile } from "../turnstile";
-import { ErrorNote, Field, LegalLink } from "../ui";
+import { ErrorNote, Field, LanguagePicker, LegalLink } from "../ui";
 
 type Step = "email" | "code" | "passkey" | "enrol";
 
@@ -64,6 +64,7 @@ export function SignIn({ onDone }: { onDone: () => Promise<unknown> }) {
   return (
     <main class="narrow">
       <h1 class="brand">{t("app.name")}</h1>
+      <LanguagePicker />
       {step === "email" ? (
         <form onSubmit={start}>
           <h2>{t("signin.title")}</h2>

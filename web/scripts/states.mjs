@@ -16,6 +16,7 @@ const item = (id, label, o = {}) => ({ id, label, help: null, required: true, st
 const ask = (id, label, kind, o = {}) => item(id, label, { kind, ...o });
 
 const base = {
+  locale: "en",
   firm_name: "Tuna Tax Services",
   tz: "America/Toronto",
   title: "2025 tax return",
@@ -260,6 +261,12 @@ export const states = [
     },
   },
 ];
+
+// the same pages in French, to see long words fit at 320 px and that the page says which language it is in
+states.push(...states.filter((s) => !s.run).map((s) => ({ ...s, name: `${s.name}-fr`, view: { ...s.view, locale: "fr-CA" } })));
+
+// a French request read by someone who chose English: the page stays English and the request's own words say they are French
+states.push({ name: "mixed", view: { ...base, locale: "fr-CA", title: "Déclaration de revenus 2025", items: base.items.map((i) => ({ ...i, label: `${i.label} (français)` })) }, ui: "en" });
 
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".wasm": "application/wasm" };
 

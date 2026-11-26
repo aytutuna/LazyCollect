@@ -27,6 +27,8 @@ export type Firm = {
   apple_original_transaction_id: string | null;
   closed_at: number | null;
   require_passkeys: number;
+  locale: string;
+  client_langs: number;
 };
 export type AppEnv = { Bindings: Env; Variables: { session: Session | null; firm: Firm; db: D1Database } };
 

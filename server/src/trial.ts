@@ -1,5 +1,6 @@
 import { classOf, itemFailed } from "./pulse";
 import { Transient, escapeHtml, sendMail } from "./email";
+import { asLang, longDate, textsFor, type Lang } from "./lang";
 import { DAY, PAYING } from "./util";
 
 export type TrialKind = "start" | "soon" | "end";
@@ -9,25 +10,33 @@ const SOON = 3 * DAY;
 const LATE = 7 * DAY;
 const PER_RUN = 50;
 
-type Trial = { id: string; tz: string; trial_ends_at: number };
+type Trial = { id: string; tz: string; locale: string; trial_ends_at: number };
 
-function letter(env: Env, kind: TrialKind, firm: Trial) {
-  const date = new Intl.DateTimeFormat("en-CA", { dateStyle: "long", timeZone: firm.tz }).format(firm.trial_ends_at);
-  const url = `${env.APP_URL}/settings`;
-  const soonOpen = "Payments are not open yet. They open soon, and we will email you when you can subscribe.";
-  const kept = "Your account and stored files are kept.";
-  const copy = {
+type Words = {
+  soonOpen: string;
+  kept: string;
+  start: { subject: string; lines: (date: string, kept: string, soonOpen: string) => string[] };
+  soon: { subject: (date: string) => string; lines: (date: string, kept: string, soonOpen: string) => string[] };
+  end: { subject: string; lines: (date: string, kept: string, soonOpen: string) => string[] };
+  subscribe: string;
+  why: string;
+};
+
+const WORDS: Record<"en" | "fr-CA", Words> = {
+  en: {
+    soonOpen: "Payments are not open yet. They open soon, and we will email you when you can subscribe.",
+    kept: "Your account and stored files are kept.",
     start: {
       subject: "Your Lazy Collect trial has started",
-      lines: [
+      lines: (date, kept, soonOpen) => [
         `Welcome to Lazy Collect. Your free trial runs until ${date}. Until then you can send requests and collect papers from your clients, and nothing is charged.`,
         soonOpen,
         `${kept} When the trial ends, new uploads from your clients pause.`,
       ],
     },
     soon: {
-      subject: `Your Lazy Collect trial ends on ${date}`,
-      lines: [
+      subject: (date) => `Your Lazy Collect trial ends on ${date}`,
+      lines: (date, kept, soonOpen) => [
         `Your free trial ends on ${date}.`,
         soonOpen,
         `${kept} When the trial ends, new uploads from your clients pause. They can still answer questions and write to you.`,
@@ -35,22 +44,64 @@ function letter(env: Env, kind: TrialKind, firm: Trial) {
     },
     end: {
       subject: "Your Lazy Collect trial has ended",
-      lines: [
+      lines: (date, kept, soonOpen) => [
         `Your free trial ended on ${date}.`,
         `${kept} New uploads from your clients are paused. They can still answer questions and write to you.`,
         soonOpen,
       ],
     },
-  }[kind];
-  const text = `${copy.lines.join("\n\n")}\n\nSubscribe: ${url}\n\nYou are getting this because you are an owner of a Lazy Collect account.\n`;
-  const html = `<!doctype html><html lang="en"><body style="margin:0;padding:32px 16px;background:#f6f6f4;font-family:Arial,sans-serif;color:#1c1c1c">
+    subscribe: "Subscribe",
+    why: "You are getting this because you are an owner of a Lazy Collect account.",
+  },
+  "fr-CA": {
+    soonOpen: "Les paiements ne sont pas encore ouverts. Ils le seront bientôt, et nous vous enverrons un courriel quand vous pourrez vous abonner.",
+    kept: "Votre compte et vos fichiers conservés sont gardés.",
+    start: {
+      subject: "Votre essai de Lazy Collect a commencé",
+      lines: (date, kept, soonOpen) => [
+        `Bienvenue dans Lazy Collect. Votre essai gratuit dure jusqu'au ${date}. D'ici là, vous pouvez envoyer des demandes et recueillir les documents de vos clients, sans aucuns frais.`,
+        soonOpen,
+        `${kept} À la fin de l'essai, les nouveaux envois de vos clients sont suspendus.`,
+      ],
+    },
+    soon: {
+      subject: (date) => `Votre essai de Lazy Collect se termine le ${date}`,
+      lines: (date, kept, soonOpen) => [
+        `Votre essai gratuit se termine le ${date}.`,
+        soonOpen,
+        `${kept} À la fin de l'essai, les nouveaux envois de vos clients sont suspendus. Ils peuvent encore répondre aux questions et vous écrire.`,
+      ],
+    },
+    end: {
+      subject: "Votre essai de Lazy Collect est terminé",
+      lines: (date, kept, soonOpen) => [
+        `Votre essai gratuit s'est terminé le ${date}.`,
+        `${kept} Les nouveaux envois de vos clients sont suspendus. Ils peuvent encore répondre aux questions et vous écrire.`,
+        soonOpen,
+      ],
+    },
+    subscribe: "S'abonner",
+    why: "Vous recevez ce message parce que vous êtes titulaire d'un compte Lazy Collect.",
+  },
+};
+
+function letter(env: Env, kind: TrialKind, firm: Trial) {
+  const lang = asLang(firm.locale);
+  const w = textsFor(WORDS, lang);
+  const date = longDate(firm.trial_ends_at, lang, firm.tz);
+  const url = `${env.APP_URL}/settings`;
+  const lines = w[kind].lines(date, w.kept, w.soonOpen);
+  const subject = kind === "soon" ? w.soon.subject(date) : w[kind].subject;
+  const colon = lang === "fr-CA" ? " :" : ":";
+  const text = `${lines.join("\n\n")}\n\n${w.subscribe}${colon} ${url}\n\n${w.why}\n`;
+  const html = `<!doctype html><html lang="${lang}"><body style="margin:0;padding:32px 16px;background:#f6f6f4;font-family:Arial,sans-serif;color:#1c1c1c">
 <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;padding:32px">
 <p style="font-size:20px;margin:0 0 16px">Lazy Collect</p>
-${copy.lines.map((l) => `<p style="font-size:16px;margin:0 0 16px">${escapeHtml(l)}</p>`).join("\n")}
-<p style="margin:0 0 24px"><a href="${escapeHtml(url)}" style="display:inline-block;background:#1c5d99;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px">Subscribe</a></p>
-<p style="font-size:13px;line-height:1.5;color:#666666;margin:0">You are getting this because you are an owner of a Lazy Collect account.</p>
+${lines.map((l) => `<p style="font-size:16px;margin:0 0 16px">${escapeHtml(l)}</p>`).join("\n")}
+<p style="margin:0 0 24px"><a href="${escapeHtml(url)}" style="display:inline-block;background:#1c5d99;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px">${w.subscribe}</a></p>
+<p style="font-size:13px;line-height:1.5;color:#666666;margin:0">${w.why}</p>
 </div></body></html>`;
-  return { subject: copy.subject, text, html };
+  return { subject, text, html };
 }
 
 // To every owner of the account. The claim goes in before the email, so a repeat run skips an owner who has had it; a
@@ -80,7 +131,7 @@ export async function sendTrialNotice(env: Env, firm: Trial, kind: TrialKind) {
 export async function runTrialNotices(env: Env, now = Date.now()) {
   const due = (kind: TrialKind, from: number, to: number) =>
     env.CONTROL.prepare(
-      `SELECT id, tz, trial_ends_at FROM firms
+      `SELECT id, tz, locale, trial_ends_at FROM firms
        WHERE plan_status = 'trialing' AND NOT ${PAYING} AND closed_at IS NULL AND trial_ends_at > ? AND trial_ends_at <= ?
        AND EXISTS (SELECT 1 FROM users u WHERE u.firm_id = firms.id AND u.role = 'owner' AND u.disabled_at IS NULL
          AND NOT EXISTS (SELECT 1 FROM trial_notices n WHERE n.firm_id = firms.id AND n.user_id = u.id AND n.kind = ? AND n.trial_ends_at = firms.trial_ends_at))

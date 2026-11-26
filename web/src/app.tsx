@@ -2,7 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { Link, Route, Switch, useRoute } from "wouter-preact";
 import { ApiError, get, onApiEvents, post } from "./api";
 import { fmtDate, setZone } from "./format";
-import { t } from "./i18n";
+import { t, useLocale } from "./i18n";
 import { Activity } from "./screens/activity";
 import { NewBatch } from "./screens/batch-new";
 import { BatchPage, Batches } from "./screens/batches";
@@ -17,7 +17,7 @@ import { SignIn } from "./screens/signin";
 import { TemplatePage, Templates } from "./screens/templates";
 import { Trash } from "./screens/trash";
 import type { Me } from "./types";
-import { ErrorNote, Loading, setOwner } from "./ui";
+import { ErrorNote, LanguagePicker, Loading, setOwner } from "./ui";
 
 function NavLink({ href, children }: { href: string; children: string }) {
   const [active] = useRoute(href === "/" ? "/" : `${href}/*?`);
@@ -29,6 +29,7 @@ function NavLink({ href, children }: { href: string; children: string }) {
 }
 
 export function App() {
+  useLocale();
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [blocked, setBlocked] = useState(false);
 
@@ -124,6 +125,7 @@ export function App() {
             <NavLink href="/templates">{t("nav.templates")}</NavLink>
             <NavLink href="/settings">{t("nav.settings")}</NavLink>
           </nav>
+          <LanguagePicker />
         </div>
       </header>
       {banner && (

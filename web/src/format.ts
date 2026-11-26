@@ -1,4 +1,4 @@
-import { t } from "./i18n";
+import { intl, t } from "./i18n";
 
 // Dates mean the account's time zone, not the browser's: a deadline is 23:59 there.
 let zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -17,11 +17,11 @@ const wall = (ms: number) => {
 };
 
 // a calendar date such as a document's expiry has no time zone, so it is read as the same day everywhere
-export const fmtDay = (day: string) => new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeZone: "UTC" }).format(Date.parse(`${day}T12:00:00Z`));
+export const fmtDay = (day: string) => new Intl.DateTimeFormat(intl(), { dateStyle: "medium", timeZone: "UTC" }).format(Date.parse(`${day}T12:00:00Z`));
 
-export const fmtDate = (ms: number) => new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeZone: zone }).format(ms);
+export const fmtDate = (ms: number) => new Intl.DateTimeFormat(intl(), { dateStyle: "medium", timeZone: zone }).format(ms);
 
-export const fmtDateTime = (ms: number) => new Intl.DateTimeFormat("en-CA", { dateStyle: "medium", timeStyle: "short", timeZone: zone }).format(ms);
+export const fmtDateTime = (ms: number) => new Intl.DateTimeFormat(intl(), { dateStyle: "medium", timeStyle: "short", timeZone: zone }).format(ms);
 
 const dayNumber = (ms: number) => {
   const w = wall(ms);
@@ -65,7 +65,7 @@ export function fromInput(s: string): number {
 export const inDays = (n: number) => Date.now() + n * 86_400_000;
 
 export function fmtSize(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} kB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n < 1024) return `${n} ${t("size.b")}`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} ${t("size.kb")}`;
+  return `${new Intl.NumberFormat(intl(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n / 1024 / 1024)} ${t("size.mb")}`;
 }

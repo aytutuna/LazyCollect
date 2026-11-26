@@ -71,6 +71,11 @@ run("bash", ["scripts/fetch_docaligner.sh"], { cwd: web, show: true });
 process.env.VITE_TURNSTILE_SITEKEY = sitekey;
 run("npm", ["run", "build"], { cwd: web, show: true });
 
+// One-off for the deploy that brings US English as the base (control 0015, NA 0030). Until the new worker is live the old one
+// keeps writing 'en' rows, and those are Canadian too. Delete this block after that deploy.
+const sql = (db, q) => JSON.parse(run("npx", ["wrangler", "d1", "execute", db, "--remote", "--json", "--command", win ? `"${q}"` : q], { cwd: server }))[0];
+const was = (await (await fetch(`${live}/api/health`)).json()).commit;
+const canadian = spawnSync("git", ["cat-file", "-e", `${was}:server/migrations/control/0015_canadian_english.sql`], { cwd: root }).status !== 0;
 for (const db of ["lazycollect-control", "lazycollect-na"]) run("npx", ["wrangler", "d1", "migrations", "apply", db, "--remote"], { cwd: server, show: true });
 run("npx", ["wrangler", "deploy", "--var", `COMMIT:${sha}`], { cwd: server, show: true });
 
@@ -80,6 +85,15 @@ for (let i = 0; i < 10 && !named; i++) {
   if (!named) await new Promise((r) => setTimeout(r, 3000));
 }
 if (!named) stop("live does not name the new commit yet; check it by hand");
+if (canadian) {
+  // the new worker has been seen live; a minute later nothing in flight can still write 'en', and the cutoff is the server's clock
+  await new Promise((r) => setTimeout(r, 60000));
+  const cutoff = new Date((await fetch(`${live}/api/health`)).headers.get("date")).getTime();
+  console.log(`en-CA catch-up, rows made up to ${cutoff} (rerun by hand with that cutoff if needed)`);
+  const catchUp = (db, table) => sql(db, `UPDATE ${table} SET locale = 'en-CA' WHERE locale = 'en' AND created_at <= ${cutoff}`).meta.changes;
+  console.log(`firms ${catchUp("lazycollect-control", "firms")}`);
+  for (const table of ["requests", "clients", "templates"]) console.log(`${table} ${catchUp("lazycollect-na", table)}`);
+}
 const after = await keyCheck();
 if (after.length) stop(after.join("; "), "Deployed, but the key check failed");
 

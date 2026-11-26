@@ -15,7 +15,7 @@ import { Review } from "./review";
 import { Thread } from "./thread";
 import { Unavailable } from "./unavailable";
 import { Viewer } from "./viewer";
-import { Badge, Check, Confirm, ErrorNote, Field, Loading, statusLabel, statusTone } from "../ui";
+import { Badge, Check, Confirm, ErrorNote, Field, Loading, Own, RequestLang, statusLabel, statusTone } from "../ui";
 
 const ITEM_TONES = { empty: "grey", submitted: "teal", approved: "green", rejected: "red", unavailable: "amber", waived: "green" };
 
@@ -156,9 +156,11 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
   };
 
   return (
-    <>
+    <RequestLang.Provider value={req.locale}>
       <div class="head">
-        <h1>{req.title}</h1>
+        <h1>
+          <Own>{req.title}</Own>
+        </h1>
         {stale && <p class="warn">{t("detail.stale_years", { items: stale })}</p>}
         <Badge tone={statusTone(req.status)}>{statusLabel(req.status)}</Badge>
       </div>
@@ -202,7 +204,9 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
               {req.note && (
                 <>
                   <dt>{t("new.note")}</dt>
-                  <dd>{req.note}</dd>
+                  <dd>
+                    <Own>{req.note}</Own>
+                  </dd>
                 </>
               )}
             </dl>
@@ -337,11 +341,18 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
                         <>
                           <div class="line">
                             <span>
-                              <strong>{item.label}</strong> {!item.required && <span class="muted">({t("items.optional")})</span>}
+                              <strong>
+                              <Own>{item.label}</Own>
+                            </strong>{" "}
+                            {!item.required && <span class="muted">({t("items.optional")})</span>}
                             </span>
                             <Badge tone={ITEM_TONES[item.status]}>{t(`item.${item.status}`)}</Badge>
                           </div>
-                          {item.help && <div class="muted">{item.help}</div>}
+                          {item.help && (
+                            <div class="muted">
+                              <Own>{item.help}</Own>
+                            </div>
+                          )}
                       {item.expiry_rule && <Dates item={item} target={item.expiry_rule === "issue" ? toInput(req.deadline) : req.valid_until} />}
                           {item.show_if_pos !== null && <p class="muted">{condition(req.items, item)}</p>}
                           {item.hidden && <p class="muted">{t("items.hidden")}</p>}
@@ -445,7 +456,7 @@ export function RequestPage({ id, owner }: { id: string; owner: boolean }) {
       {ask === "delete" && (
         <Confirm title={t("detail.delete")} body={t("detail.delete_body")} confirm={t("detail.delete")} danger busy={act.busy} error={act.error} onConfirm={remove} onCancel={closeAsk} />
       )}
-    </>
+    </RequestLang.Provider>
   );
 }
 

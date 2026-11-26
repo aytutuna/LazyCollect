@@ -1,5 +1,6 @@
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { audit } from "./audit";
+import { isLang } from "./lang";
 import { isRegion, regionOf, type Region } from "./regions";
 import type { AppEnv, Firm } from "./session";
 import { validZone } from "./tz";
@@ -64,7 +65,7 @@ function load(allowClosed: boolean): MiddlewareHandler<AppEnv> {
     if (!session) return c.json({ error: "unauthorized" }, 401);
     const row = await c.env.CONTROL.prepare(
       `SELECT id, name, legal_name, address, phone, province, tz, region, plan_status, trial_ends_at, current_period_end, past_due_since,
-         cancel_at_period_end, stripe_customer_id, stripe_subscription_id, plan_source, apple_original_transaction_id, closed_at, require_passkeys FROM firms WHERE id = ?`,
+         cancel_at_period_end, stripe_customer_id, stripe_subscription_id, plan_source, apple_original_transaction_id, closed_at, require_passkeys, locale, client_langs FROM firms WHERE id = ?`,
     )
       .bind(session.firmId)
       .first<Firm>();
@@ -96,7 +97,7 @@ firm.patch("/firm", async (c) => {
   if (!(await isOwner(c))) return c.json({ error: "forbidden" }, 403);
   const body = await readBody(c);
   if (!body) return invalid(c);
-  const fields: Record<string, string | null> = {};
+  const fields: Record<string, string | number | null> = {};
   if ("name" in body) {
     const name = text(body.name, 120);
     if (!name) return invalid(c);
@@ -116,6 +117,14 @@ firm.patch("/firm", async (c) => {
   if ("tz" in body) {
     if (typeof body.tz !== "string" || !validZone(body.tz)) return invalid(c);
     fields.tz = body.tz;
+  }
+  if ("locale" in body) {
+    if (!isLang(body.locale)) return invalid(c);
+    fields.locale = body.locale;
+  }
+  if ("client_langs" in body) {
+    if (typeof body.client_langs !== "boolean") return invalid(c);
+    fields.client_langs = body.client_langs ? 1 : 0;
   }
   if (!Object.keys(fields).length) return invalid(c);
   const set = setClause(fields);

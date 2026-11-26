@@ -1,0 +1,62 @@
+{
+  "id": "t1-self-employed",
+  "name": "T1 travailleur autonome (T2125)",
+  "items": [
+    {
+      "label": "Pièce d'identité avec photo",
+      "help": "Permis de conduire ou passeport",
+      "required": true
+    },
+    {
+      "label": "Avis de cotisation de {year-1}",
+      "required": true,
+      "example": "noa"
+    },
+    {
+      "label": "Sommaire des revenus ou factures",
+      "required": true
+    },
+    {
+      "label": "Relevés bancaires et de cartes de crédit de l'entreprise",
+      "required": true
+    },
+    {
+      "label": "Reçus de dépenses par catégorie",
+      "required": true
+    },
+    {
+      "label": "Numéro de TPS/TVH et déclarations",
+      "required": false
+    },
+    {
+      "label": "Registre des déplacements avec kilomètres",
+      "help": "Kilomètres d'affaires et total pour l'année",
+      "required": false
+    },
+    {
+      "label": "Détails du bureau à domicile",
+      "help": "Superficie utilisée, loyer ou intérêts hypothécaires, services publics, assurance, taxes foncières",
+      "required": false
+    },
+    {
+      "label": "Achats d'équipement ou de véhicules",
+      "help": "Pour la déduction pour amortissement",
+      "required": false
+    },
+    {
+      "label": "Feuillets de paie et de sous-traitants",
+      "help": "T4 et T4A",
+      "required": false
+    },
+    {
+      "label": "États financiers de {year-1}",
+      "required": false
+    },
+    {
+      "label": "T4, T5 et autres feuillets",
+      "help": "Tous les feuillets personnels que vous avez reçus",
+      "required": false,
+      "example": "t4"
+    }
+  ]
+}

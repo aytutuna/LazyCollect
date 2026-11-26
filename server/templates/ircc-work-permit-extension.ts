@@ -23,7 +23,7 @@ export default template("ircc-work-permit-extension", "Work permit extension, fr
   doc("Employment contract", "Signed by both you and the employer."),
   doc("Resume", "Up to date, with dates and employers."),
   doc("Proof of work history", "Recent pay slips and reference letters from your Canadian employers."),
-  doc("Education documents", "Degrees, diplomas, licences or training the job asks for. If none apply, send a page that says Not applicable."),
+  doc("Education documents", "Degrees, diplomas, licenses or training the job asks for. If none apply, send a page that says Not applicable."),
   ask(quebec),
   doc("Quebec acceptance certificate (CAQ)", "Issued by Quebec's immigration ministry. The employer usually starts it.", quebec),
   tag(doc("Digital photo", "Meeting IRCC photo specifications.", undefined, false), { per_person: "everyone" }),

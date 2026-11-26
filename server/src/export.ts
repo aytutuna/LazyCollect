@@ -5,6 +5,7 @@ import { fileKey, decryptStream } from "./crypt";
 import { disposition } from "./files";
 import { firmDek } from "./keys";
 import { withoutPerson } from "./expand";
+import { asLang, textsFor, type Lang } from "./lang";
 import { validTo, visible } from "./questions";
 import { sentBackText } from "./reasons";
 import { regionOf, type Region } from "./regions";
@@ -29,16 +30,57 @@ type Told = {
   valid_to: string | null;
 };
 
+// the text files of the zip are written in the account's language
+const WORDS = {
+  en: {
+    files: { messages: "messages.txt", checklist: "checklist.txt", answers: "answers.txt" },
+    expires: (on: string) => `expires ${on}`,
+    issued: (on: string, months: number | null, to: string | null) => `issued ${on}, good for ${months} months, until ${to}`,
+    waived: "accepted as not needed",
+    unavailable: "client says they do not have it, waiting for an answer",
+    sentBack: "sent back",
+    askedAgain: "asked again",
+    after: "client has it after all",
+    reason: (note: string | null) => (note ? `client's reason: ${note}` : "no reason given"),
+    noAnswer: "no answer",
+    yes: "Yes",
+    no: "No",
+    client: "client",
+    account: "account",
+    colon: ": ",
+  },
+  "fr-CA": {
+    files: { messages: "messages.txt", checklist: "aide-memoire.txt", answers: "reponses.txt" },
+    expires: (on: string) => `expire le ${on}`,
+    issued: (on: string, months: number | null, to: string | null) => `émis le ${on}, valide ${months} mois, jusqu'au ${to}`,
+    waived: "accepté comme non requis",
+    unavailable: "le client dit ne pas l'avoir, en attente d'une réponse",
+    sentBack: "renvoyé",
+    askedAgain: "redemandé",
+    after: "le client l'a finalement",
+    reason: (note: string | null) => (note ? `raison du client : ${note}` : "aucune raison donnée"),
+    noAnswer: "aucune réponse",
+    yes: "Oui",
+    no: "Non",
+    client: "client",
+    account: "compte",
+    colon: " : ",
+  },
+} as const;
+
+type Words = (typeof WORDS)["en" | "fr-CA"];
+
 // the date of a document, as the account reads it
-const datesText = (i: Told) =>
+const datesText = (i: Told, w: Words) =>
   i.expiry_rule === "expiry" && i.expires_on
-    ? `expires ${i.expires_on}`
+    ? w.expires(i.expires_on)
     : i.expiry_rule === "issue" && i.issued_on
-      ? `issued ${i.issued_on}, good for ${i.valid_months} months, until ${i.valid_to}`
+      ? w.issued(i.issued_on, i.valid_months, i.valid_to)
       : null;
 
 // what the client said about items they could not send, what the account answered, what was sent back and why, and the dates of documents; null when no item has such a story
-async function checklistText(db: D1Database, firmId: string, requestId: string): Promise<string | null> {
+async function checklistText(db: D1Database, firmId: string, requestId: string, lang: Lang): Promise<string | null> {
+  const w = textsFor(WORDS, lang);
   const { results } = await db
     .prepare(
       `SELECT label, status, reject_note, reject_reasons, unavailable_note, unavailable_at, expiry_rule, expires_on, issued_on, valid_months, ${validTo("items")} AS valid_to
@@ -52,23 +94,23 @@ async function checklistText(db: D1Database, firmId: string, requestId: string):
   const told = (i: Told) => i.status === "waived" || i.status === "unavailable" || i.unavailable_at !== null || (i.status === "rejected" && i.reject_reasons !== null);
   const state = (i: Told) =>
     i.status === "waived"
-      ? "accepted as not needed"
+      ? w.waived
       : i.status === "unavailable"
-        ? "client says they do not have it, waiting for an answer"
+        ? w.unavailable
         : i.reject_reasons
-          ? `sent back: ${sentBackText(i.reject_reasons, i.reject_note)}`
+          ? `${w.sentBack}${w.colon}${sentBackText(i.reject_reasons, i.reject_note, lang)}`
           : i.reject_note
-            ? `asked again: ${i.reject_note}`
-            : "client has it after all";
+            ? `${w.askedAgain}${w.colon}${i.reject_note}`
+            : w.after;
   // an item only sent back has no word from the client to report
-  const said = (i: Told) =>
-    i.unavailable_at === null && i.status !== "waived" ? "" : `  ${i.unavailable_note ? `client's reason: ${i.unavailable_note}` : "no reason given"}\n`;
-  const lines = (i: Told) => [told(i) ? `  ${state(i)}\n${said(i)}` : "", datesText(i) ? `  ${datesText(i)}\n` : ""].join("");
+  const said = (i: Told) => (i.unavailable_at === null && i.status !== "waived" ? "" : `  ${w.reason(i.unavailable_note)}\n`);
+  const lines = (i: Told) => [told(i) ? `  ${state(i)}\n${said(i)}` : "", datesText(i, w) ? `  ${datesText(i, w)}\n` : ""].join("");
   return results.map((i) => `${i.label}\n${lines(i)}`).join("\n");
 }
 
 // the questions that apply to the client and what they answered, in checklist order; null when there are none
-async function answersText(db: D1Database, firmId: string, requestId: string): Promise<string | null> {
+async function answersText(db: D1Database, firmId: string, requestId: string, lang: Lang): Promise<string | null> {
+  const w = textsFor(WORDS, lang);
   const { results } = await db
     .prepare(
       `SELECT label, kind, answer, status, reject_note, reject_reasons FROM items i WHERE firm_id = ? AND request_id = ? AND kind != 'file' AND ${visible("i")} ORDER BY position`,
@@ -77,21 +119,22 @@ async function answersText(db: D1Database, firmId: string, requestId: string): P
     .all<{ label: string; kind: string; answer: string | null; status: string; reject_note: string | null; reject_reasons: string | null }>();
   if (!results.length) return null;
   const shown = (i: { kind: string; answer: string | null }) =>
-    i.answer === null ? "no answer" : i.kind === "multi" ? (JSON.parse(i.answer) as string[]).join(", ") : i.kind === "yesno" ? (i.answer === "yes" ? "Yes" : "No") : i.answer;
+    i.answer === null ? w.noAnswer : i.kind === "multi" ? (JSON.parse(i.answer) as string[]).join(", ") : i.kind === "yesno" ? (i.answer === "yes" ? w.yes : w.no) : i.answer;
   return results
-    .map((i) => `${i.label}\n  ${shown(i)}${i.status === "rejected" && (i.reject_note || i.reject_reasons) ? `\n  sent back: ${sentBackText(i.reject_reasons, i.reject_note)}` : ""}\n`)
+    .map((i) => `${i.label}\n  ${shown(i)}${i.status === "rejected" && (i.reject_note || i.reject_reasons) ? `\n  ${w.sentBack}${w.colon}${sentBackText(i.reject_reasons, i.reject_note, lang)}` : ""}\n`)
     .join("\n");
 }
 
 // the thread with the client as plain text, oldest first; null when there is none
-async function messagesText(db: D1Database, firmId: string, requestId: string): Promise<string | null> {
+async function messagesText(db: D1Database, firmId: string, requestId: string, lang: Lang): Promise<string | null> {
+  const w = textsFor(WORDS, lang);
   const { results } = await db
     .prepare("SELECT author, body, created_at FROM notes WHERE firm_id = ? AND request_id = ? ORDER BY created_at, rowid")
     .bind(firmId, requestId)
     .all<{ author: string; body: string; created_at: number }>();
   if (!results.length) return null;
   return results
-    .map((n) => `${new Date(n.created_at).toISOString().slice(0, 16).replace("T", " ")} UTC, ${n.author === "client" ? "client" : "account"}\n${n.body}\n`)
+    .map((n) => `${new Date(n.created_at).toISOString().slice(0, 16).replace("T", " ")} UTC, ${n.author === "client" ? w.client : w.account}\n${n.body}\n`)
     .join("\n");
 }
 
@@ -118,9 +161,10 @@ exportZip.get("/requests/:id/export", async (c) => {
     )
     .bind(firm.id, req.id)
     .all<{ id: string; item_id: string; r2_key: string; name: string; size: number; uploaded_at: number; label: string; person_pos: number | null; person: string | null }>();
-  const thread = await messagesText(c.get("db"), firm.id, req.id);
-  const checklist = await checklistText(c.get("db"), firm.id, req.id);
-  const given = await answersText(c.get("db"), firm.id, req.id);
+  const lang = asLang(firm.locale);
+  const thread = await messagesText(c.get("db"), firm.id, req.id, lang);
+  const checklist = await checklistText(c.get("db"), firm.id, req.id, lang);
+  const given = await answersText(c.get("db"), firm.id, req.id, lang);
   if (!results.length && !thread && !checklist && !given) return c.json({ error: "no_files" }, 409);
   if (results.length > MAX_ENTRIES) return c.json({ error: "export_too_big" }, 413);
 
@@ -154,7 +198,7 @@ exportZip.get("/requests/:id/export", async (c) => {
 
   const encoder = new TextEncoder();
   const sizes = results.map((f) => f.size);
-  for (const [name, content] of [["messages.txt", thread], ["checklist.txt", checklist], ["answers.txt", given]] as const) {
+  for (const [name, content] of [[textsFor(WORDS, lang).files.messages, thread], [textsFor(WORDS, lang).files.checklist, checklist], [textsFor(WORDS, lang).files.answers, given]] as const) {
     if (!content) continue;
     const bytes = encoder.encode(content);
     entries.push({ name, mtime: Date.now(), open: async () => new Blob([bytes]).stream() });

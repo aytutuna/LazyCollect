@@ -13,7 +13,10 @@ import gstHst from "../templates/gst-hst-return";
 import t1Personal from "../templates/t1-personal";
 import t1SelfEmployed from "../templates/t1-self-employed.json";
 import t2YearEnd from "../templates/t2-year-end";
+import { canadianTemplates } from "../templates/en-ca";
+import { builtinTemplatesFr } from "../templates/fr";
 import { audit } from "./audit";
+import { asLang, isLang, type Lang } from "./lang";
 import type { AppEnv } from "./session";
 import { ownsExamples, parseExample } from "./examples";
 import { parseKind, parseTags, checkConditions, type Item } from "./questions";
@@ -43,16 +46,21 @@ export const builtinTemplates: Template[] = [
   ircCitizenship,
 ];
 
+// the built-in templates in the language of the request they will start
+const builtinTemplatesCa = canadianTemplates(builtinTemplates);
+export const builtinsFor = (lang: Lang) => (lang === "fr-CA" ? builtinTemplatesFr : lang === "en-CA" ? builtinTemplatesCa : builtinTemplates);
+const builtinOf = (lang: Lang, id: string) => builtinsFor(lang).find((t) => t.id === id);
+
 // the facts a request's checklist fills in: a built-in's own, or the copy an account made of one
-export async function factsOf(db: D1Database, firmId: string, ref: string | null | undefined): Promise<Facts> {
+export async function factsOf(db: D1Database, firmId: string, ref: string | null | undefined, lang: Lang): Promise<Facts> {
   if (!ref) return {};
-  const built = builtinTemplates.find((t) => t.id === ref);
+  const built = builtinOf(lang, ref);
   if (built) return built.facts ?? {};
   const row = await db.prepare("SELECT facts_json FROM templates WHERE firm_id = ? AND id = ?").bind(firmId, ref).first<{ facts_json: string | null }>();
   if (row) return row.facts_json ? JSON.parse(row.facts_json) : {};
   // the account's copy is gone: the built-in checklists' facts stand in, so what came from it can still be repeated
   const merged: Facts = {};
-  for (const t of builtinTemplates) for (const [year, f] of Object.entries(t.facts ?? {})) merged[Number(year)] = { ...merged[Number(year)], ...f };
+  for (const t of builtinsFor(lang)) for (const [year, f] of Object.entries(t.facts ?? {})) merged[Number(year)] = { ...merged[Number(year)], ...f };
   return merged;
 }
 
@@ -85,7 +93,7 @@ type Row = { id: string; name: string; locale: string; items_json: string; sourc
 const present = ({ items_json, facts_json, source_id, ...t }: Row) => {
   const items = JSON.parse(items_json) as Item[];
   const facts: Facts | undefined = facts_json ? JSON.parse(facts_json) : undefined;
-  const built = source_id ? builtinTemplates.find((b) => b.id === source_id) : undefined;
+  const built = source_id ? builtinOf(asLang(t.locale), source_id) : undefined;
   return { ...t, builtin: false, items, tax: tax(items, facts), newer: Boolean(built?.facts && JSON.stringify(built.facts) !== facts_json) };
 };
 
@@ -96,18 +104,20 @@ templates.get("/templates", async (c) => {
     .prepare(`SELECT ${COLS} FROM templates WHERE firm_id = ? ORDER BY name COLLATE NOCASE`)
     .bind(c.get("firm").id)
     .all<Row>();
-  return c.json([...builtinTemplates.map(({ facts, ...t }) => ({ ...t, locale: "en", builtin: true, tax: tax(t.items, facts) })), ...results.map(present)]);
+  const q = c.req.query("locale");
+  const lang = isLang(q) ? q : asLang(c.get("firm").locale);
+  return c.json([...builtinsFor(lang).map(({ facts, ...t }) => ({ ...t, locale: lang, builtin: true, tax: tax(t.items, facts) })), ...results.map(present)]);
 });
 
 templates.post("/templates", async (c) => {
   const body = await readBody(c);
   if (!body) return invalid(c);
   const name = text(body.name, 120);
-  const lang = body.locale === undefined ? "en" : locale(body.locale);
+  const lang = body.locale === undefined ? c.get("firm").locale : locale(body.locale);
   const items = parseItems(body.items);
   if (!name || !lang || !items) return invalid(c);
   // a copy of a built-in keeps its facts, so its dates and rules stay as they were until the account takes newer ones
-  const source = typeof body.source === "string" ? builtinTemplates.find((t) => t.id === body.source) : undefined;
+  const source = typeof body.source === "string" ? builtinOf(lang as Lang, body.source) : undefined;
   const id = randomId();
   const now = Date.now();
   const db = c.get("db");
@@ -169,7 +179,7 @@ templates.post("/templates/:id/facts", async (c) => {
   const firmId = c.get("firm").id;
   const row = await db.prepare(`SELECT ${COLS} FROM templates WHERE firm_id = ? AND id = ?`).bind(firmId, c.req.param("id")).first<Row>();
   if (!row) return notFound(c);
-  const built = row.source_id ? builtinTemplates.find((t) => t.id === row.source_id) : undefined;
+  const built = row.source_id ? builtinOf(asLang(row.locale), row.source_id) : undefined;
   if (!built?.facts) return c.json({ error: "no_source" }, 409);
   await db.batch([
     db.prepare("UPDATE templates SET facts_json = ?, updated_at = ? WHERE firm_id = ? AND id = ?").bind(JSON.stringify(built.facts), Date.now(), firmId, row.id),

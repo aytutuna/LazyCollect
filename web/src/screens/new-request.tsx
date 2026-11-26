@@ -2,23 +2,32 @@ import { useEffect, useState } from "preact/hooks";
 import { useLocation, useSearch } from "wouter-preact";
 import { get, post, useAction, useLoad } from "../api";
 import { fromInput, inDays, toInput } from "../format";
-import { t } from "../i18n";
-import type { Client, RequestDetail, Template } from "../types";
+import { locale, t } from "../i18n";
+import type { Client, Firm, RequestDetail, Template } from "../types";
 import { ErrorNote, Field, Loading } from "../ui";
 import { ClientForm } from "./clients";
 import { ItemsEditor, newItem, toEditItems, toPayload, type EditItem } from "./items-editor";
+import { followLanguage, requestLanguage } from "./template-language";
 import { PeopleDrafts, newDraft, toPeople, type Draft } from "./people";
+
+const titled = (found: Template) => (found.tax ? `${found.name} ${found.tax.suggested}` : found.name);
 
 export function NewRequest() {
   const [, go] = useLocation();
   const preset = new URLSearchParams(useSearch()).get("template") ?? "";
   const clients = useLoad(() => get<Client[]>("/clients"));
-  const templates = useLoad(() => get<Template[]>("/templates"));
+  const firm = useLoad(() => get<Firm>("/firm"));
   const [clientId, setClientId] = useState("");
+  // the account's language, or the client's when the account writes to each client in their own
+  const lang = firm.data ? requestLanguage(firm.data, clients.data?.find((c) => c.id === clientId)) : locale();
+  const templates = useLoad(() => get<Template[]>(`/templates?locale=${lang}`), [lang]);
   const [addingClient, setAddingClient] = useState(false);
   const [templateId, setTemplateId] = useState("");
   const [items, setItems] = useState<EditItem[]>([newItem()]);
   const [title, setTitle] = useState("");
+  // the title the template gave, and whether the items have been changed since: neither follows a language change once the person has taken over
+  const [templateTitle, setTemplateTitle] = useState("");
+  const [itemsEdited, setItemsEdited] = useState(false);
   const [note, setNote] = useState("");
   const [deadline, setDeadline] = useState(toInput(inDays(14)));
   const [people, setPeople] = useState<Draft[]>([]);
@@ -28,6 +37,7 @@ export function NewRequest() {
 
   function pickTemplate(id: string) {
     setTemplateId(id);
+    setItemsEdited(false);
     const found = templates.data?.find((x) => x.id === id);
     if (!found) {
       setItems([newItem()]);
@@ -35,13 +45,28 @@ export function NewRequest() {
     }
     setItems(toEditItems(found.items));
     setTaxYear(found.tax?.suggested ?? null);
-    if (!title) setTitle(found.tax ? `${found.name} ${found.tax.suggested}` : found.name);
+    const named = titled(found);
+    if (!title) {
+      setTitle(named);
+      setTemplateTitle(named);
+    }
     // a checklist for each person starts with the client as the principal applicant
     if (found.items.some((i) => i.per_person) && people.length === 0) setPeople([newDraft("principal", clients.data?.find((c) => c.id === clientId)?.name ?? "")]);
   }
 
   useEffect(() => {
     if (preset && templates.data && !templateId) pickTemplate(preset);
+  }, [templates.data]);
+
+  // a built-in checklist already chosen follows a change of language; one that was edited or is the firm's own stays as it is
+  useEffect(() => {
+    const found = templates.data?.find((x) => x.id === templateId);
+    const follow = followLanguage(found?.builtin ? { name: titled(found) } : undefined, itemsEdited, title, templateTitle);
+    if (follow.items) setItems(toEditItems(found!.items));
+    if (follow.title !== null) {
+      setTitle(follow.title);
+      setTemplateTitle(follow.title);
+    }
   }, [templates.data]);
 
   async function submit(e: Event) {
@@ -163,7 +188,13 @@ export function NewRequest() {
               <input type="date" min="1900-01-01" max="2100-12-31" value={validUntil} onInput={(e) => setValidUntil(e.currentTarget.value)} />
             </Field>
           )}
-          <ItemsEditor items={items} onChange={setItems} />
+          <ItemsEditor
+            items={items}
+            onChange={(next) => {
+              setItems(next);
+              setItemsEdited(true);
+            }}
+          />
         </section>
 
         <ErrorNote error={error} />

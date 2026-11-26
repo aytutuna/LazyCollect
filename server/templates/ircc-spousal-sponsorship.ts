@@ -16,7 +16,7 @@ export default template("ircc-spousal-sponsorship", "Spousal or common-law spons
   doc("Signed sponsorship forms (IMM 1344 and IMM 5532)", "Your representative gives you these to sign. Both of you sign the sponsorship application."),
   doc("Sponsor's PR card or citizenship certificate", "Front and back, or the certificate."),
   ask(married, "Say no if you live together as common-law partners."),
-  doc("Marriage certificate", "It must show the marriage was registered. A record of solemnization or a marriage licence alone is not accepted.", married),
+  doc("Marriage certificate", "It must show the marriage was registered. A record of solemnization or a marriage license alone is not accepted.", married),
   doc("Declaration of common-law union (IMM 5409)", "Signed by both of you.", [married, "no"]),
   doc("Proof you have lived together for 12 months or more", "Joint lease, bills or letters addressed to you both at the same address.", [married, "no"]),
   doc("Photos together over time", "A few from different years and places, with dates if you know them."),

@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { isLang } from "./lang";
 
 export const invalid = (c: Context) => c.json({ error: "invalid" }, 400);
 // an example the editor holds was removed (nothing used it for a day) before it was saved onto an item or template
@@ -23,10 +24,8 @@ export function maybe(v: unknown, max: number): string | null | undefined {
   return blank(v) ? null : text(v, max);
 }
 
-const LOCALES = ["en", "fr-CA"];
-
 export function locale(v: unknown): string | undefined {
-  return typeof v === "string" && LOCALES.includes(v) ? v : undefined;
+  return isLang(v) ? v : undefined;
 }
 
 export function setClause(fields: Record<string, string | number | null>) {

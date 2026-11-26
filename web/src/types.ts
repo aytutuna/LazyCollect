@@ -25,6 +25,8 @@ export type Firm = {
   phone: string | null;
   province: string | null;
   tz: string;
+  locale: string;
+  client_langs: number;
   plan_status: string;
   trial_ends_at: number | null;
 };
@@ -39,6 +41,7 @@ export type Client = {
   email_stop_at: number | null;
   email_bounced_at: number | null;
   sms_ok_at: number | null;
+  locale?: string;
 };
 
 export type Kind = "file" | "yesno" | "text" | "longtext" | "number" | "date" | "choice" | "multi";
@@ -126,6 +129,7 @@ export type ItemWithFiles = Item & { files: FileRow[] };
 
 export type RequestDetail = {
   id: string;
+  locale: string;
   client_id: string;
   title: string;
   note: string | null;
@@ -183,6 +187,7 @@ export type Thread = { notes: Note[]; unanswered: number };
 
 export type ClientView = {
   firm_name: string;
+  locale: "en" | "en-CA" | "fr-CA";
   tz: string;
   title: string;
   note: string | null;

@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { normalizeEmail } from "./auth";
 import { sendInviteEmail } from "./email";
+import { asLang } from "./lang";
 import { isOwner, untouchedRegion, usable } from "./firm";
 import { claimStaffMail } from "./mail";
 import type { AppEnv } from "./session";
@@ -41,7 +42,7 @@ async function deliver(c: Context<AppEnv>, to: string): Promise<Response | null>
   if (!slot) return c.json({ error: "email_limit" }, 429);
   const me = await c.env.CONTROL.prepare("SELECT name, email FROM users WHERE id = ?").bind(c.get("session")!.userId).first<{ name: string | null; email: string }>();
   try {
-    await sendInviteEmail(c.env, to, me!.name ?? me!.email, firm.name!);
+    await sendInviteEmail(c.env, to, me!.name ?? me!.email, firm.name!, asLang(firm.locale));
   } catch (e) {
     console.error(e instanceof Error ? e.message : "invite email failed");
     await c.get("db").prepare("DELETE FROM staff_mail WHERE id = ?").bind(slot).run();

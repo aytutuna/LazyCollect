@@ -1,5 +1,6 @@
 import { itemFailed } from "./pulse";
 import { Transient, escapeHtml, sendMail } from "./email";
+import { longDate, textsFor, type Lang } from "./lang";
 import { reasonLabels } from "./reasons";
 import { isRegion, type Region } from "./regions";
 import { DAY, MINUTE, PAYING, hmac, randomId, sha256 } from "./util";
@@ -28,6 +29,7 @@ export type Missing = { label: string; required: boolean; reject_note: string | 
 
 export type Letter = {
   kind: Kind;
+  lang: Lang;
   sender: string;
   address: string;
   phone: string | null;
@@ -47,80 +49,135 @@ function senderName(name: string): string {
   return name.replace(/[\u0000-\u001f\u007f"<>\\,]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
 }
 
-export function fromHeader(env: Env, name: string): string {
+export function fromHeader(env: Env, name: string, lang: Lang = "en"): string {
   const address = /<([^>]+)>/.exec(env.EMAIL_FROM)?.[1] ?? env.EMAIL_FROM;
-  return `"${senderName(name) || "Sender"} via Lazy Collect" <${address}>`;
+  return `"${senderName(name) || textsFor(WORDS, lang).fallbackSender} via Lazy Collect" <${address}>`;
 }
 
 const oneLine = (s: string) => s.replace(/[\r\n]+/g, " ").trim();
 
-const SUBJECTS: Record<Kind, (l: Letter, date: string) => string> = {
-  invite: (l) => `Documents requested: ${l.title}`,
-  reminder: (l, date) => `Reminder: ${l.title}, due ${date}`,
-  deadline: (l) => `Deadline passed: ${l.title}`,
-  rejected: (l) => `Please resend: ${l.title}`,
-  answer: (l) => `${l.sender} replied: ${l.title}`,
+type Words = {
+  hello: (name: string) => string;
+  subject: Record<Kind, (l: Letter, date: string) => string>;
+  intro: Record<Kind, (l: Letter, date: string) => string>;
+  sentBack: string;
+  sendAgain: string;
+  stillNeeded: string;
+  ifTheyApply: string;
+  open: { answer: string; files: string };
+  button: { answer: string; files: string };
+  reach: (l: Letter) => string;
+  why: (l: Letter) => string;
+  stop: string;
+  fallbackSender: string;
 };
 
-function intro(l: Letter, date: string): string {
-  switch (l.kind) {
-    case "invite":
-      return `${l.sender} has asked you to send documents for "${l.title}". Please send them by ${date}.`;
-    case "reminder":
-      return `A reminder from ${l.sender}: documents for "${l.title}" are still needed. The deadline is ${date}.`;
-    case "deadline":
-      return `The deadline of ${date} for "${l.title}" has passed and some documents have not arrived. ${l.sender} can still accept them through the link below.`;
-    case "rejected":
-      return `${l.sender} looked at what you sent for "${l.title}" and needs a different file for the items below.`;
-    case "answer":
-      return `${l.sender} has replied to your message about "${l.title}". Open your link to read it.`;
-  }
-}
+const WORDS: Record<"en" | "fr-CA", Words> = {
+  en: {
+    hello: (name) => `Hello ${name},`,
+    subject: {
+      invite: (l) => `Documents requested: ${l.title}`,
+      reminder: (l, date) => `Reminder: ${l.title}, due ${date}`,
+      deadline: (l) => `Deadline passed: ${l.title}`,
+      rejected: (l) => `Please resend: ${l.title}`,
+      answer: (l) => `${l.sender} replied: ${l.title}`,
+    },
+    intro: {
+      invite: (l, date) => `${l.sender} has asked you to send documents for "${l.title}". Please send them by ${date}.`,
+      reminder: (l, date) => `A reminder from ${l.sender}: documents for "${l.title}" are still needed. The deadline is ${date}.`,
+      deadline: (l, date) => `The deadline of ${date} for "${l.title}" has passed and some documents have not arrived. ${l.sender} can still accept them through the link below.`,
+      rejected: (l) => `${l.sender} looked at what you sent for "${l.title}" and needs a different file for the items below.`,
+      answer: (l) => `${l.sender} has replied to your message about "${l.title}". Open your link to read it.`,
+    },
+    sentBack: "sent back",
+    sendAgain: "Please send again:",
+    stillNeeded: "Still needed:",
+    ifTheyApply: "If they apply to you:",
+    open: { answer: "Open your link to read the reply", files: "Open your link to send them" },
+    button: { answer: "Read the reply", files: "Send your documents" },
+    reach: (l) => `Reply to this email to reach ${l.sender} at ${l.replyTo}${l.phone ? `, or call ${l.phone}` : ""}.`,
+    why: (l) => `You are getting this because ${l.sender} lists your email address as a contact for this request.`,
+    stop: "Stop these emails",
+    fallbackSender: "Sender",
+  },
+  "fr-CA": {
+    hello: (name) => `Bonjour ${name},`,
+    subject: {
+      invite: (l) => `Documents demandés : ${l.title}`,
+      reminder: (l, date) => `Rappel : ${l.title}, à remettre le ${date}`,
+      deadline: (l) => `Date limite dépassée : ${l.title}`,
+      rejected: (l) => `Veuillez renvoyer : ${l.title}`,
+      answer: (l) => `${l.sender} a répondu : ${l.title}`,
+    },
+    intro: {
+      invite: (l, date) => `${l.sender} vous demande d'envoyer des documents pour « ${l.title} ». Veuillez les envoyer d'ici le ${date}.`,
+      reminder: (l, date) => `Rappel de ${l.sender} : des documents pour « ${l.title} » sont toujours attendus. La date limite est le ${date}.`,
+      deadline: (l, date) => `La date limite du ${date} pour « ${l.title} » est passée et certains documents ne sont pas arrivés. ${l.sender} peut encore les accepter au moyen du lien ci-dessous.`,
+      rejected: (l) => `${l.sender} a examiné ce que vous avez envoyé pour « ${l.title} » et a besoin d'un autre fichier pour les éléments ci-dessous.`,
+      answer: (l) => `${l.sender} a répondu à votre message au sujet de « ${l.title} ». Ouvrez votre lien pour le lire.`,
+    },
+    sentBack: "renvoyé",
+    sendAgain: "À renvoyer :",
+    stillNeeded: "Toujours requis :",
+    ifTheyApply: "S'ils s'appliquent à vous :",
+    open: { answer: "Ouvrez votre lien pour lire la réponse", files: "Ouvrez votre lien pour les envoyer" },
+    button: { answer: "Lire la réponse", files: "Envoyer vos documents" },
+    reach: (l) => `Répondez à ce courriel pour joindre ${l.sender} à ${l.replyTo}${l.phone ? `, ou téléphonez au ${l.phone}` : ""}.`,
+    why: (l) => `Vous recevez ce message parce que ${l.sender} a inscrit votre adresse courriel comme contact pour cette demande.`,
+    stop: "Ne plus recevoir ces courriels",
+    fallbackSender: "Expéditeur",
+  },
+};
 
-function lists(l: Letter) {
+function lists(l: Letter, w: Words) {
   const line = (i: Missing) => {
-    const why = [...reasonLabels(i.reject_reasons ?? null), ...(i.reject_note ? [i.reject_note] : [])].join("; ");
-    return why ? `${i.label} (sent back: ${why})` : i.label;
+    const why = [...reasonLabels(i.reject_reasons ?? null, l.lang), ...(i.reject_note ? [i.reject_note] : [])].join("; ");
+    return why ? `${i.label} (${w.sentBack}${l.lang === "fr-CA" ? " : " : ": "}${why})` : i.label;
   };
   if (l.kind === "answer") return [];
-  if (l.kind === "rejected") return [{ heading: "Please send again:", items: l.items.map(line) }];
+  if (l.kind === "rejected") return [{ heading: w.sendAgain, items: l.items.map(line) }];
   const needed = l.items.filter((i) => i.required).map(line);
   const maybe = l.items.filter((i) => !i.required).map(line);
   return [
-    ...(needed.length ? [{ heading: "Still needed:", items: needed }] : []),
-    ...(maybe.length ? [{ heading: "If they apply to you:", items: maybe }] : []),
+    ...(needed.length ? [{ heading: w.stillNeeded, items: needed }] : []),
+    ...(maybe.length ? [{ heading: w.ifTheyApply, items: maybe }] : []),
   ];
 }
 
 export function render(l: Letter) {
-  const date = new Intl.DateTimeFormat("en-CA", { dateStyle: "long", timeZone: l.tz }).format(l.deadline);
-  const subject = oneLine(SUBJECTS[l.kind](l, date));
-  const reach = `Reply to this email to reach ${l.sender} at ${l.replyTo}${l.phone ? `, or call ${l.phone}` : ""}.`;
-  const why = `You are getting this because ${l.sender} lists your email address as a contact for this request.`;
-  const blocks = lists(l);
+  const w = textsFor(WORDS, l.lang);
+  const date = longDate(l.deadline, l.lang, l.tz);
+  const subject = oneLine(w.subject[l.kind](l, date));
+  const reach = w.reach(l);
+  const why = w.why(l);
+  const blocks = lists(l, w);
+  // French puts a space before a colon
+  const colon = l.lang === "fr-CA" ? " :" : ":";
+  // the page the link opens speaks the language of the email
+  const unsubUrl = `${l.unsubUrl}?lang=${l.lang}`;
 
   const text =
     [
-      `Hello ${l.clientName},`,
-      intro(l, date),
+      w.hello(l.clientName),
+      w.intro[l.kind](l, date),
       ...blocks.map((b) => `${b.heading}\n${b.items.map((i) => `- ${i}`).join("\n")}`),
-      `${l.kind === "answer" ? "Open your link to read the reply" : "Open your link to send them"}:\n${l.url}`,
+      `${l.kind === "answer" ? w.open.answer : w.open.files}${colon}\n${l.url}`,
       `${l.sender}\n${l.address}\n${reach}`,
-      `${why}\nStop these emails: ${l.unsubUrl}`,
+      `${why}\n${w.stop}${colon} ${unsubUrl}`,
     ].join("\n\n") + "\n";
 
   const p = (s: string, style = "margin:0 0 16px") => `<p style="${style}">${s}</p>`;
   const small = "font-size:13px;line-height:1.5;color:#666666;margin:0 0 12px";
   const list = (b: { heading: string; items: string[] }) =>
     `${p(`<b>${b.heading}</b>`, "margin:0 0 4px")}<ul style="margin:0 0 16px;padding-left:20px">${b.items.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}</ul>`;
-  const html = `<!doctype html><html lang="en"><body style="margin:0;padding:24px 16px;background:#f6f6f4;font-family:Arial,sans-serif;color:#1c1c1c">
+  const html = `<!doctype html><html lang="${l.lang}"><body style="margin:0;padding:24px 16px;background:#f6f6f4;font-family:Arial,sans-serif;color:#1c1c1c">
 <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;padding:28px">
-${p(`Hello ${escapeHtml(l.clientName)},`)}
-${p(escapeHtml(intro(l, date)))}
+${p(escapeHtml(w.hello(l.clientName)))}
+${p(escapeHtml(w.intro[l.kind](l, date)))}
 ${blocks.map(list).join("\n")}
-${p(`<a href="${escapeHtml(l.url)}" style="display:inline-block;background:#1c5d99;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px">${l.kind === "answer" ? "Read the reply" : "Send your documents"}</a>`, "margin:0 0 24px")}
+${p(`<a href="${escapeHtml(l.url)}" style="display:inline-block;background:#1c5d99;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:15px">${l.kind === "answer" ? w.button.answer : w.button.files}</a>`, "margin:0 0 24px")}
 ${p(`${escapeHtml(l.sender)}<br>${escapeHtml(l.address).replace(/\n/g, "<br>")}<br>${escapeHtml(reach)}`, small)}
-${p(`${escapeHtml(why)} <a href="${escapeHtml(l.unsubUrl)}" style="color:#666666">Stop these emails</a>`, small)}
+${p(`${escapeHtml(why)} <a href="${escapeHtml(unsubUrl)}" style="color:#666666">${w.stop}</a>`, small)}
 </div></body></html>`;
   return { subject, text, html };
 }
@@ -228,7 +285,7 @@ export async function deliver(env: Env, slot: Slot, l: Letter, now = Date.now())
 
   try {
     const providerId = await sendMail(env, {
-      from: fromHeader(env, l.sender),
+      from: fromHeader(env, l.sender, l.lang),
       to: l.clientEmail,
       replyTo: l.replyTo,
       subject,

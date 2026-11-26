@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { createSession, endSession, holdLogin, type App, type AppEnv } from "./session";
 import { sendLoginEmail } from "./email";
+import { langOf, pageLang, textsFor } from "./lang";
 import { untouchedRegion, untouchedSql, usable } from "./firm";
 import { sendTrialNotice } from "./trial";
 import { htmlHeaders } from "./headers";
@@ -81,7 +82,8 @@ export async function sendCode(c: Context<AppEnv>, email: string, app: App | nul
   ]);
   if (inserted.meta.changes === 0) return c.json({ ok: true });
   try {
-    await sendLoginEmail(c.env, email, code, `${c.env.APP_URL}/api/auth/link?t=${linkToken}`);
+    const lang = langOf(c);
+    await sendLoginEmail(c.env, email, code, `${c.env.APP_URL}/api/auth/link?lang=${lang}&t=${linkToken}`, lang);
   } catch (e) {
     console.error(e instanceof Error ? e.message : "login email failed");
     await db.prepare("DELETE FROM login_codes WHERE id = ?").bind(id).run();
@@ -172,8 +174,8 @@ async function signIn(c: Context<AppEnv>, email: string, app: App | null): Promi
     // have won the email; then the firm made here is dropped again.
     await db.batch([
       db
-        .prepare("INSERT INTO firms (id, plan_status, trial_ends_at, created_at) VALUES (?, 'trialing', ?, ?)")
-        .bind(firmId, now + TRIAL_DAYS * DAY, now),
+        .prepare("INSERT INTO firms (id, locale, plan_status, trial_ends_at, created_at) VALUES (?, ?, 'trialing', ?, ?)")
+        .bind(firmId, langOf(c), now + TRIAL_DAYS * DAY, now),
       user
         ? db.prepare("UPDATE users SET firm_id = ?, role = 'owner', disabled_at = NULL WHERE id = ? AND disabled_at IS NOT NULL").bind(firmId, user.id)
         : db
@@ -190,7 +192,7 @@ async function signIn(c: Context<AppEnv>, email: string, app: App | null): Promi
     user = (await find())!;
     if (user.firm_id === firmId) {
       // the account is made and the code was checked; a failed email must not stop the sign-in
-      await sendTrialNotice(c.env, { id: firmId, tz: "America/Toronto", trial_ends_at: now + TRIAL_DAYS * DAY }, "start").catch((e) => console.error(e instanceof Error ? e.message : "error"));
+      await sendTrialNotice(c.env, { id: firmId, tz: "America/Toronto", locale: langOf(c), trial_ends_at: now + TRIAL_DAYS * DAY }, "start").catch((e) => console.error(e instanceof Error ? e.message : "error"));
     }
   }
   if (user.disabled_at) return null;
@@ -257,6 +259,23 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+const LINK_PAGE = {
+  en: {
+    invalid: "This link is invalid or has expired.",
+    ask: (email: string) => `Sign in to Lazy Collect as <b>${email}</b>?`,
+    button: "Sign in",
+    offline: "Could not reach the server. Check your connection and try again.",
+    limited: "Too many tries. Wait a minute and try again.",
+  },
+  "fr-CA": {
+    invalid: "Ce lien n'est pas valide ou a expiré.",
+    ask: (email: string) => `Se connecter à Lazy Collect en tant que <b>${email}</b>?`,
+    button: "Se connecter",
+    offline: "Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.",
+    limited: "Trop de tentatives. Attendez une minute et réessayez.",
+  },
+} as const;
+
 // Mail scanners fetch links with GET or HEAD, so this only looks the token up;
 // signing in happens on the POST below.
 auth.get("/auth/link", async (c) => {
@@ -266,14 +285,16 @@ auth.get("/auth/link", async (c) => {
         .bind(await sha256(t), Date.now())
         .first<{ email: string }>()
     : null;
+  const lang = pageLang(c.req.query("lang"), c.req.header("Accept-Language"));
+  const w = textsFor(LINK_PAGE, lang);
   const page = (body: string) =>
-    c.html(`<!doctype html><html lang="en"><meta name="viewport" content="width=device-width"><title>Lazy Collect</title><link rel="stylesheet" href="/link.css"><body>${body}</body>`, row ? 200 : 400, {
+    c.html(`<!doctype html><html lang="${lang}"><meta name="viewport" content="width=device-width"><title>Lazy Collect</title><link rel="stylesheet" href="/link.css"><body>${body}</body>`, row ? 200 : 400, {
       ...htmlHeaders,
       "Cache-Control": "no-store",
     });
-  if (!row) return page("<p>This link is invalid or has expired.</p>");
-  return page(`<p>Sign in to Lazy Collect as <b>${escapeHtml(row.email)}</b>?</p>
-<button id="go">Sign in</button>
+  if (!row) return page(`<p>${w.invalid}</p>`);
+  return page(`<p>${w.ask(escapeHtml(row.email))}</p>
+<button id="go" data-offline="${w.offline}" data-limited="${w.limited}" data-invalid="${w.invalid}">${w.button}</button>
 <p id="note" role="alert"></p>
 <script src="/link.js"></script>`);
 });

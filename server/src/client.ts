@@ -18,14 +18,14 @@ export type LiveLink = {
   region: Region;
   db: D1Database;
   hash: string;
-  req: { id: string; firm_id: string; firm_name: string; tz: string | null; title: string; note: string | null; deadline: number; status: string; expires_at: number; first_opened_at: number | null };
+  req: { id: string; firm_id: string; locale: string; firm_name: string; tz: string | null; title: string; note: string | null; deadline: number; status: string; expires_at: number; first_opened_at: number | null };
 };
 
 async function linkByHash(env: Env, region: Region, hash: string): Promise<LiveLink | null> {
   const db = regionOf(env, region).db;
   const req = await db
     .prepare(
-      `SELECT r.id, r.firm_id, r.firm_name, r.tz, r.title, r.note, r.deadline, r.status, r.first_opened_at, l.expires_at
+      `SELECT r.id, r.firm_id, r.locale, r.firm_name, r.tz, r.title, r.note, r.deadline, r.status, r.first_opened_at, l.expires_at
        FROM links l JOIN requests r ON r.firm_id = l.firm_id AND r.id = l.request_id
        JOIN clients cl ON cl.firm_id = r.firm_id AND cl.id = r.client_id AND cl.deleted_at IS NULL
        WHERE l.token_hash = ? AND l.revoked_at IS NULL AND l.expires_at > ?
@@ -108,6 +108,7 @@ client.get("/c/:token", async (c) => {
     .run();
   return c.json({
     firm_name: req.firm_name,
+    locale: req.locale,
     tz: req.tz ?? "America/Toronto",
     title: req.title,
     note: req.note,

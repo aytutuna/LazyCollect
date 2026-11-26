@@ -1,7 +1,7 @@
-import type { ComponentChildren } from "preact";
-import { useEffect, useRef } from "preact/hooks";
+import { createContext, type ComponentChildren } from "preact";
+import { useContext, useEffect, useRef } from "preact/hooks";
 import { ApiError } from "./api";
-import { t } from "./i18n";
+import { LOCALES, locale, setLocale, t, type Locale } from "./i18n";
 
 // members get a different line for a plan that has ended, since only the owner can subscribe or fix a card
 let owner = true;
@@ -33,7 +33,7 @@ export function Loading() {
 
 export function LegalLink({ page, children }: { page: "terms" | "privacy" | "dpa" | "subprocessors"; children: ComponentChildren }) {
   return (
-    <a href={`https://alazy.app/collect/${page}.html`} target="_blank" rel="noopener">
+    <a href={`https://alazy.app/collect/${locale() === "fr-CA" ? "fr/" : ""}${page}.html`} target="_blank" rel="noopener">
       {children}
     </a>
   );
@@ -104,3 +104,26 @@ export function statusLabel(status: string): string {
 const TONES: Record<string, string> = { draft: "grey", open: "teal", complete: "green", expired: "amber", closed: "grey" };
 
 export const statusTone = (status: string) => TONES[status] ?? "grey";
+
+export function LanguagePicker() {
+  return (
+    <label class="lang">
+      <span class="sr-only">{t("lang.label")}</span>
+      <select value={locale()} onChange={(e) => setLocale(e.currentTarget.value as Locale)}>
+        {LOCALES.map((l) => (
+          <option value={l} lang={l}>
+            {t(`lang.${l}`)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+// the language of the request being shown, which can differ from the one the page is in
+export const RequestLang = createContext<string | undefined>(undefined);
+
+// text the account or the client wrote for a request is marked with that request's language
+export function Own({ children }: { children: ComponentChildren }) {
+  return <span lang={useContext(RequestLang)}>{children}</span>;
+}

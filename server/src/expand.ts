@@ -1,3 +1,4 @@
+import { textsFor, type Lang } from "./lang";
 import { parseDay, type Item } from "./questions";
 import { randomId } from "./util";
 import { text } from "./validate";
@@ -81,15 +82,28 @@ export type Row = {
 };
 
 // the wording of the companions; relabel() builds the same text in SQL when the document is renamed
-const ASK = ["Is ", " in English or French?"] as const;
-const CERTIFIED = "Certified translation of ";
-const AFFIDAVIT = "Translator's affidavit (if the translator is not certified)";
-const ASK_HELP = "A document in another language needs a translation. Your answer shows what to upload next.";
-const CERTIFIED_HELP = "A translation into English or French by a certified translator. The original you uploaded above goes with it.";
-const AFFIDAVIT_HELP = "If the translator is not certified, IRCC asks for an affidavit from the translator with the translation. Check IRCC's instructions for your application to see what applies to you.";
+const TEXT = {
+  en: {
+    ask: ["Is ", " in English or French?"],
+    certified: "Certified translation of ",
+    affidavit: "Translator's affidavit (if the translator is not certified)",
+    askHelp: "A document in another language needs a translation. Your answer shows what to upload next.",
+    certifiedHelp: "A translation into English or French by a certified translator. The original you uploaded above goes with it.",
+    affidavitHelp: "If the translator is not certified, IRCC asks for an affidavit from the translator with the translation. Check IRCC's instructions for your application to see what applies to you.",
+  },
+  "fr-CA": {
+    ask: ["Le document « ", " » est-il en anglais ou en français?"],
+    certified: "Traduction certifiée de ",
+    affidavit: "Déclaration sous serment du traducteur (si le traducteur n'est pas agréé)",
+    askHelp: "Un document dans une autre langue doit être traduit. Votre réponse indique ce qu'il faut téléverser ensuite.",
+    certifiedHelp: "Une traduction vers l'anglais ou le français faite par un traducteur agréé. L'original que vous avez téléversé plus haut l'accompagne.",
+    affidavitHelp: "Si le traducteur n'est pas agréé, IRCC demande une déclaration sous serment du traducteur avec la traduction. Consultez les instructions d'IRCC pour votre demande afin de savoir ce qui s'applique à vous.",
+  },
+} as const;
 
 // one item for one person (or for the whole request), with its translation question and companions when it asks for them
-export function rowsFor(item: Item & { tpl?: string }, person: Person | null, position: number, showPos: number | null, blueprint: string | null = null): Row[] {
+export function rowsFor(item: Item & { tpl?: string }, person: Person | null, position: number, showPos: number | null, blueprint: string | null = null, lang: Lang = "en"): Row[] {
+  const words = textsFor(TEXT, lang);
   const main: Row = {
     position,
     label: person ? item.label + DASH + person.name : item.label,
@@ -134,15 +148,15 @@ export function rowsFor(item: Item & { tpl?: string }, person: Person | null, po
   const ask = position + 1;
   return [
     main,
-    part(1, "question", ASK[0] + main.label + ASK[1], ASK_HELP, { kind: "yesno" }),
-    part(2, "translation", CERTIFIED + main.label, CERTIFIED_HELP, { show_if_pos: ask, show_if_value: "no" }),
-    part(3, "affidavit", AFFIDAVIT, AFFIDAVIT_HELP, { show_if_pos: ask, show_if_value: "no", required: 0 }),
+    part(1, "question", words.ask[0] + main.label + words.ask[1], words.askHelp, { kind: "yesno" }),
+    part(2, "translation", words.certified + main.label, words.certifiedHelp, { show_if_pos: ask, show_if_value: "no" }),
+    part(3, "affidavit", words.affidavit, words.affidavitHelp, { show_if_pos: ask, show_if_value: "no", required: 0 }),
   ];
 }
 
 // The rows a template makes for these people, in order, and the template items that wait for people. A condition names an
 // item by its place in the template, so it is moved to where the item landed.
-export function expandItems(items: (Item & { tpl?: string })[], people: Person[], today: string): { rows: Row[]; perPerson: Blueprint[] } {
+export function expandItems(items: (Item & { tpl?: string })[], people: Person[], today: string, lang: Lang = "en"): { rows: Row[]; perPerson: Blueprint[] } {
   const rows: Row[] = [];
   const perPerson: Blueprint[] = [];
   const at = new Map<number, number>();
@@ -150,10 +164,10 @@ export function expandItems(items: (Item & { tpl?: string })[], people: Person[]
     if (item.per_person) {
       const key = randomId();
       perPerson.push({ ...item, key });
-      for (const p of people) if (matches(item.per_person, p, today)) rows.push(...rowsFor(item, p, rows.length, null, key));
+      for (const p of people) if (matches(item.per_person, p, today)) rows.push(...rowsFor(item, p, rows.length, null, key, lang));
     } else {
       at.set(i, rows.length);
-      rows.push(...rowsFor(item, null, rows.length, item.show_if ? (at.get(item.show_if.item) ?? null) : null));
+      rows.push(...rowsFor(item, null, rows.length, item.show_if ? (at.get(item.show_if.item) ?? null) : null, null, lang));
     }
   });
   return { rows, perPerson };
@@ -162,6 +176,8 @@ export function expandItems(items: (Item & { tpl?: string })[], people: Person[]
 // SQL, run after a person is renamed or a document is: the labels that are made from other labels follow
 export function relabel(db: D1Database, firmId: string, requestId: string) {
   const person = "SELECT name FROM people WHERE firm_id = items.firm_id AND request_id = items.request_id AND position = items.person_pos";
+  const lang = "SELECT locale FROM requests WHERE firm_id = items.firm_id AND id = items.request_id";
+  const { en, "fr-CA": fr } = TEXT;
   const parent = "SELECT label FROM items m WHERE m.firm_id = items.firm_id AND m.request_id = items.request_id AND m.position = items.for_pos";
   return [
     db
@@ -169,7 +185,9 @@ export function relabel(db: D1Database, firmId: string, requestId: string) {
       .bind(firmId, requestId),
     db
       .prepare(
-        `UPDATE items SET label = CASE companion WHEN 'question' THEN '${ASK[0]}' || (${parent}) || '${ASK[1]}' ELSE '${CERTIFIED}' || (${parent}) END
+        `UPDATE items SET label = CASE (${lang}) WHEN 'fr-CA'
+           THEN CASE companion WHEN 'question' THEN '${fr.ask[0]}' || (${parent}) || '${fr.ask[1]}' ELSE '${fr.certified}' || (${parent}) END
+           ELSE CASE companion WHEN 'question' THEN '${en.ask[0]}' || (${parent}) || '${en.ask[1]}' ELSE '${en.certified}' || (${parent}) END END
          WHERE firm_id = ? AND request_id = ? AND companion IN ('question', 'translation') AND EXISTS (${parent})`,
       )
       .bind(firmId, requestId),

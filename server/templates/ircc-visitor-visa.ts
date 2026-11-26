@@ -13,7 +13,7 @@ export default template("ircc-visitor-visa", "Visitor visa", [
   tag(doc("Digital photo", "Meeting IRCC photo specifications."), { per_person: "everyone" }),
   tag(doc("Proof of funds", "Recent bank statements, usually the last 6 months, with balances and the bank's contact details. Your IRCC checklist may ask for a different period.", undefined, true, "bank-statement"), { translation: true }),
   doc("Travel itinerary", "Dates, places you will stay and the reason for the trip."),
-  doc("Employment letter or proof of enrolment", "On letterhead, dated within the last 3 months, signed by a manager or HR. Students send a letter from the school."),
+  doc("Employment letter or proof of enrollment", "On letterhead, dated within the last 3 months, signed by a manager or HR. Students send a letter from the school."),
   doc("Travel history", "Visas and stamps from the last 10 years.", undefined, false),
   ask(invited, "A family member, a friend or a business."),
   doc("Invitation letter", "Signed by the host, with their address and how you know each other.", invited),

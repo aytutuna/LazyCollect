@@ -1,4 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
+import { locale } from "./i18n";
 
 export class ApiError extends Error {
   constructor(
@@ -16,7 +17,8 @@ export function onApiEvents(h: typeof hooks) {
 }
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = {};
+  // the server writes emails and built-in checklists in the language the person is using
+  const headers: Record<string, string> = { "X-Lang": locale() };
   if (method !== "GET") headers["X-Collect"] = "1";
   const raw = body instanceof Blob;
   if (body !== undefined && !raw) headers["content-type"] = "application/json";

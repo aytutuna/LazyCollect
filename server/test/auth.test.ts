@@ -18,7 +18,7 @@ describe("start", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].to).toEqual([EMAIL]);
     expect(codeFrom(sent[0])).toMatch(/^\d{6}$/);
-    expect(linkFrom(sent[0])).toMatch(/^\/api\/auth\/link\?t=[\w-]{43}$/);
+    expect(linkFrom(sent[0])).toMatch(/^\/api\/auth\/link\?lang=en&t=[\w-]{43}$/);
   });
 
   it("stores only hashes of the code and the link token", async () => {
