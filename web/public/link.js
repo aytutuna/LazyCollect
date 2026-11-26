@@ -1,10 +1,11 @@
 const button = document.getElementById("go");
 button.onclick = async () => {
   button.disabled = true;
-  const t = new URLSearchParams(location.search).get("t");
+  const query = new URLSearchParams(location.search);
+  const t = query.get("t");
   let res;
   try {
-    res = await fetch("/api/auth/link", { method: "POST", headers: { "X-Collect": "1", "content-type": "application/json" }, body: JSON.stringify({ t }) });
+    res = await fetch("/api/auth/link", { method: "POST", headers: { "X-Collect": "1", "content-type": "application/json", "X-Lang": query.get("lang") ?? "" }, body: JSON.stringify({ t }) });
   } catch {
     button.disabled = false;
     document.getElementById("note").textContent = button.dataset.offline;

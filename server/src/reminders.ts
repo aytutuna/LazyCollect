@@ -1,4 +1,4 @@
-import { asLang } from "./lang";
+import { asLang, textsFor } from "./lang";
 import { classOf, itemFailed } from "./pulse";
 import { Transient, sendMail } from "./email";
 import { asked } from "./expand";
@@ -302,6 +302,28 @@ async function rejectedPass(env: Env, region: Region, db: D1Database, now: numbe
   });
 }
 
+// the owner's note counts what came in; French counts 0 and 1 as singular
+const NOTICE = {
+  en: {
+    uploaded: (n: number) => `uploaded ${n} ${n === 1 ? "document" : "documents"}`,
+    answered: (n: number) => `answered ${n} ${n === 1 ? "question" : "questions"}`,
+    missing: (n: number) => `said they don't have ${n} ${n === 1 ? "item" : "items"}`,
+    sent: (n: number) => `sent ${n} ${n === 1 ? "message" : "messages"}`,
+    on: "on",
+    to: "to",
+    open: "Open it here",
+  },
+  "fr-CA": {
+    uploaded: (n: number) => `a téléversé ${n} ${n < 2 ? "document" : "documents"}`,
+    answered: (n: number) => `a répondu à ${n} ${n < 2 ? "question" : "questions"}`,
+    missing: (n: number) => `dit ne pas avoir ${n} ${n < 2 ? "élément" : "éléments"}`,
+    sent: (n: number) => `a envoyé ${n} ${n < 2 ? "message" : "messages"}`,
+    on: "pour",
+    to: "pour",
+    open: "Ouvrez-la ici",
+  },
+};
+
 // The account hears about uploads at most once an hour per request, as one count of what came in since the last note.
 async function noticePass(env: Env, db: D1Database, now: number) {
   const { results } = await db
@@ -318,6 +340,7 @@ async function noticePass(env: Env, db: D1Database, now: number) {
     .bind(now, now - HOUR)
     .all<{ id: string; firm_id: string; title: string; notified_at: number | null; due: number; tries: number; client_name: string; n: number; q: number; u: number; a: number }>();
   const owners = await ownersOf(env, results.map((r) => r.firm_id));
+  const locales = await localesOf(env, results.map((r) => r.firm_id));
 
   await each(results, async (r) => {
     const claimed = await db
@@ -326,19 +349,16 @@ async function noticePass(env: Env, db: D1Database, now: number) {
       .run();
     const to = owners.get(r.firm_id);
     if (claimed.meta.changes !== 1 || !to || !(r.n || r.q || r.u || r.a)) return;
-    const parts = [
-      r.n && `uploaded ${r.n} ${r.n === 1 ? "document" : "documents"}`,
-      r.a && `answered ${r.a} ${r.a === 1 ? "question" : "questions"}`,
-      r.u && `said they don't have ${r.u} ${r.u === 1 ? "item" : "items"}`,
-      r.q && `sent ${r.q} ${r.q === 1 ? "message" : "messages"}`,
-    ].filter(Boolean);
-    const what = `${r.client_name} ${parts.join(", ")} ${r.u || r.q || r.a ? "on" : "to"} ${r.title}`;
+    const lang = asLang(locales.get(r.firm_id));
+    const w = textsFor(NOTICE, lang);
+    const parts = [r.n && w.uploaded(r.n), r.a && w.answered(r.a), r.u && w.missing(r.u), r.q && w.sent(r.q)].filter(Boolean);
+    const what = `${r.client_name} ${parts.join(", ")} ${r.u || r.q || r.a ? w.on : w.to} ${r.title}`;
     try {
       await sendMail(env, {
         from: env.EMAIL_FROM,
         to,
         subject: what.replace(/[\r\n]+/g, " "),
-        text: `${what}.\n\nOpen it here:\n${env.APP_URL}/requests/${r.id}\n`,
+        text: `${what}.\n\n${w.open}${lang === "fr-CA" ? " :" : ":"}\n${env.APP_URL}/requests/${r.id}\n`,
       });
     } catch (e) {
       // a provider out of reach uses no try; a refusal uses one, and either way the note waits before the next
@@ -354,6 +374,13 @@ async function noticePass(env: Env, db: D1Database, now: number) {
         .run();
     }
   });
+}
+
+async function localesOf(env: Env, ids: string[]): Promise<Map<string, string>> {
+  const { results } = await env.CONTROL.prepare("SELECT id, locale FROM firms WHERE id IN (SELECT value FROM json_each(?))")
+    .bind(JSON.stringify([...new Set(ids)]))
+    .all<{ id: string; locale: string }>();
+  return new Map(results.map((f) => [f.id, f.locale]));
 }
 
 async function ownersOf(env: Env, ids: string[]): Promise<Map<string, string>> {

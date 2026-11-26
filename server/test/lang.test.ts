@@ -371,3 +371,31 @@ describe("imported clients", () => {
     expect((await env.DB_NA.prepare("SELECT locale FROM clients WHERE email = 'bo@mail.test'").first<{ locale: string }>())!.locale).toBe("fr-CA");
   });
 });
+
+describe("the account's own emails", () => {
+  it("send the upload note in the account's language", async () => {
+    const { cookie, client } = await ready("fr-CA");
+    mockOutbound();
+    const req = await make(cookie, client, { items: [{ label: "Passeport", required: true }, { label: "Visa", required: true }] });
+    const link = await (await api(`/api/requests/${req.id}/link`, { method: "POST", cookie })).json<any>();
+    const path = `/api/c/${link.url.split("/c/")[1]}`;
+    const sent = mockOutbound();
+    await upload(path, req.items[0].id, pdf(500));
+    await upload(path, req.items[1].id, pdf(500));
+    await runReminders(env, Date.now());
+    const mail = sent.find((m) => m.to[0] === "owner@firm.test" && m.subject.includes("téléversé"))!;
+    expect(mail.subject).toBe("Amy a téléversé 2 documents pour Impôts 2025");
+    expect(mail.text).toContain("Ouvrez-la ici :\nhttps://collect.alazy.app/requests/");
+  });
+});
+
+describe("signing up through the emailed link", () => {
+  it("gives the account the language the link names, not the browser's", async () => {
+    const sent = mockOutbound();
+    await api("/api/auth/start", { method: "POST", body: { email: "link@firm.test", turnstile: "tok" }, headers: { "X-Lang": "fr-CA", "Accept-Language": "en-US" } });
+    const t = new URL(sent[0].text.match(/https:\/\/\S+/)![0]).searchParams.get("t");
+    const res = await api("/api/auth/link", { method: "POST", body: { t }, headers: { "X-Lang": "fr-CA", "Accept-Language": "en-US" } });
+    expect(res.status).toBe(200);
+    expect((await env.CONTROL.prepare("SELECT locale FROM firms").first<{ locale: string }>())!.locale).toBe("fr-CA");
+  });
+});
