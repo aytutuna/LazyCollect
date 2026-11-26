@@ -28,9 +28,14 @@ const KEY = "lazycollect.scanner";
 function rustAsked(): boolean {
   if (!import.meta.env.VITE_RUST_SCANNER) return false;
   const asked = new URLSearchParams(location.search).get("scanner");
-  if (asked === "rust") localStorage.setItem(KEY, "rust");
-  else if (asked) localStorage.removeItem(KEY);
-  return localStorage.getItem(KEY) === "rust";
+  // storage can be blocked, and then the URL decides alone
+  try {
+    if (asked === "rust") localStorage.setItem(KEY, "rust");
+    else if (asked) localStorage.removeItem(KEY);
+    return localStorage.getItem(KEY) === "rust";
+  } catch {
+    return asked === "rust";
+  }
 }
 
 export const createEngine = (): Engine => (rustAsked() ? new RustEngine() : new Detector());
