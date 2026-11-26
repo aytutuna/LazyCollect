@@ -15,35 +15,43 @@ export type Request =
   | { type: "frameIssues"; id: number; quad: Quad; confidence: number | null; width: number; height: number }
   | { type: "pageIssues"; id: number; image: Pixels };
 export type Reply =
+  | { type: "module"; ok: boolean }
   | { type: "ready"; ok: boolean }
   | { type: "found"; id: number; found: Found | null }
   | { type: "refined"; id: number; refinement: Refinement | null; image: Pixels }
   | { type: "pixels"; id: number; image: Pixels | null }
-  | { type: "issues"; id: number; issues: Issue[] };
+  | { type: "issues"; id: number; issues: Issue[] | null };
 
-let scanner: ReturnType<typeof openScanner>;
+const MODEL_TIMEOUT = 60_000;
 
-// The module and the model load here, in a worker, once the scanner opens. A model that is missing (the site answers its page for
-// an unknown path) leaves detection off, as with the TypeScript scanner; the rest still works.
+let scanner: ReturnType<typeof openScanner> | undefined;
+
+// The module loads first and answers as soon as it is there, so the operations that need no model can start; then the model
+// loads. A model that is missing (the site answers its page for an unknown path) or too slow leaves detection off, as with the
+// TypeScript scanner. A module that did not load leaves the engine to the TypeScript operations.
 async function load(model: string) {
   try {
-    const [, onnx] = await Promise.all([init({ module_or_path: wasm }), fetchModel(model)]);
-    try {
-      scanner = openScanner(onnx);
-      post({ type: "ready", ok: onnx !== null });
-    } catch {
-      scanner = openScanner(null);
-      post({ type: "ready", ok: false });
-    }
+    await init({ module_or_path: wasm });
+    scanner = openScanner(null);
   } catch {
-    // the module itself did not load: nothing works
+    post({ type: "module", ok: false });
     post({ type: "ready", ok: false });
+    return;
   }
+  post({ type: "module", ok: true });
+  const onnx = await fetchModel(model);
+  try {
+    if (onnx) scanner = openScanner(onnx);
+  } catch {
+    // the model does not run here
+    return post({ type: "ready", ok: false });
+  }
+  post({ type: "ready", ok: onnx !== null });
 }
 
 async function fetchModel(url: string): Promise<Uint8Array | null> {
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(MODEL_TIMEOUT) });
     return res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
   } catch {
     return null;
@@ -53,26 +61,11 @@ async function fetchModel(url: string): Promise<Uint8Array | null> {
 const post = (reply: Reply, transfer: Transferable[] = []) => (postMessage as (message: unknown, transfer: Transferable[]) => void)(reply, transfer);
 const buffer = (image: Pixels | null) => (image ? [image.data.buffer] : []);
 
-onmessage = (e: MessageEvent<Request>) => {
-  const m = e.data;
-  if (m.type === "init") return void load(m.model);
-  const s = scanner;
+function answer(m: Exclude<Request, { type: "init" }>, s: NonNullable<typeof scanner>) {
   if (m.type === "detect") {
-    let found: Found | null = null;
-    try {
-      found = s.detect(m.image);
-    } catch {
-      // no answer for this frame
-    }
-    post({ type: "found", id: m.id, found });
+    post({ type: "found", id: m.id, found: s.detect(m.image) });
   } else if (m.type === "refine") {
-    let refinement: Refinement | null = null;
-    try {
-      refinement = s.refine(m.image, m.quad);
-    } catch {
-      // the corners stay as they were
-    }
-    post({ type: "refined", id: m.id, refinement, image: m.image }, [m.image.data.buffer]);
+    post({ type: "refined", id: m.id, refinement: s.refine(m.image, m.quad), image: m.image }, [m.image.data.buffer]);
   } else if (m.type === "warp") {
     const image = s.warp(m.image, m.quad, m.width, m.height);
     post({ type: "pixels", id: m.id, image }, buffer(image));
@@ -83,5 +76,19 @@ onmessage = (e: MessageEvent<Request>) => {
     post({ type: "issues", id: m.id, issues: s.frameIssues(m.quad, m.confidence, m.width, m.height) });
   } else {
     post({ type: "issues", id: m.id, issues: s.pageIssues(m.image) });
+  }
+}
+
+// One request that fails gets its own empty answer, so it never takes the others down with it
+onmessage = (e: MessageEvent<Request>) => {
+  const m = e.data;
+  if (m.type === "init") return void load(m.model);
+  try {
+    answer(m, scanner!);
+  } catch {
+    if (m.type === "detect") post({ type: "found", id: m.id, found: null });
+    else if (m.type === "refine") post({ type: "refined", id: m.id, refinement: null, image: m.image });
+    else if (m.type === "warp" || m.type === "filter") post({ type: "pixels", id: m.id, image: null });
+    else post({ type: "issues", id: m.id, issues: null });
   }
 };
