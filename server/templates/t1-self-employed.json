@@ -4,7 +4,7 @@
   "items": [
     {
       "label": "Photo ID",
-      "help": "Driver's licence or passport",
+      "help": "Driver's license or passport",
       "required": true
     },
     {

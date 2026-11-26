@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { setZone, fmtDate, fmtSize, relative } from "../format";
 import en from "./en.json";
+import enCA from "./en-CA.json";
 import fr from "./fr-CA.json";
-import { locale, pickLocale, setLocale, t, translate } from "./index";
+import { LOCALES, locale, pickLocale, setLocale, t, translate } from "./index";
 
 const vars = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
 
@@ -25,8 +26,44 @@ describe("pickLocale", () => {
     expect(pickLocale(null, [])).toBe("en");
   });
 
+  it("reads English from Canada as en-CA and other English as US English", () => {
+    expect(pickLocale(null, ["en-CA", "en"])).toBe("en-CA");
+    expect(pickLocale(null, ["en-ca"])).toBe("en-CA");
+    expect(pickLocale(null, ["en-US", "en-CA"])).toBe("en");
+    expect(pickLocale(null, ["en-GB"])).toBe("en");
+    expect(pickLocale(null, ["fr-CA", "en-CA"])).toBe("fr-CA");
+    expect(pickLocale("en", ["en-CA"])).toBe("en");
+  });
+
   it("ignores a saved value that is not a language we have", () => {
     expect(pickLocale("de", ["fr"])).toBe("fr-CA");
+  });
+});
+
+describe("every language", () => {
+  const dicts: Record<string, Record<string, string>> = { en, "en-CA": enCA, "fr-CA": fr };
+  const base = en as Record<string, string>;
+
+  it("has a text for every key of the US English base", () => {
+    const rules = new Intl.PluralRules("en");
+    for (const l of LOCALES) {
+      for (const key of Object.keys(base)) {
+        // a key that is not in the language's own file falls back to the US English text, never to the key
+        expect([l, key, translate(dicts[l], rules, key)]).not.toEqual([l, key, key]);
+      }
+    }
+  });
+
+  it("keeps the Canadian English file to texts the base has, spelled differently", () => {
+    for (const [key, text] of Object.entries(enCA)) {
+      expect([key, key in base]).toEqual([key, true]);
+      expect([key, text === base[key]]).toEqual([key, false]);
+      expect([key, vars(text)]).toEqual([key, vars(base[key])]);
+    }
+  });
+
+  it("spells US English the US way", () => {
+    expect(Object.values(base).join(" ")).not.toMatch(/(cancelled|cheque|colour|licence|instalment|enrolment)/i);
   });
 });
 
@@ -46,6 +83,14 @@ describe("the French dictionary", () => {
 
 describe("t", () => {
   beforeEach(() => setLocale("en", false));
+
+  it("shows Canadians their own spelling", () => {
+    setLocale("en-CA", false);
+    expect(t("batch.status.cancelled")).toBe("Cancelled");
+    expect(t("nav.requests")).toBe("Requests");
+    setLocale("en", false);
+    expect(t("batch.status.cancelled")).toBe("Canceled");
+  });
 
   it("follows the language that is set", () => {
     setLocale("fr-CA", false);

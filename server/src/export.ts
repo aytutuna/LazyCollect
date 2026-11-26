@@ -5,7 +5,7 @@ import { fileKey, decryptStream } from "./crypt";
 import { disposition } from "./files";
 import { firmDek } from "./keys";
 import { withoutPerson } from "./expand";
-import { asLang, type Lang } from "./lang";
+import { asLang, textsFor, type Lang } from "./lang";
 import { validTo, visible } from "./questions";
 import { sentBackText } from "./reasons";
 import { regionOf, type Region } from "./regions";
@@ -68,7 +68,7 @@ const WORDS = {
   },
 } as const;
 
-type Words = (typeof WORDS)[Lang];
+type Words = (typeof WORDS)["en" | "fr-CA"];
 
 // the date of a document, as the account reads it
 const datesText = (i: Told, w: Words) =>
@@ -80,7 +80,7 @@ const datesText = (i: Told, w: Words) =>
 
 // what the client said about items they could not send, what the account answered, what was sent back and why, and the dates of documents; null when no item has such a story
 async function checklistText(db: D1Database, firmId: string, requestId: string, lang: Lang): Promise<string | null> {
-  const w = WORDS[lang];
+  const w = textsFor(WORDS, lang);
   const { results } = await db
     .prepare(
       `SELECT label, status, reject_note, reject_reasons, unavailable_note, unavailable_at, expiry_rule, expires_on, issued_on, valid_months, ${validTo("items")} AS valid_to
@@ -110,7 +110,7 @@ async function checklistText(db: D1Database, firmId: string, requestId: string, 
 
 // the questions that apply to the client and what they answered, in checklist order; null when there are none
 async function answersText(db: D1Database, firmId: string, requestId: string, lang: Lang): Promise<string | null> {
-  const w = WORDS[lang];
+  const w = textsFor(WORDS, lang);
   const { results } = await db
     .prepare(
       `SELECT label, kind, answer, status, reject_note, reject_reasons FROM items i WHERE firm_id = ? AND request_id = ? AND kind != 'file' AND ${visible("i")} ORDER BY position`,
@@ -127,7 +127,7 @@ async function answersText(db: D1Database, firmId: string, requestId: string, la
 
 // the thread with the client as plain text, oldest first; null when there is none
 async function messagesText(db: D1Database, firmId: string, requestId: string, lang: Lang): Promise<string | null> {
-  const w = WORDS[lang];
+  const w = textsFor(WORDS, lang);
   const { results } = await db
     .prepare("SELECT author, body, created_at FROM notes WHERE firm_id = ? AND request_id = ? ORDER BY created_at, rowid")
     .bind(firmId, requestId)
@@ -198,7 +198,7 @@ exportZip.get("/requests/:id/export", async (c) => {
 
   const encoder = new TextEncoder();
   const sizes = results.map((f) => f.size);
-  for (const [name, content] of [[WORDS[lang].files.messages, thread], [WORDS[lang].files.checklist, checklist], [WORDS[lang].files.answers, given]] as const) {
+  for (const [name, content] of [[textsFor(WORDS, lang).files.messages, thread], [textsFor(WORDS, lang).files.checklist, checklist], [textsFor(WORDS, lang).files.answers, given]] as const) {
     if (!content) continue;
     const bytes = encoder.encode(content);
     entries.push({ name, mtime: Date.now(), open: async () => new Blob([bytes]).stream() });

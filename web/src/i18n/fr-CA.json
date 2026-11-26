@@ -1041,8 +1041,8 @@
   "activity.action.person.remove": "A retiré une personne d'une demande",
   "activity.action.item.dates": "Le client a indiqué la date d'un document",
   "lang.label": "Langue",
-  "lang.en": "English",
-  "lang.fr-CA": "Français",
+  "lang.en": "English (US)",
+  "lang.fr-CA": "Français (Canada)",
   "clients.language": "Langue du client",
   "size.b": "o",
   "size.kb": "ko",
@@ -1090,5 +1090,6 @@
   "settings.language_hint": "La langue dans laquelle votre compte écrit : courriels aux clients, aide-mémoire prédéfinis, page du client et fichiers texte d'un téléchargement. Ce n'est pas la langue de cet écran.",
   "settings.language_account": "Langue du compte",
   "settings.language_clients": "Écrire à chaque client dans sa propre langue",
-  "settings.language_clients_hint": "Choisissez la langue d'un client dans la page Clients. Une demande copiée à partir d'une autre demande garde la langue de celle-ci."
+  "settings.language_clients_hint": "Choisissez la langue d'un client dans la page Clients. Une demande copiée à partir d'une autre demande garde la langue de celle-ci.",
+  "lang.en-CA": "English (Canada)"
 }

@@ -187,7 +187,7 @@ export type Thread = { notes: Note[]; unanswered: number };
 
 export type ClientView = {
   firm_name: string;
-  locale: "en" | "fr-CA";
+  locale: "en" | "en-CA" | "fr-CA";
   tz: string;
   title: string;
   note: string | null;

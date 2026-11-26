@@ -49,7 +49,7 @@ export function parseReasons(v: unknown, kind: string): Reason[] | undefined {
 // the stored column as a list of words; "other" has no wording of its own, the note says it
 export function reasonLabels(stored: string | null, lang: Lang = "en"): string[] {
   if (!stored) return [];
-  return (JSON.parse(stored) as Reason[]).filter((r) => r !== "other").map((r) => (lang === "en" ? REASONS : REASONS_FR)[r]);
+  return (JSON.parse(stored) as Reason[]).filter((r) => r !== "other").map((r) => (lang === "fr-CA" ? REASONS_FR : REASONS)[r]);
 }
 
 // the reasons and the note as one line

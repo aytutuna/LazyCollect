@@ -1,6 +1,6 @@
 import { itemFailed } from "./pulse";
 import { Transient, escapeHtml, sendMail } from "./email";
-import { longDate, type Lang } from "./lang";
+import { longDate, textsFor, type Lang } from "./lang";
 import { reasonLabels } from "./reasons";
 import { isRegion, type Region } from "./regions";
 import { DAY, MINUTE, PAYING, hmac, randomId, sha256 } from "./util";
@@ -49,7 +49,7 @@ function senderName(name: string): string {
 
 export function fromHeader(env: Env, name: string, lang: Lang = "en"): string {
   const address = /<([^>]+)>/.exec(env.EMAIL_FROM)?.[1] ?? env.EMAIL_FROM;
-  return `"${senderName(name) || WORDS[lang].fallbackSender} via Lazy Collect" <${address}>`;
+  return `"${senderName(name) || textsFor(WORDS, lang).fallbackSender} via Lazy Collect" <${address}>`;
 }
 
 const oneLine = (s: string) => s.replace(/[\r\n]+/g, " ").trim();
@@ -70,7 +70,7 @@ type Words = {
   fallbackSender: string;
 };
 
-const WORDS: Record<Lang, Words> = {
+const WORDS: Record<"en" | "fr-CA", Words> = {
   en: {
     hello: (name) => `Hello ${name},`,
     subject: {
@@ -130,7 +130,7 @@ const WORDS: Record<Lang, Words> = {
 function lists(l: Letter, w: Words) {
   const line = (i: Missing) => {
     const why = [...reasonLabels(i.reject_reasons ?? null, l.lang), ...(i.reject_note ? [i.reject_note] : [])].join("; ");
-    return why ? `${i.label} (${w.sentBack}${l.lang === "en" ? ": " : " : "}${why})` : i.label;
+    return why ? `${i.label} (${w.sentBack}${l.lang === "fr-CA" ? " : " : ": "}${why})` : i.label;
   };
   if (l.kind === "answer") return [];
   if (l.kind === "rejected") return [{ heading: w.sendAgain, items: l.items.map(line) }];
@@ -143,14 +143,14 @@ function lists(l: Letter, w: Words) {
 }
 
 export function render(l: Letter) {
-  const w = WORDS[l.lang];
+  const w = textsFor(WORDS, l.lang);
   const date = longDate(l.deadline, l.lang, l.tz);
   const subject = oneLine(w.subject[l.kind](l, date));
   const reach = w.reach(l);
   const why = w.why(l);
   const blocks = lists(l, w);
   // French puts a space before a colon
-  const colon = l.lang === "en" ? ":" : " :";
+  const colon = l.lang === "fr-CA" ? " :" : ":";
   // the page the link opens speaks the language of the email
   const unsubUrl = `${l.unsubUrl}?lang=${l.lang}`;
 

@@ -142,8 +142,8 @@ describe("the T1 organizer", () => {
     expect(details.help).toContain("principal residence");
   });
 
-  it("has partnership slips, instalment records and the RL-6 slip as optional documents", () => {
-    for (const label of [/T5013/, /Instalment payment/, /RL-6/]) {
+  it("has partnership slips, installment records and the RL-6 slip as optional documents", () => {
+    for (const label of [/T5013/, /Installment payment/, /RL-6/]) {
       const i = t1.items[find(label)];
       expect([label.source, i.required]).toEqual([label.source, false]);
     }

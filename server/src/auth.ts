@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { createSession, endSession, holdLogin, type App, type AppEnv } from "./session";
 import { sendLoginEmail } from "./email";
-import { langOf, pageLang } from "./lang";
+import { langOf, pageLang, textsFor } from "./lang";
 import { untouchedRegion, untouchedSql, usable } from "./firm";
 import { sendTrialNotice } from "./trial";
 import { htmlHeaders } from "./headers";
@@ -286,7 +286,7 @@ auth.get("/auth/link", async (c) => {
         .first<{ email: string }>()
     : null;
   const lang = pageLang(c.req.query("lang"), c.req.header("Accept-Language"));
-  const w = LINK_PAGE[lang];
+  const w = textsFor(LINK_PAGE, lang);
   const page = (body: string) =>
     c.html(`<!doctype html><html lang="${lang}"><meta name="viewport" content="width=device-width"><title>Lazy Collect</title><link rel="stylesheet" href="/link.css"><body>${body}</body>`, row ? 200 : 400, {
       ...htmlHeaders,

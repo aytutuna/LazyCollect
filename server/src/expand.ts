@@ -1,4 +1,4 @@
-import type { Lang } from "./lang";
+import { textsFor, type Lang } from "./lang";
 import { parseDay, type Item } from "./questions";
 import { randomId } from "./util";
 import { text } from "./validate";
@@ -103,7 +103,7 @@ const TEXT = {
 
 // one item for one person (or for the whole request), with its translation question and companions when it asks for them
 export function rowsFor(item: Item & { tpl?: string }, person: Person | null, position: number, showPos: number | null, blueprint: string | null = null, lang: Lang = "en"): Row[] {
-  const words = TEXT[lang];
+  const words = textsFor(TEXT, lang);
   const main: Row = {
     position,
     label: person ? item.label + DASH + person.name : item.label,

@@ -13,6 +13,7 @@ import gstHst from "../templates/gst-hst-return";
 import t1Personal from "../templates/t1-personal";
 import t1SelfEmployed from "../templates/t1-self-employed.json";
 import t2YearEnd from "../templates/t2-year-end";
+import { canadianTemplates } from "../templates/en-ca";
 import { builtinTemplatesFr } from "../templates/fr";
 import { audit } from "./audit";
 import { asLang, isLang, type Lang } from "./lang";
@@ -46,7 +47,8 @@ export const builtinTemplates: Template[] = [
 ];
 
 // the built-in templates in the language of the request they will start
-export const builtinsFor = (lang: Lang) => (lang === "fr-CA" ? builtinTemplatesFr : builtinTemplates);
+const builtinTemplatesCa = canadianTemplates(builtinTemplates);
+export const builtinsFor = (lang: Lang) => (lang === "fr-CA" ? builtinTemplatesFr : lang === "en-CA" ? builtinTemplatesCa : builtinTemplates);
 const builtinOf = (lang: Lang, id: string) => builtinsFor(lang).find((t) => t.id === id);
 
 // the facts a request's checklist fills in: a built-in's own, or the copy an account made of one

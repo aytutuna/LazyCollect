@@ -55,7 +55,7 @@ export default template("t1-personal", "T1 personal tax organizer", [
   doc("T4RSP and T4RIF slips (RRSP and RRIF income)", feb, undefined, false),
   doc("T5007 slips (social assistance and workers' compensation)", feb, undefined, false),
   doc("RRSP contribution receipts", "Contributions from {rrsp_window} can go on the {year} return. Your {year-1} notice of assessment shows your RRSP limit.", undefined, false),
-  doc("Instalment payment records", "The amounts you paid to the CRA and Revenu Québec in {year}.", undefined, false),
+  doc("Installment payment records", "The amounts you paid to the CRA and Revenu Québec in {year}.", undefined, false),
 
   ask(marital, "For example marriage, a new common-law partner, separation or a death."),
   text("What changed, and on what date?", "Add your new or former partner's name and their {year} net income if you know it.", marital),
@@ -96,7 +96,7 @@ export default template("t1-personal", "T1 personal tax organizer", [
   doc("Medical expense receipts", "Include insurance statements that show what was paid back to you.", medical),
 
   ask(donations, undefined, false),
-  doc("Official donation receipts", "Receipts from registered charities. Cheques and bank records are not enough.", donations),
+  doc("Official donation receipts", "Receipts from registered charities. Checks and bank records are not enough.", donations),
 
   ask(tuition, "College, university or other post-secondary school.", false),
   doc("Tuition certificates (T2202)", "Your school usually posts it online in February. Send one for each school.", tuition),

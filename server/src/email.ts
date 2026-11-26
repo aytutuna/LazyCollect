@@ -1,4 +1,4 @@
-import type { Lang } from "./lang";
+import { textsFor, type Lang } from "./lang";
 import { FETCH_TIMEOUT_MS } from "./util";
 
 export function escapeHtml(s: string): string {
@@ -30,7 +30,7 @@ const LOGIN = {
 } as const;
 
 export async function sendLoginEmail(env: Env, to: string, code: string, link: string, lang: Lang = "en"): Promise<void> {
-  const w = LOGIN[lang];
+  const w = textsFor(LOGIN, lang);
   const subject = w.subject;
   const text = w.text(code, link);
   const html = `<!doctype html><html lang="${lang}"><body style="margin:0;padding:32px 16px;background:#f6f6f4;font-family:Arial,sans-serif;color:#1c1c1c">
@@ -104,7 +104,7 @@ const INVITE = {
 } as const;
 
 export async function sendInviteEmail(env: Env, to: string, inviter: string, account: string, lang: Lang = "en"): Promise<void> {
-  const w = INVITE[lang];
+  const w = textsFor(INVITE, lang);
   const who = inviter.replace(/[\r\n]+/g, " ").trim();
   const place = account.replace(/[\r\n]+/g, " ").trim();
   const subject = w.subject(who, place);

@@ -1,22 +1,24 @@
 import { useEffect, useState } from "preact/hooks";
 import en from "./en.json";
+import enCA from "./en-CA.json";
 import fr from "./fr-CA.json";
 
-export type Locale = "en" | "fr-CA";
-export const LOCALES: Locale[] = ["en", "fr-CA"];
+export type Locale = "en" | "en-CA" | "fr-CA";
+export const LOCALES: Locale[] = ["en", "en-CA", "fr-CA"];
 
-const dicts: Record<Locale, Record<string, string>> = { en, "fr-CA": fr };
+// en is US English, the base; en-CA holds only the texts Canadians spell differently and falls back to en for the rest
+const dicts: Record<Locale, Record<string, string>> = { en, "en-CA": enCA, "fr-CA": fr };
 const KEY = "lazycollect.lang";
 
-export const isLocale = (v: unknown): v is Locale => v === "en" || v === "fr-CA";
+export const isLocale = (v: unknown): v is Locale => v === "en" || v === "en-CA" || v === "fr-CA";
 
-// A saved choice wins, then the browser's list of languages; French of any region means fr-CA.
+// A saved choice wins, then the browser's list of languages; French of any region means fr-CA, and English from Canada en-CA.
 export function pickLocale(saved: string | null | undefined, browser: readonly string[]): Locale {
   if (isLocale(saved)) return saved;
   for (const tag of browser) {
-    const lang = tag.toLowerCase().split("-")[0];
+    const [lang, ...rest] = tag.toLowerCase().split("-");
     if (lang === "fr") return "fr-CA";
-    if (lang === "en") return "en";
+    if (lang === "en") return rest.at(-1) === "ca" ? "en-CA" : "en";
   }
   return "en";
 }
@@ -41,8 +43,7 @@ apply();
 
 export const locale = () => current;
 
-// the tag for Intl: Canadian English, not the US default
-export const intl = () => (current === "en" ? "en-CA" : current);
+export const intl = () => (current === "en" ? "en-US" : current);
 
 // remember is false when a page borrows a language, such as the one a client was given, without it becoming the person's choice
 export function setLocale(next: Locale, remember = true) {

@@ -10,7 +10,7 @@ const translated = "Are any of your documents in a language other than English o
 
 export default template("ircc-citizenship", "Citizenship application (adult)", [
   doc("PR card", "Front and back in one file. If you have no PR card or it is not valid, say so in the notes."),
-  tag(doc("Passport pages", "Colour copies of your passports and travel documents for the whole period you are counting, so IRCC can check your days in Canada.", undefined, true, "passport"), { per_person: "everyone" }),
+  tag(doc("Passport pages", "Color copies of your passports and travel documents for the whole period you are counting, so IRCC can check your days in Canada.", undefined, true, "passport"), { per_person: "everyone" }),
   doc("Physical presence calculation", "From your IRCC account or IRCC's calculator: you need at least 1,095 days in Canada in the 5 years before you apply."),
   ask(adult, "Language proof is needed between these ages."),
   doc("Language proof", "A diploma or transcript in English or French, an accepted test result (CELPIP-G, CELPIP-LS, IELTS General, PTE Core, TEF, TCF), or a LINC or CLIC certificate.", adult),

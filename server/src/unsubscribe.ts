@@ -3,7 +3,7 @@ import { rateLimited } from "./auth";
 import { auditClient } from "./audit";
 import { escapeHtml } from "./email";
 import { htmlHeaders } from "./headers";
-import { pageLang, type Lang } from "./lang";
+import { pageLang, textsFor, type Lang } from "./lang";
 import { readUnsubToken, stopHash } from "./mail";
 import { regionOf } from "./regions";
 import type { AppEnv } from "./session";
@@ -37,7 +37,7 @@ const WORDS = {
 const langOf = (c: Context): Lang => pageLang(c.req.query("lang"), c.req.header("Accept-Language"));
 
 const page = (c: Context, status: 200 | 404, body: string) =>
-  c.html(`<!doctype html><html lang="${langOf(c)}"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>${WORDS[langOf(c)].title}</title><link rel="stylesheet" href="/link.css"><body>${body}</body>`, status, {
+  c.html(`<!doctype html><html lang="${langOf(c)}"><meta name="viewport" content="width=device-width"><meta name="robots" content="noindex"><title>${textsFor(WORDS, langOf(c)).title}</title><link rel="stylesheet" href="/link.css"><body>${body}</body>`, status, {
     ...htmlHeaders,
     "Cache-Control": "no-store",
   });
@@ -58,14 +58,14 @@ async function find(c: Context<AppEnv>, who: Who) {
   return { ...who, db, client, sender: firm.sender };
 }
 
-const invalid = (c: Context) => page(c, 404, `<p>${WORDS[langOf(c)].invalid}</p>`);
+const invalid = (c: Context) => page(c, 404, `<p>${textsFor(WORDS, langOf(c)).invalid}</p>`);
 
 // A GET only shows the button: mail scanners open links, and they must not unsubscribe anyone.
 unsubscribe.get("/:token", async (c) => {
   const who = await readUnsubToken(c.env, c.req.param("token"));
   const found = who && (await find(c, who));
   if (!found) return invalid(c);
-  const w = WORDS[langOf(c)];
+  const w = textsFor(WORDS, langOf(c));
   const sender = escapeHtml(found.sender ?? w.sender);
   return page(c, 200, `<p>${w.ask(sender, found.hash ? "" : w.to(escapeHtml(found.client?.email ?? w.address)))}</p>
 <form method="post"><button>${w.button}</button></form>`);
@@ -94,6 +94,6 @@ unsubscribe.post("/:token", async (c) => {
     ...(holds ? [db.prepare("UPDATE clients SET email_stop_at = ? WHERE firm_id = ? AND id = ? AND email_stop_at IS NULL").bind(Date.now(), firmId, clientId)] : []),
     ...(hash ? [db.prepare("INSERT OR IGNORE INTO email_stops (firm_id, email_hash, stopped_at) VALUES (?, ?, ?)").bind(firmId, hash, Date.now())] : []),
   ]);
-  const w = WORDS[langOf(c)];
+  const w = textsFor(WORDS, langOf(c));
   return page(c, 200, `<p>${w.done(escapeHtml(found.sender ?? w.sender))}</p>`);
 });

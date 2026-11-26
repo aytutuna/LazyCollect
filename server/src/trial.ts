@@ -1,6 +1,6 @@
 import { classOf, itemFailed } from "./pulse";
 import { Transient, escapeHtml, sendMail } from "./email";
-import { asLang, longDate, type Lang } from "./lang";
+import { asLang, longDate, textsFor, type Lang } from "./lang";
 import { DAY, PAYING } from "./util";
 
 export type TrialKind = "start" | "soon" | "end";
@@ -22,7 +22,7 @@ type Words = {
   why: string;
 };
 
-const WORDS: Record<Lang, Words> = {
+const WORDS: Record<"en" | "fr-CA", Words> = {
   en: {
     soonOpen: "Payments are not open yet. They open soon, and we will email you when you can subscribe.",
     kept: "Your account and stored files are kept.",
@@ -87,12 +87,12 @@ const WORDS: Record<Lang, Words> = {
 
 function letter(env: Env, kind: TrialKind, firm: Trial) {
   const lang = asLang(firm.locale);
-  const w = WORDS[lang];
+  const w = textsFor(WORDS, lang);
   const date = longDate(firm.trial_ends_at, lang, firm.tz);
   const url = `${env.APP_URL}/settings`;
   const lines = w[kind].lines(date, w.kept, w.soonOpen);
   const subject = kind === "soon" ? w.soon.subject(date) : w[kind].subject;
-  const colon = lang === "en" ? ":" : " :";
+  const colon = lang === "fr-CA" ? " :" : ":";
   const text = `${lines.join("\n\n")}\n\n${w.subscribe}${colon} ${url}\n\n${w.why}\n`;
   const html = `<!doctype html><html lang="${lang}"><body style="margin:0;padding:32px 16px;background:#f6f6f4;font-family:Arial,sans-serif;color:#1c1c1c">
 <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:12px;padding:32px">
