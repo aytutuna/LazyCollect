@@ -2,7 +2,7 @@
 /* eslint-disable */
 
 /**
- * The corner model, loaded once, and the live tracker that goes with it.
+ * The corner model, loaded once.
  */
 export class Scanner {
     free(): void;
@@ -16,13 +16,6 @@ export class Scanner {
      * `onnx` is the model with tract's Einsum fix (tools/patch_einsum.py in LazyKit).
      */
     constructor(onnx: Uint8Array | number[]);
-    /**
-     * One camera frame through the model and the tracker, `t` in milliseconds on any steady clock. Empty when the frame
-     * came too soon after the last one. Otherwise: the state (0 no page, 1 moving, 2 steadying, 3 captured), progress,
-     * steady, should capture, quality (0 good, 1 blurry, 2 dark), placement (0 fine, 1 far, 2 cut off), suggests the
-     * shutter, then the outline as eight shares of the frame, or nothing when there is none.
-     */
-    track(rgba: Uint8Array | number[], width: number, height: number, t: number): Float64Array;
 }
 
 /**
@@ -63,7 +56,6 @@ export interface InitOutput {
     readonly refine_edges: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly scanner_detect: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly scanner_new: (a: number, b: number) => [number, number, number];
-    readonly scanner_track: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly __wbindgen_exn_store_command_export: (a: number) => void;
     readonly __externref_table_alloc_command_export: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;

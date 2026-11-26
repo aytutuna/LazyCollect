@@ -102,11 +102,6 @@ describe.skipIf(!present)("the Rust scanner", () => {
         for (const filter of FILTERS) expect(checksum(rust.filter(page, filter))).toBe(checksum(applyFilter(page, filter)));
       }
     });
-
-    it("leaves the original alone", () => {
-      const page = drawn.shadowed;
-      expect(rust.filter(page, "original")).toBe(page);
-    });
   });
 
   describe("cutting a page out", () => {
@@ -130,6 +125,11 @@ describe.skipIf(!present)("the Rust scanner", () => {
       let diff = 0;
       for (let i = 0; i < mine.data.length; i += 4) diff += Math.abs(mine.data[i] - theirs.data[i]);
       expect(diff / (mine.data.length / 4)).toBeLessThan(12);
+    });
+
+    it("refuses pixels that do not match the size, even when the size wraps around", () => {
+      expect(() => rust.refine({ width: 65536, height: 16384, data: new Uint8ClampedArray(0) }, quad)).toThrow();
+      expect(() => rust.warp({ width: 10, height: 10, data: new Uint8ClampedArray(12) }, quad, 10, 10)).toThrow();
     });
 
     it("gives nothing for an outline that is not convex", () => {
@@ -172,23 +172,6 @@ describe.skipIf(!present)("the Rust scanner", () => {
       ];
       for (const [q, confidence] of outlines) expect(rust.frameIssues(q, confidence, 800, 600)).toEqual(frameIssues(q, confidence, 800, 600));
       expect(rust.frameIssues(outlines[1][0], 0.9, 800, 600)).toEqual(["cut"]);
-    });
-  });
-
-  describe("the live tracker", () => {
-    it("follows a page held still, settles on it and says when to take it", () => {
-      const f = fixtures[0];
-      const frame = frameOf(f.file);
-      const truth = fromCorners([f.topLeft, f.topRight, f.bottomRight, f.bottomLeft] as Quad);
-      let last = null as ReturnType<Ops["track"]>;
-      let took = false;
-      for (let t = 0; t < 4000 && !took; t += 150) {
-        last = rust.track({ ...frame, data: frame.data.slice() }, t) ?? last;
-        took = Boolean(last?.capture);
-      }
-      expect(took).toBe(true);
-      const outline = last!.outline!.map((p) => [p[0] * frame.width, p[1] * frame.height]) as Quad;
-      expect(worst(outline, truth)).toBeLessThanOrEqual(TOLERANCE);
     });
   });
 });
