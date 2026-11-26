@@ -419,11 +419,14 @@ describe("reminders", () => {
     await invite(cookie, req.id);
     await pin(req.id, at(2027, 1, 5, 10));
     mockOutbound(true, 422);
-    for (const min of [5, 15, 25]) await runReminders(env, at(2027, 1, 5, 10, min));
+    // a run every minute does not use the tries up: each waits its turn, a quarter of an hour apart
+    for (const min of [5, 6, 10, 19]) await runReminders(env, at(2027, 1, 5, 10, min));
+    expect((await messages()).find((m) => m.kind === "reminder")).toMatchObject({ status: "failed", attempts: 1 });
+    for (const min of [20, 35]) await runReminders(env, at(2027, 1, 5, 10, min));
     let row = (await messages()).find((m) => m.kind === "reminder");
     expect(row).toMatchObject({ status: "failed", attempts: 3 });
     expect((await requestRow(req.id)).reminder_seq).toBe(0);
-    await runReminders(env, at(2027, 1, 5, 10, 35));
+    await runReminders(env, at(2027, 1, 5, 10, 55));
     row = (await messages()).filter((m) => m.kind === "reminder")[0];
     expect(row.attempts).toBe(3);
     expect((await requestRow(req.id)).reminder_seq).toBe(1);
@@ -453,16 +456,22 @@ describe("reminders", () => {
     await invite(cookie, second.id);
     await pin(req.id, at(2027, 1, 5, 10));
     await pin(second.id, at(2027, 1, 5, 10, 1));
-    for (const status of [429, 503]) {
+    mockOutbound(true, 429);
+    await runReminders(env, at(2027, 1, 5, 10, 5));
+    // the busy provider stops the pass at the first request, which waits a quarter of an hour
+    expect((await messages()).filter((m) => m.kind === "reminder")).toHaveLength(1);
+    for (const [status, min] of [[503, 6], [429, 21], [503, 40]] as const) {
       mockOutbound(true, status);
-      for (const min of [5, 15, 25, 35]) await runReminders(env, at(2027, 1, 5, 10, min));
+      await runReminders(env, at(2027, 1, 5, 10, min));
     }
+    // the second request is to the same client, whose first email may have gone out, so it is not tried while that is unsettled
     const rows = (await messages()).filter((m) => m.kind === "reminder");
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ status: "failed", attempts: 0 });
+    expect(rows.every((m) => m.status === "failed" && m.attempts === 0)).toBe(true);
     expect((await requestRow(req.id)).reminder_seq).toBe(0);
     const sent = mockOutbound();
-    await runReminders(env, at(2027, 1, 5, 10, 45));
+    await runReminders(env, at(2027, 1, 5, 10, 58));
+    // the same client hears once in 36 hours, so the second request waits its turn
     expect(sent).toHaveLength(1);
   });
 
@@ -478,6 +487,52 @@ describe("reminders", () => {
     expect(links.results).toEqual([{ revoked_at: null }]);
   });
 
+  it("treats a dropped connection or a timeout as the provider being out of reach, not as a refusal", async () => {
+    const { cookie, req } = await ready();
+    mockOutbound();
+    await invite(cookie, req.id);
+    await pin(req.id, at(2027, 1, 5, 10));
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(Object.assign(new Error("timed out"), { name: "TimeoutError" }));
+    for (const min of [5, 20, 35, 50]) await runReminders(env, at(2027, 1, 5, 10, min));
+    const rows = (await messages()).filter((m) => m.kind === "reminder");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "failed", attempts: 0 });
+    expect((await requestRow(req.id)).reminder_seq).toBe(0);
+    const sent = mockOutbound();
+    await runReminders(env, at(2027, 1, 5, 11, 10));
+    expect(sent).toHaveLength(1);
+  });
+
+  it("spreads the tries of a timed-out email over the hour when the run is every minute, and uses none of them", async () => {
+    const { cookie, req } = await ready();
+    mockOutbound();
+    await invite(cookie, req.id);
+    await pin(req.id, at(2027, 1, 5, 10));
+    const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(Object.assign(new Error("timed out"), { name: "TimeoutError" }));
+    const tried: number[] = [];
+    for (let min = 5; min < 65; min++) {
+      const before = spy.mock.calls.length;
+      await runReminders(env, at(2027, 1, 5, 10, min));
+      if (spy.mock.calls.length > before) tried.push(min);
+    }
+    expect(tried).toEqual([5, 20, 35, 50]);
+    expect((await messages()).filter((m) => m.kind === "reminder")).toMatchObject([{ status: "failed", attempts: 0 }]);
+  });
+
+  it("does not send a deadline note over a reminder whose answer was lost, in another slot", async () => {
+    const { cookie, req } = await ready();
+    mockOutbound();
+    await invite(cookie, req.id);
+    await pin(req.id, at(2027, 1, 20, 10));
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("connection lost"));
+    await runReminders(env, at(2027, 1, 20, 10, 5));
+    // the deadline falls between the two tries, so the retry would be a deadline note in a new slot
+    await env.DB_NA.prepare("UPDATE requests SET deadline = ?").bind(at(2027, 1, 20, 10, 10)).run();
+    const sent = mockOutbound();
+    await runReminders(env, at(2027, 1, 20, 10, 25));
+    expect(sent).toHaveLength(0);
+  });
+
   it("recovers a failed send on the next run", async () => {
     const { cookie, req } = await ready();
     mockOutbound();
@@ -487,6 +542,8 @@ describe("reminders", () => {
     await runReminders(env, at(2027, 1, 5, 10, 5));
     const sent = mockOutbound();
     await runReminders(env, at(2027, 1, 5, 10, 15));
+    expect(sent).toHaveLength(0);
+    await runReminders(env, at(2027, 1, 5, 10, 20));
     expect(sent).toHaveLength(1);
     const rows = (await messages()).filter((m) => m.kind === "reminder");
     expect(rows).toHaveLength(1);
@@ -540,6 +597,18 @@ describe("rejected items email", () => {
     expect(sent.filter((m) => m.subject.startsWith("Please resend"))).toHaveLength(1);
     expect((await messages()).filter((m) => m.kind === "rejected")).toMatchObject([{ seq: 1, status: "sent" }]);
     expect((await requestRow(o.req.id)).reject_mark_at).toBeNull();
+  });
+
+  it("waits a quarter of an hour between the tries of a sent-back email, with a run every minute", async () => {
+    const o = await rejectBoth();
+    const day = addDays(dayOf(Date.now(), TZ), 1);
+    const start = atHour(day, 10, TZ);
+    await env.DB_NA.prepare("UPDATE requests SET reject_mark_at = ?").bind(start).run();
+    mockOutbound(true, 422);
+    for (let min = 11; min < 25; min++) await runReminders(env, start + min * MINUTE);
+    expect((await messages()).filter((m) => m.kind === "rejected")).toMatchObject([{ status: "failed", attempts: 1 }]);
+    for (let min = 25; min <= 26; min++) await runReminders(env, start + min * MINUTE);
+    expect((await messages()).filter((m) => m.kind === "rejected")).toMatchObject([{ status: "failed", attempts: 2 }]);
   });
 
   it("sends nothing when the items were fixed in the meantime", async () => {
@@ -651,13 +720,32 @@ describe("upload notice failures", () => {
     await upload(o.path, o.req.items[0].id, pdf(500));
     mockOutbound(true, 422);
     const now = Date.now();
-    for (const min of [0, 10, 20, 30]) await runReminders(env, now + min * MINUTE);
+    // runs a minute apart: the notice waits a quarter of an hour between its three tries
+    for (let min = 0; min <= 14; min++) await runReminders(env, now + min * MINUTE);
+    expect((await requestRow(o.req.id)).notice_tries).toBe(1);
+    for (let min = 15; min <= 45; min++) await runReminders(env, now + min * MINUTE);
     const row = await requestRow(o.req.id);
     expect(row.notice_due_at).toBeNull();
     expect(row.notice_tries).toBe(0);
     const sent = mockOutbound();
     await runReminders(env, now + 3 * HOUR);
     expect(sent).toHaveLength(0);
+  });
+});
+
+describe("upload notices when the provider is out of reach", () => {
+  it("uses no try over an hour of runs a minute apart, and tells the owner once it is back", async () => {
+    const o = await openRequest();
+    await upload(o.path, o.req.items[0].id, pdf(500));
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("connection lost"));
+    const now = Date.now();
+    for (let min = 0; min <= 60; min++) await runReminders(env, now + min * MINUTE);
+    const row = await requestRow(o.req.id);
+    expect(row.notice_tries).toBe(0);
+    expect(row.notice_due_at).not.toBeNull();
+    const sent = mockOutbound();
+    await runReminders(env, now + 80 * MINUTE);
+    expect(sent).toHaveLength(1);
   });
 });
 
@@ -726,17 +814,55 @@ describe("email caps", () => {
     expect(sent).toHaveLength(1);
   });
 
-  it("stops a trial account at 50 emails a day and a subscribed one at 500", async () => {
-    const { cookie, req, client } = await ready();
+  // staff invitations count with the invitations to clients
+  const staffMail = (count: number, sentAt: number) =>
+    env.DB_NA.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${count})
+       INSERT INTO staff_mail (id, firm_id, sent_at) SELECT lower(hex(randomblob(16))), (SELECT firm_id FROM requests), ?1 FROM n`,
+    )
+      .bind(sentAt)
+      .run();
+
+  it("stops a trial account at 50 invitations a day and a subscribed one at 500", async () => {
+    const { cookie, req } = await ready();
     mockOutbound();
-    await fill(req.id, client.id, 50, Date.now() - HOUR);
+    await staffMail(50, Date.now() - HOUR);
     const res = await invite(cookie, req.id);
     expect(res.status).toBe(429);
     expect((await res.json<any>()).error).toBe("email_limit");
     await env.CONTROL.prepare("UPDATE firms SET stripe_subscription_id = 'sub_1'").run();
     expect((await invite(cookie, req.id)).status).toBe(200);
-    await fill(req.id, client.id, 450, Date.now() - HOUR, 1000);
+    await staffMail(449, Date.now() - HOUR);
     expect((await invite(cookie, req.id)).status).toBe(429);
+  });
+
+  it("counts reminders and notes apart from invitations: 200 a day on a trial, 2,000 once subscribed", async () => {
+    const { cookie, req, client } = await ready();
+    mockOutbound();
+    await fill(req.id, client.id, 200, Date.now() - HOUR);
+    expect((await invite(cookie, req.id)).status).toBe(200);
+    const now = at(2027, 1, 5, 10, 5);
+    await pin(req.id, at(2027, 1, 5, 10));
+    await fill(req.id, client.id, 200, now - HOUR, 1000);
+    const sent = mockOutbound();
+    await runReminders(env, now);
+    expect(sent).toHaveLength(0);
+    await env.CONTROL.prepare("UPDATE firms SET stripe_subscription_id = 'sub_1'").run();
+    await fill(req.id, client.id, 1800, now - HOUR, 5000);
+    await runReminders(env, now + HOUR + MINUTE);
+    expect(sent).toHaveLength(0);
+    await env.DB_NA.prepare("DELETE FROM messages WHERE seq = 5001").run();
+    await runReminders(env, now + 2 * HOUR + MINUTE);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("gives an account paying through the App Store the subscribed cap", async () => {
+    const { cookie, req, client } = await ready();
+    mockOutbound();
+    await staffMail(50, Date.now() - HOUR);
+    expect((await invite(cookie, req.id)).status).toBe(429);
+    await env.CONTROL.prepare("UPDATE firms SET plan_source = 'apple', apple_original_transaction_id = '1000000000001'").run();
+    expect((await invite(cookie, req.id)).status).toBe(200);
   });
 
   it("leaves a capped reminder due and sends it once there is room", async () => {
@@ -746,13 +872,13 @@ describe("email caps", () => {
     sent.length = 0;
     await pin(req.id, at(2027, 1, 5, 10));
     const now = at(2027, 1, 5, 10, 5);
-    await fill(req.id, client.id, 49, now - HOUR);
+    await fill(req.id, client.id, 199, now - HOUR);
     await runReminders(env, now);
     expect(sent).toHaveLength(1);
     await pin(req.id, at(2027, 1, 12, 10), 1);
     sent.length = 0;
     const later = at(2027, 1, 12, 10, 5);
-    await fill(req.id, client.id, 50, later - HOUR, 1000);
+    await fill(req.id, client.id, 200, later - HOUR, 1000);
     await runReminders(env, later);
     expect(sent).toHaveLength(0);
     const row = await requestRow(req.id);
@@ -778,7 +904,7 @@ describe("email caps", () => {
     const now = atHour(day, 11, TZ);
     await env.DB_NA.prepare("UPDATE requests SET reject_mark_at = ?").bind(now - HOUR).run();
     await env.DB_NA.prepare(
-      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 50)
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200)
        INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at)
        SELECT lower(hex(randomblob(16))), (SELECT firm_id FROM requests), ?1, ?2, 'email', 'rejected', 100 + i, 1, 'x', 'sent', 1, ?3 FROM n`,
     )

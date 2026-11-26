@@ -1,5 +1,7 @@
+import { classOf, itemFailed } from "./pulse";
+import { FILE_COLUMNS, holdFiles, type FileRow } from "./held";
 import { LINK_GRACE } from "./links";
-import { regionIds, regionOf } from "./regions";
+import { regionIds, regionOf, type Region } from "./regions";
 import { DEFAULT_YEARS, YEAR } from "./status";
 import { HOUR, RESTORE_WINDOW, randomId } from "./util";
 
@@ -17,7 +19,10 @@ export const reasonOf = (r: Target): Reason => (r.deleted_reason === "retention"
 export const FINISHED = `ended_at IS NOT NULL AND hold_at IS NULL AND deleted_at IS NULL AND purging_at IS NULL
   AND (status = 'closed' OR deadline + ${LINK_GRACE} <= ?)`;
 
-const log = (e: unknown) => console.error(e instanceof Error ? e.message : "error");
+const log = (e: unknown) => {
+  console.error(e instanceof Error ? e.message : "error");
+  itemFailed(classOf(e));
+};
 
 export async function emptyPrefix(bucket: R2Bucket, prefix: string, onDelete?: () => void) {
   let cursor: string | undefined;
@@ -32,7 +37,8 @@ export async function emptyPrefix(bucket: R2Bucket, prefix: string, onDelete?: (
 }
 
 // Claim first, so restore and hold back off; objects go before rows, so a run that dies in between is finished by the next one.
-export async function purgeRequest(db: D1Database, bucket: R2Bucket, req: Target, reason: Reason, now: number, cutoff: number): Promise<number | null> {
+export async function purgeRequest(env: Env, region: Region, req: Target, reason: Reason, now: number, cutoff: number): Promise<number | null> {
+  const { db, bucket } = regionOf(env, region);
   const claim = await db
     .prepare(
       `UPDATE requests SET purging_at = ? WHERE firm_id = ? AND id = ? AND hold_at IS NULL AND (purging_at IS NULL OR purging_at < ?)
@@ -46,6 +52,11 @@ export async function purgeRequest(db: D1Database, bucket: R2Bucket, req: Target
   try {
     const prefix = `f/${req.firm_id}/${req.id}/`;
     const { n } = (await db.prepare("SELECT COUNT(*) AS n FROM files WHERE firm_id = ? AND request_id = ?").bind(req.firm_id, req.id).first<{ n: number }>())!;
+    // 30 days in the holding place, so a purge is not the last chance to get a document back; an account being deleted keeps nothing
+    if (reason !== "closed") {
+      const files = await db.prepare(`SELECT ${FILE_COLUMNS} FROM files WHERE firm_id = ? AND request_id = ? AND state = 'live'`).bind(req.firm_id, req.id).all<FileRow>();
+      await holdFiles(env, region, files.results, reason, now);
+    }
     await emptyPrefix(bucket, prefix, () => (touched = true));
     const own = [req.firm_id, req.id] as const;
     const mine = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND purging_at = ?)";
@@ -94,7 +105,7 @@ export async function purgeRequest(db: D1Database, bucket: R2Bucket, req: Target
   }
 }
 
-async function purgeClient(db: D1Database, bucket: R2Bucket, client: Target, budget: { left: number }, now: number, cutoff: number) {
+async function purgeClient(env: Env, region: Region, db: D1Database, client: Target, budget: { left: number }, now: number, cutoff: number) {
   let files = 0;
   const { results } = await db
     .prepare(
@@ -107,7 +118,7 @@ async function purgeClient(db: D1Database, bucket: R2Bucket, client: Target, bud
   for (const req of results) {
     budget.left--;
     try {
-      files += (await purgeRequest(db, bucket, req, reasonOf(req), now, cutoff)) ?? 0;
+      files += (await purgeRequest(env, region, req, reasonOf(req), now, cutoff)) ?? 0;
     } catch (e) {
       log(e);
       failed = true;
@@ -136,9 +147,9 @@ async function startClocks(db: D1Database, now: number) {
     .prepare(
       `UPDATE requests SET ended_at = ${ends},
          keep_until = ${ends} + COALESCE((SELECT retention_years FROM firm_settings WHERE firm_id = requests.firm_id), ${DEFAULT_YEARS}) * ${YEAR}
-       WHERE rowid IN (SELECT rowid FROM requests WHERE status = 'open' AND ended_at IS NULL AND deleted_at IS NULL AND ${ends} <= ? LIMIT ${RETENTION_BATCH})`,
+       WHERE rowid IN (SELECT rowid FROM requests WHERE status = 'open' AND ended_at IS NULL AND deleted_at IS NULL AND deadline <= ? LIMIT ${RETENTION_BATCH})`,
     )
-    .bind(now)
+    .bind(now - LINK_GRACE)
     .run();
 }
 
@@ -179,7 +190,7 @@ export async function purgeExpired(env: Env, now = Date.now()) {
   const cutoff = now - RESTORE_WINDOW;
   for (const id of regionIds) {
     try {
-      const { db, bucket } = regionOf(env, id);
+      const { db } = regionOf(env, id);
       await startClocks(db, now).catch(log);
       await retire(db, now).catch(log);
 
@@ -193,7 +204,7 @@ export async function purgeExpired(env: Env, now = Date.now()) {
         .all<Target>();
       for (const req of results) {
         budget.left--;
-        await purgeRequest(db, bucket, req, reasonOf(req), now, cutoff).catch(log);
+        await purgeRequest(env, id, req, reasonOf(req), now, cutoff).catch(log);
       }
 
       if (budget.left <= 0) continue;
@@ -209,7 +220,7 @@ export async function purgeExpired(env: Env, now = Date.now()) {
         .all<Target>();
       for (const client of clients.results) {
         if (budget.left <= 0) break;
-        await purgeClient(db, bucket, client, budget, now, cutoff).catch(log);
+        await purgeClient(env, id, db, client, budget, now, cutoff).catch(log);
       }
     } catch (e) {
       log(e);

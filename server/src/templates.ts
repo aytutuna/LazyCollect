@@ -19,13 +19,14 @@ import { isLang, langOf, type Lang } from "./lang";
 import type { AppEnv } from "./session";
 import { ownsExamples, parseExample } from "./examples";
 import { parseKind, parseTags, checkConditions, type Item } from "./questions";
+import { markedChoice, tax, type Facts } from "./taxyear";
 import { randomId } from "./util";
 import { exampleGone, invalid, locale, maybe, notFound, readBody, setClause, text } from "./validate";
 
 const MAX_TEMPLATES = 200;
 
 export type { Item };
-type Template = { id: string; name: string; items: Item[] };
+type Template = { id: string; name: string; items: Item[]; facts?: Facts };
 
 export const builtinTemplates: Template[] = [
   t1Personal,
@@ -47,8 +48,21 @@ export const builtinTemplates: Template[] = [
 // the built-in templates in the language of the request they will start
 export const builtinsFor = (lang: Lang) => (lang === "fr-CA" ? builtinTemplatesFr : builtinTemplates);
 
+// the facts a request's checklist fills in: a built-in's own, or the copy an account made of one
+export async function factsOf(db: D1Database, firmId: string, ref: string | null | undefined): Promise<Facts> {
+  if (!ref) return {};
+  const built = builtinTemplates.find((t) => t.id === ref);
+  if (built) return built.facts ?? {};
+  const row = await db.prepare("SELECT facts_json FROM templates WHERE firm_id = ? AND id = ?").bind(firmId, ref).first<{ facts_json: string | null }>();
+  if (row) return row.facts_json ? JSON.parse(row.facts_json) : {};
+  // the account's copy is gone: the built-in checklists' facts stand in, so what came from it can still be repeated
+  const merged: Facts = {};
+  for (const t of builtinTemplates) for (const [year, f] of Object.entries(t.facts ?? {})) merged[Number(year)] = { ...merged[Number(year)], ...f };
+  return merged;
+}
+
 const MAX_ITEMS = 100;
-const COLS = "id, name, locale, items_json, created_at, updated_at";
+const COLS = "id, name, locale, items_json, source_id, facts_json, created_at, updated_at";
 
 export function parseItem(v: unknown): Item | undefined {
   if (!v || typeof v !== "object") return undefined;
@@ -60,7 +74,8 @@ export function parseItem(v: unknown): Item | undefined {
   const example = parseExample(o.example);
   const tags = kind && parseTags(o, kind.kind ?? "file", Boolean(kind.show_if));
   if (!kind || !tags || example === undefined) return undefined;
-  return { label, ...(help ? { help } : {}), required: o.required ?? true, ...kind, ...(example ? { example } : {}), ...tags };
+  const item: Item = { label, ...(help ? { help } : {}), required: o.required ?? true, ...kind, ...(example ? { example } : {}), ...tags };
+  return markedChoice(item) ? undefined : item;
 }
 
 export function parseItems(v: unknown): Item[] | undefined {
@@ -69,9 +84,15 @@ export function parseItems(v: unknown): Item[] | undefined {
   return items.every((i) => i) && checkConditions(items as Item[]) ? (items as Item[]) : undefined;
 }
 
-type Row = { id: string; name: string; locale: string; items_json: string; created_at: number; updated_at: number };
+type Row = { id: string; name: string; locale: string; items_json: string; source_id: string | null; facts_json: string | null; created_at: number; updated_at: number };
 
-const present = ({ items_json, ...t }: Row) => ({ ...t, builtin: false, items: JSON.parse(items_json) as Item[] });
+// "newer" when the built-in a copy came from has facts the copy does not
+const present = ({ items_json, facts_json, source_id, ...t }: Row) => {
+  const items = JSON.parse(items_json) as Item[];
+  const facts: Facts | undefined = facts_json ? JSON.parse(facts_json) : undefined;
+  const built = source_id ? builtinTemplates.find((b) => b.id === source_id) : undefined;
+  return { ...t, builtin: false, items, tax: tax(items, facts), newer: Boolean(built?.facts && JSON.stringify(built.facts) !== facts_json) };
+};
 
 export const templates = new Hono<AppEnv>();
 
@@ -92,6 +113,8 @@ templates.post("/templates", async (c) => {
   const lang = body.locale === undefined ? "en" : locale(body.locale);
   const items = parseItems(body.items);
   if (!name || !lang || !items) return invalid(c);
+  // a copy of a built-in keeps its facts, so its dates and rules stay as they were until the account takes newer ones
+  const source = typeof body.source === "string" ? builtinTemplates.find((t) => t.id === body.source) : undefined;
   const id = randomId();
   const now = Date.now();
   const db = c.get("db");
@@ -100,10 +123,10 @@ templates.post("/templates", async (c) => {
   const [res] = await db.batch([
     db
       .prepare(
-        `INSERT INTO templates (id, firm_id, name, locale, items_json, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, ?
+        `INSERT INTO templates (id, firm_id, name, locale, items_json, source_id, facts_json, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
          WHERE (SELECT COUNT(*) FROM templates WHERE firm_id = ?) < ${MAX_TEMPLATES}`,
       )
-      .bind(id, firmId, name, lang, JSON.stringify(items), now, now, firmId),
+      .bind(id, firmId, name, lang, JSON.stringify(items), source?.facts ? source.id : null, source?.facts ? JSON.stringify(source.facts) : null, now, now, firmId),
     audit(c, "template.create", "template", id, undefined, { sql: "EXISTS (SELECT 1 FROM templates WHERE firm_id = ? AND id = ?)", binds: [firmId, id] }),
   ]);
   if (!res.meta.changes) return c.json({ error: "too_many_templates" }, 409);
@@ -145,6 +168,21 @@ templates.patch("/templates/:id", async (c) => {
   ]);
   const row = await db.prepare(`SELECT ${COLS} FROM templates WHERE id = ?`).bind(c.req.param("id")).first<Row>();
   return c.json(present(row!));
+});
+
+// takes the built-in's current dates and rules into a copy made from it
+templates.post("/templates/:id/facts", async (c) => {
+  const db = c.get("db");
+  const firmId = c.get("firm").id;
+  const row = await db.prepare(`SELECT ${COLS} FROM templates WHERE firm_id = ? AND id = ?`).bind(firmId, c.req.param("id")).first<Row>();
+  if (!row) return notFound(c);
+  const built = row.source_id ? builtinTemplates.find((t) => t.id === row.source_id) : undefined;
+  if (!built?.facts) return c.json({ error: "no_source" }, 409);
+  await db.batch([
+    db.prepare("UPDATE templates SET facts_json = ?, updated_at = ? WHERE firm_id = ? AND id = ?").bind(JSON.stringify(built.facts), Date.now(), firmId, row.id),
+    audit(c, "template.facts", "template", row.id),
+  ]);
+  return c.json(present((await db.prepare(`SELECT ${COLS} FROM templates WHERE id = ?`).bind(row.id).first<Row>())!));
 });
 
 templates.delete("/templates/:id", async (c) => {

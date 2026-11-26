@@ -1,4 +1,5 @@
 #!/bin/bash
+# Reads our copy on the deps-docaligner-1.1.1 pre-release first, then the upstream release.
 # Fetches DocAligner's FastViT-T8 page corner model (DocsaidLab/DocAligner release 1.1.1, Apache-2.0, see
 # public/models/DocAligner-LICENSE.txt) into .cache, checks its SHA-256, and writes the quarter-size int8 copy the site serves
 # (scripts/shrink_model.py) to public/models/<first 12 hex of its SHA-256>/docaligner-int8.onnx. The int8 file is checked
@@ -8,6 +9,7 @@
 # releases). Runs in bash on Linux, macOS and Git Bash on Windows.
 set -euo pipefail
 
+copy="https://github.com/aytutuna/LazyCollect/releases/download/deps-docaligner-1.1.1"
 release="https://github.com/DocsaidLab/DocAligner/releases/download/1.1.1"
 web="$(cd "$(dirname "$0")/.." && pwd)"
 name=fastvit_t8_h_e_bifpn_256_fp32.onnx
@@ -26,7 +28,10 @@ sha256() {
 
 mkdir -p "$web/.cache" "$(dirname "$out")"
 if [ ! -f "$source" ] || [ "$(sha256 "$source")" != "$expected" ]; then
-  curl -fsSL -o "$source.part" "$release/$name"
+  if ! curl -fsSL --retry 3 --retry-all-errors --retry-delay 10 -o "$source.part" "$copy/$name"; then
+    echo "$name: our copy is not available, trying the upstream release" >&2
+    curl -fsSL --retry 3 --retry-all-errors --retry-delay 10 -o "$source.part" "$release/$name"
+  fi
   hash=$(sha256 "$source.part")
   if [ "$hash" != "$expected" ]; then
     rm -f "$source.part"

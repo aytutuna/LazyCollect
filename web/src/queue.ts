@@ -9,7 +9,7 @@ export type Job = {
   name: string;
   size: number;
   uploadId: string;
-  state: "waiting" | "uploading" | "retrying" | "failed";
+  state: "waiting" | "uploading" | "retrying" | "paused" | "failed";
   progress: number;
   error?: unknown;
   // seconds until the next automatic try; 0 while the connection is down
@@ -220,7 +220,16 @@ export class UploadQueue {
     }
   }
 
+  // the account's plan has ended: the file stays on the device and goes up once the link takes files again
+  resume() {
+    if (!this.jobs.some((j) => j.state === "paused")) return;
+    this.jobs = this.jobs.map((j) => (j.state === "paused" ? { ...j, state: "waiting", error: undefined } : j));
+    this.emit();
+    void this.pump();
+  }
+
   private failed(job: Job, error: unknown) {
+    if (error instanceof ApiError && error.status === 402 && error.code === "paused") return this.patch(job.id, { state: "paused", error });
     if (!transient(error)) return this.patch(job.id, { state: "failed", error });
     const n = (this.attempts.get(job.id) ?? 0) + (navigator.onLine ? 1 : 0);
     this.attempts.set(job.id, n);

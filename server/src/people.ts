@@ -3,6 +3,7 @@ import { audit } from "./audit";
 import { asLang } from "./lang";
 import { MAX_ITEMS, MAX_PEOPLE, ROLES, matches, parsePerson, relabel, rowsFor, type Blueprint, type Person, type Row } from "./expand";
 import { insertRows } from "./copy";
+import { FILE_COLUMNS, holdFiles, type FileRow } from "./held";
 import { today } from "./expiry";
 import { parseDay } from "./questions";
 import { regionOf, type Region } from "./regions";
@@ -121,6 +122,11 @@ people.delete("/requests/:id/people/:personId", async (c) => {
   if (n && c.req.query("confirm") !== "1") return c.json({ error: "has_data", items: n }, 409);
 
   const free = "EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND status IN ('draft', 'open', 'complete') AND deleted_at IS NULL AND hold_at IS NULL)";
+  const held = await db
+    .prepare(`SELECT ${FILE_COLUMNS} FROM files WHERE firm_id = ? AND request_id = ? AND state = 'live' AND item_id IN (SELECT id FROM items WHERE ${items})`)
+    .bind(firm.id, req.id, ...own)
+    .all<FileRow>();
+  await holdFiles(c.env, firm.region as Region, held.results, "removed");
   const [, gone, , res] = await db.batch([
     audit(c, "person.remove", "person", personId, { request: req.id, items: n }, {
       sql: `EXISTS (SELECT 1 FROM people WHERE firm_id = ? AND id = ?) AND ${free}`,

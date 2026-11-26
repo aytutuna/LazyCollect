@@ -28,6 +28,7 @@ export function NewRequest() {
   const [deadline, setDeadline] = useState(toInput(inDays(14)));
   const [people, setPeople] = useState<Draft[]>([]);
   const [validUntil, setValidUntil] = useState("");
+  const [taxYear, setTaxYear] = useState<number | null>(null);
   const { busy, error, run } = useAction();
 
   function pickTemplate(id: string) {
@@ -39,9 +40,11 @@ export function NewRequest() {
       return;
     }
     setItems(toEditItems(found.items));
+    setTaxYear(found.tax?.suggested ?? null);
+    const named = found.tax ? `${found.name} ${found.tax.suggested}` : found.name;
     if (!title) {
-      setTitle(found.name);
-      setTemplateTitle(found.name);
+      setTitle(named);
+      setTemplateTitle(named);
     }
     // a checklist for each person starts with the client as the principal applicant
     if (found.items.some((i) => i.per_person) && people.length === 0) setPeople([newDraft("principal", clients.data?.find((c) => c.id === clientId)?.name ?? "")]);
@@ -80,6 +83,8 @@ export function NewRequest() {
         locale: lang,
         items: toPayload(items),
         people: toPeople(people),
+        ...(templateId ? { template_ref: templateId } : {}),
+        ...(taxYear !== null || typed ? { tax_year: taxYear ?? new Date().getFullYear() - 1 } : {}),
         ...(validUntil ? { valid_until: validUntil } : {}),
       });
       go(`/requests/${created.id}`);
@@ -90,6 +95,16 @@ export function NewRequest() {
 
   const builtin = templates.data.filter((x) => x.builtin);
   const own = templates.data.filter((x) => !x.builtin);
+  const chosen = templates.data.find((x) => x.id === templateId);
+  // a year marker typed into the checklist needs a tax year too, even without a template
+  const typed = items.some((i) => /\{year(?:[+-]\d{1,2})?\}/.test(`${i.label} ${i.help}`));
+  const taxInfo = chosen?.tax ?? (typed ? { years: Array.from({ length: 7 }, (_, i) => new Date().getFullYear() - 5 + i), suggested: new Date().getFullYear() - 1 } : null);
+
+  // the year in a title that still has the suggested one follows the choice
+  function changeYear(year: number) {
+    if (taxYear !== null) setTitle((cur) => cur.replace(String(taxYear), String(year)));
+    setTaxYear(year);
+  }
 
   return (
     <>
@@ -172,6 +187,15 @@ export function NewRequest() {
               </optgroup>
             </select>
           </Field>
+          {taxInfo && (
+            <Field label={t("new.tax_year")} hint={t("new.tax_year_hint")}>
+              <select value={taxYear ?? taxInfo.suggested} onChange={(e) => changeYear(Number(e.currentTarget.value))}>
+                {taxInfo.years.map((y) => (
+                  <option value={y}>{y}</option>
+                ))}
+              </select>
+            </Field>
+          )}
           {items.some((i) => i.expiry) && (
             <Field label={t("detail.valid_until")} hint={t("detail.valid_until_hint")}>
               <input type="date" min="1900-01-01" max="2100-12-31" value={validUntil} onInput={(e) => setValidUntil(e.currentTarget.value)} />

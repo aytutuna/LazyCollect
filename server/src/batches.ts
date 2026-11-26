@@ -1,4 +1,5 @@
 import { asLang, isLang, type Lang } from "./lang";
+import { classOf, itemFailed } from "./pulse";
 import { Hono, type Context } from "hono";
 import { audit } from "./audit";
 import { insertRows, itemColumns, itemsFromRequests, nextYearTitle, peopleFromRequests } from "./copy";
@@ -8,12 +9,14 @@ import { usable } from "./firm";
 import { linkUrl } from "./links";
 import { addressStopped, deliver, hasRoom, unsubUrl } from "./mail";
 import { regionIds, regionOf, type Region } from "./regions";
-import { canSend, missingItems, senderName, sendersOf, type Sender } from "./reminders";
+import { RETRY_WAIT, canSend, missingItems, senderName, sendersOf, type Sender } from "./reminders";
 import { deadline } from "./requests";
 import type { AppEnv } from "./session";
 import { PAGE, offsetOf } from "./search";
 import { visible } from "./questions";
-import { builtinsFor, type Item } from "./templates";
+import { UnknownYear, hasMarkers, resolveItems, taxYears, validYear } from "./taxyear";
+import { builtinsFor, factsOf, type Item } from "./templates";
+import { yearOn } from "./yearon";
 import { addDays, atHour, dayOf, inHours, nextOpening, nextReminder, plusYear } from "./tz";
 import { DAY, HOUR, MINUTE, randomId } from "./util";
 import { invalid, notFound, readBody, text } from "./validate";
@@ -25,7 +28,7 @@ const MAX_BATCH = 1000;
 const MAX_BATCH_PER_DAY = 2000;
 const MAX_SEND_AHEAD = 90 * DAY;
 // sends per cron run, so one run stays short
-const PER_TICK = 25;
+const PER_TICK = 20;
 const MAX_TRIES = 3;
 // rows per statement, so a bound list stays small
 const CHUNK = 200;
@@ -77,6 +80,8 @@ batches.post("/batches", async (c) => {
   const kinds = [body.template_id !== undefined, body.request_id !== undefined, repeat].filter(Boolean).length;
   const note = body.note === undefined || body.note === null || body.note === "" ? null : text(body.note, 2000);
   if (kinds !== 1 || note === undefined) return invalid(c);
+  const taxYear = body.tax_year === undefined ? null : body.tax_year;
+  if (taxYear !== null && !validYear(taxYear)) return invalid(c);
   const list = repeat ? body.request_ids : body.client_ids;
   if (Array.isArray(list) && list.length > MAX_BATCH) return c.json({ error: "batch_too_big" }, 400);
   const ids = hexIds(list);
@@ -97,18 +102,19 @@ batches.post("/batches", async (c) => {
   // the checklists of a batch come in the language asked for; a copy of a request keeps that request's
   if (body.locale !== undefined && !isLang(body.locale)) return invalid(c);
   let lang: Lang = isLang(body.locale) ? body.locale : "en";
-  let items: Item[] = [];
+  let items: (Item & { tpl?: string })[] = [];
+  let templateRef: string | null = null;
   let sourceId: string | null = null;
   const plans: Omit<Plan, "position" | "state" | "reason">[] = [];
   const mailable = new Map<string, boolean>();
 
-  type ClientRow = { id: string; name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null };
+  type ClientRow = { id: string; name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null; email_bounced_at: number | null };
   const loadClients = async (list: string[]) => {
     const { results } = await db
-      .prepare("SELECT id, name, email, email_ok_at, email_stop_at FROM clients WHERE firm_id = ? AND deleted_at IS NULL AND id IN (SELECT value FROM json_each(?)) ORDER BY name COLLATE NOCASE, id")
+      .prepare("SELECT id, name, email, email_ok_at, email_stop_at, email_bounced_at FROM clients WHERE firm_id = ? AND deleted_at IS NULL AND id IN (SELECT value FROM json_each(?)) ORDER BY name COLLATE NOCASE, id")
       .bind(firm.id, JSON.stringify(list))
       .all<ClientRow>();
-    for (const cl of results) mailable.set(cl.id, Boolean(cl.email && cl.email_ok_at && !cl.email_stop_at));
+    for (const cl of results) mailable.set(cl.id, Boolean(cl.email && cl.email_ok_at && !cl.email_stop_at && !cl.email_bounced_at));
     return results;
   };
 
@@ -149,6 +155,19 @@ batches.post("/batches", async (c) => {
         items = JSON.parse(row.items_json);
         sourceName = row.name;
       }
+      templateRef = body.template_id;
+      // the checklist's markers are filled in for the tax year the account picked
+      const facts = await factsOf(db, firm.id, templateRef);
+      if (hasMarkers(items, facts)) {
+        if (taxYear === null) return c.json({ error: "tax_year_needed" }, 400);
+        if (!taxYears(items, facts).includes(taxYear)) return c.json({ error: "tax_year_unknown" }, 400);
+        try {
+          items = resolveItems(items, taxYear, facts);
+        } catch (e) {
+          if (e instanceof UnknownYear) return c.json({ error: "tax_year_unknown" }, 400);
+          throw e;
+        }
+      }
     } else {
       kind = "request";
       if (typeof body.request_id !== "string") return invalid(c);
@@ -159,7 +178,7 @@ batches.post("/batches", async (c) => {
       sourceName = src.title;
       sourceNote = src.note;
     }
-    const year = String(dayOf(due, firm.tz).y);
+    const year = String(taxYear ?? dayOf(due, firm.tz).y);
     for (const cl of clients) {
       plans.push({
         id: randomId(),
@@ -180,6 +199,9 @@ batches.post("/batches", async (c) => {
   if (made + plans.length > MAX_BATCH_PER_DAY) return c.json({ error: "batch_limit" }, 429);
 
   const columns = kind === "template" ? [] : await itemColumns(db);
+  // a repeat moves on to the next tax year, or waits until that year's dates are known
+  const later = kind === "repeat" ? await yearOn(db, firm.id, plans.map((p) => ({ id: p.id, src: p.src! }))) : { statements: [], stale: [] };
+  if (later === "unknown") return c.json({ error: "tax_year_unknown" }, 409);
   // a template's items for each person wait for people the new requests do not have yet
   const expanded = expandItems(items, [], today(now, firm.tz).today, lang);
   if (expanded.rows.length > MAX_ITEMS) return invalid(c);
@@ -225,12 +247,31 @@ batches.post("/batches", async (c) => {
         .bind(firm.id, batchId, JSON.stringify(chunk)),
     );
   }
+  stmts.push(...later.statements);
+  // what the new requests were made for
+  if (kind === "template" && (taxYear !== null || templateRef)) {
+    stmts.push(
+      db
+        .prepare("UPDATE requests SET tax_year = ?, template_ref = ? WHERE firm_id = ? AND id IN (SELECT request_id FROM batch_items WHERE firm_id = ? AND batch_id = ?)")
+        .bind(taxYear, templateRef, firm.id, firm.id, batchId),
+    );
+  }
+  if (kind === "request") {
+    stmts.push(
+      db
+        .prepare(
+          `UPDATE requests SET tax_year = (SELECT tax_year FROM requests s WHERE s.firm_id = ?1 AND s.id = ?3), template_ref = (SELECT template_ref FROM requests s WHERE s.firm_id = ?1 AND s.id = ?3)
+           WHERE firm_id = ?1 AND id IN (SELECT request_id FROM batch_items WHERE firm_id = ?1 AND batch_id = ?2)`,
+        )
+        .bind(firm.id, batchId, sourceId),
+    );
+  }
   stmts.push(
     audit(c, "batch.create", "batch", batchId, { kind, count: rows.length, send_at: sendAt, source: sourceId ?? body.template_id ?? null }, { sql: there, binds: [firm.id, batchId] }),
   );
   const res = await db.batch(stmts);
   if (!res[0].meta.changes) return c.json({ error: "batch_limit" }, 429);
-  return c.json(await loadBatch(c, batchId), 201);
+  return c.json({ ...(await loadBatch(c, batchId)), stale_years: later.stale }, 201);
 });
 
 batches.get("/batches", async (c) => {
@@ -332,10 +373,14 @@ type Row = {
   email: string | null;
   email_ok_at: number | null;
   email_stop_at: number | null;
+  email_bounced_at: number | null;
   client_deleted: number | null;
 };
 
-const log = (e: unknown) => console.error(e instanceof Error ? e.message : "error");
+const log = (e: unknown) => {
+  console.error(e instanceof Error ? e.message : "error");
+  itemFailed(classOf(e));
+};
 
 // Sends the invites of batches that have come due, a few at a time. A batch that runs into the daily email limit stops there and
 // carries on in a later run, once earlier emails are more than 24 hours old.
@@ -348,6 +393,9 @@ export async function runBatches(env: Env, now = Date.now()) {
       .all<Due>();
     const senders = await sendersOf(env, region, results.map((b) => b.firm_id));
     let budget = PER_TICK;
+    // the run's invitations are shared equally among the accounts that have a batch due
+    const share = Math.max(1, Math.floor(PER_TICK / new Set(results.map((b) => b.firm_id)).size));
+    const taken = new Map<string, number>();
     const full = new Set<string>();
     // a batch that cannot go now is put off, so it stops taking one of the 50 places in every run
     const later = (b: Due, at: number, blocked = false) =>
@@ -367,8 +415,11 @@ export async function runBatches(env: Env, now = Date.now()) {
         } else if (full.has(b.firm_id)) {
           await later(b, tomorrow(now, sender.tz));
         } else {
-          const left = await sendSome(env, region, db, b, sender, budget, now);
+          const room = Math.min(budget, share - (taken.get(b.firm_id) ?? 0));
+          if (room <= 0) continue;
+          const left = await sendSome(env, region, db, b, sender, room, now);
           budget -= left.used;
+          taken.set(b.firm_id, (taken.get(b.firm_id) ?? 0) + left.used);
           if (left.full) full.add(b.firm_id);
           // the end of the queue for the next run, or a day out when the daily limit was reached
           await later(b, left.full ? tomorrow(now, sender.tz) : left.busy ? now + 15 * MINUTE : now);
@@ -385,7 +436,7 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
   if (!claim.meta.changes) return { used: 0, full: false, busy: false };
   const { results } = await db
     .prepare(
-      `SELECT i.request_id, i.client_id, i.tries, i.linked_at, r.locale, r.title, r.deadline, r.status, r.deleted_at, cl.name AS client_name, cl.email, cl.email_ok_at, cl.email_stop_at, cl.deleted_at AS client_deleted
+      `SELECT i.request_id, i.client_id, i.tries, i.linked_at, r.locale, r.title, r.deadline, r.status, r.deleted_at, cl.name AS client_name, cl.email, cl.email_ok_at, cl.email_stop_at, cl.email_bounced_at, cl.deleted_at AS client_deleted
        FROM batch_items i JOIN requests r ON r.firm_id = i.firm_id AND r.id = i.request_id JOIN clients cl ON cl.firm_id = i.firm_id AND cl.id = i.client_id
        WHERE i.firm_id = ? AND i.batch_id = ? AND i.state = 'pending' ORDER BY i.position LIMIT ?`,
     )
@@ -421,7 +472,7 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
         await settle(r, "skipped", "already_sent");
       } else if (r.deadline <= now) {
         await settle(r, "skipped", "deadline_passed");
-      } else if (!r.email || !r.email_ok_at || r.email_stop_at || (await addressStopped(env, db, b.firm_id, r.email))) {
+      } else if (!r.email || !r.email_ok_at || r.email_stop_at || r.email_bounced_at || (await addressStopped(env, db, b.firm_id, r.email))) {
         await settle(r, "no_email", "no_email");
       } else if (!(await hasRoom(env, db, b.firm_id, r.request_id, now))) {
         full = true;
@@ -478,16 +529,26 @@ async function sendSome(env: Env, region: Region, db: D1Database, b: Due, sender
           full = true;
           break;
         } else {
-          // provider trouble: a few more runs may get it through
-          const tries = r.tries + 1;
-          await db
-            .prepare("UPDATE batch_items SET tries = ?, state = CASE WHEN ? >= ? THEN 'failed' ELSE state END, reason = CASE WHEN ? >= ? THEN 'send_failed' ELSE NULL END WHERE firm_id = ? AND request_id = ? AND state = 'pending'")
-            .bind(tries, tries, MAX_TRIES, tries, MAX_TRIES, b.firm_id, r.request_id)
-            .run();
           if (outcome === "later") {
+            // the provider is out of reach: nothing was refused, so no try is used up, and the batch waits
+            await db.prepare("UPDATE batch_items SET reason = NULL WHERE firm_id = ? AND request_id = ? AND state = 'pending'").bind(b.firm_id, r.request_id).run();
             busy = true;
             break;
           }
+          if (outcome === "busy") {
+            // another run is sending this one: it is left alone for a while and no try is used up
+            await db
+              .prepare("UPDATE batch_items SET reason = ? WHERE firm_id = ? AND request_id = ? AND state = 'pending'")
+              .bind(`sending:${now + RETRY_WAIT - LEASE}`, b.firm_id, r.request_id)
+              .run();
+            continue;
+          }
+          // a refusal: the item is held back for a while (the hold lapses LEASE after its time), so its tries are spread over half an hour
+          const tries = r.tries + 1;
+          await db
+            .prepare("UPDATE batch_items SET tries = ?, state = CASE WHEN ? >= ? THEN 'failed' ELSE state END, reason = CASE WHEN ? >= ? THEN 'send_failed' ELSE ? END WHERE firm_id = ? AND request_id = ? AND state = 'pending'")
+            .bind(tries, tries, MAX_TRIES, tries, MAX_TRIES, `sending:${now + RETRY_WAIT - LEASE}`, b.firm_id, r.request_id)
+            .run();
         }
       }
     } catch (e) {

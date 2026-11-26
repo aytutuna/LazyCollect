@@ -97,11 +97,15 @@ describe("remind now", () => {
     const { cookie, req } = await ready();
     await env.CONTROL.prepare("UPDATE firms SET plan_status = 'trialing', trial_ends_at = ?, stripe_subscription_id = NULL").bind(inDays(5)).run();
     const firmId = (await env.CONTROL.prepare("SELECT id FROM firms").first<any>())!.id;
-    await env.DB_NA.batch(
-      Array.from({ length: 50 }, (_, i) =>
-        env.DB_NA.prepare("INSERT INTO staff_mail (id, firm_id, sent_at) VALUES (?, ?, ?)").bind(`${i}`.padStart(32, "0"), firmId, Date.now()),
-      ),
-    );
+    const row = (await env.DB_NA.prepare("SELECT client_id FROM requests").first<any>())!;
+    await env.DB_NA
+      .prepare(
+        `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200)
+         INSERT INTO messages (id, firm_id, request_id, client_id, channel, kind, seq, template_version, body_hash, status, attempts, sent_at)
+         SELECT lower(hex(randomblob(16))), ?, ?, ?, 'email', 'rejected', 100 + i, 1, 'x', 'sent', 1, ? FROM n`,
+      )
+      .bind(firmId, req.id, row.client_id, Date.now())
+      .run();
     const sent = mockOutbound();
     const res = await remind(cookie, req.id);
     expect(res.status).toBe(429);

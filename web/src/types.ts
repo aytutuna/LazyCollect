@@ -10,6 +10,7 @@ export type Me = {
     past_due_since: number | null;
     cancel_at_period_end: boolean;
     subscribed: boolean;
+    plan_source: string | null;
     closed_at: number | null;
     held: boolean;
     usable: boolean;
@@ -36,6 +37,7 @@ export type Client = {
   reference: string | null;
   email_ok_at: number | null;
   email_stop_at: number | null;
+  email_bounced_at: number | null;
   sms_ok_at: number | null;
   locale?: string;
 };
@@ -62,7 +64,8 @@ export type Role = "principal" | "spouse" | "child" | "other";
 
 export type Applicant = { id: string; position: number; role: Role; name: string; dob: string | null };
 
-export type Template = { id: string; name: string; builtin: boolean; items: TemplateItem[] };
+// tax is set when the checklist has the tax year in its text: the years it can be made for, and the one to suggest
+export type Template = { id: string; name: string; builtin: boolean; items: TemplateItem[]; tax?: { years: number[]; suggested: number } | null; newer?: boolean };
 
 export type RequestRow = {
   id: string;
@@ -170,7 +173,7 @@ export type SessionRow = { id: string | null; label: string | null; created_at: 
 
 export type PendingInvite = { id: string; email: string; name: string | null; created_at: number; expires_at: number };
 
-export type Message = { id: string; kind: "invite" | "reminder" | "deadline" | "rejected" | "answer"; seq: number; status: "sending" | "sent" | "failed"; sent_at: number; manual: 0 | 1 };
+export type Message = { id: string; kind: "invite" | "reminder" | "deadline" | "rejected" | "answer"; seq: number; status: "sending" | "sent" | "failed"; sent_at: number; bounced_at: number | null; manual: 0 | 1 };
 
 export type LinkResult = { url: string; emailed?: true; email_failed?: true };
 
@@ -189,6 +192,8 @@ export type ClientView = {
   deadline: number;
   status: string;
   expires_at: number;
+  paused: boolean;
+  accept?: string[];
   contact: { name: string | null; email: string | null; phone: string | null; address: string | null } | null;
   notes: Note[];
   people: { position: number; role: Role; name: string }[];

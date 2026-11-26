@@ -104,11 +104,22 @@ describe("built-in templates", () => {
     }
   });
 
+  it("writes no tax year into the text of a tax checklist, only markers and the facts kept per year", () => {
+    for (const id of ["t1-personal", "t1-self-employed", "t2-year-end", "gst-hst-return", "bookkeeping-month-end", "client-onboarding"]) {
+      const { facts, ...t } = builtinTemplates.find((x) => x.id === id)! as any;
+      expect([id, JSON.stringify(t).match(/\b20[2-3]\d\b/g)]).toEqual([id, null]);
+    }
+    const t1 = builtinTemplates.find((x) => x.id === "t1-personal")! as any;
+    expect(Object.keys(t1.facts)).toEqual(["2026"]);
+    expect(t1.facts[2026].rrsp_window).toBe("March 3, 2026 to March 1, 2027");
+    expect(JSON.stringify(t1.items)).toContain("{rrsp_window}");
+  });
+
   it("start a request with the conditions in place", async () => {
     const { cookie, client } = await setup();
-    const req = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "t", deadline: inDays(5), template_id: "t1-personal" } })).json<any>();
+    const req = await (await api("/api/requests", { method: "POST", cookie, body: { client_id: client.id, title: "t", deadline: inDays(5), template_id: "t1-personal", tax_year: 2026 } })).json<any>();
     const rl = req.items.find((i: any) => i.label.startsWith("RL-1 "));
-    expect(req.items[rl.show_if_pos].label).toBe("Were you a resident of Quebec on December 31, 2025?");
+    expect(req.items[rl.show_if_pos].label).toBe("Were you a resident of Quebec on December 31, 2026?");
     expect(rl.show_if_value).toBe("yes");
     expect(rl.hidden).toBe(true);
   });

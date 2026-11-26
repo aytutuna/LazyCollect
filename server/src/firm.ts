@@ -3,7 +3,7 @@ import { audit } from "./audit";
 import { isRegion, regionOf, type Region } from "./regions";
 import type { AppEnv, Firm } from "./session";
 import { validZone } from "./tz";
-import { DAY, keyLimited } from "./util";
+import { DAY, PAYING, keyLimited } from "./util";
 import { invalid, maybe, readBody, setClause, text } from "./validate";
 
 export const firm = new Hono<AppEnv>();
@@ -14,13 +14,15 @@ const PROVINCES = ["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "
 // since Stripe has already moved current_period_end a month ahead by then
 export const PAST_DUE_GRACE = 7 * DAY;
 
-export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at" | "past_due_since" | "closed_at">, now: number): boolean {
+export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at" | "past_due_since" | "closed_at"> & { plan_source?: string | null; current_period_end?: number | null; stripe_subscription_id?: string | null }, now: number): boolean {
   if (f.closed_at) return false;
   switch (f.plan_status) {
     case "active":
-      return true;
+      // Apple tells us when a subscription ends; if that word was lost, the plan lapses once its period and a grace have passed
+      return !(f.plan_source === "apple" && f.current_period_end != null && now > f.current_period_end + PAST_DUE_GRACE);
     case "trialing":
-      return f.trial_ends_at !== null && f.trial_ends_at > now;
+      // a paying account stays open while Stripe's webhook turns the trial into an active plan
+      return f.trial_ends_at !== null && now < f.trial_ends_at + (f.stripe_subscription_id ? PAST_DUE_GRACE : 0);
     case "past_due":
       return f.past_due_since !== null && now < f.past_due_since + PAST_DUE_GRACE;
     default:
@@ -28,12 +30,17 @@ export function usable(f: Pick<Firm, "plan_status" | "trial_ends_at" | "past_due
   }
 }
 
+export async function planUsable(env: Env, firmId: string, now: number): Promise<boolean> {
+  const f = await env.CONTROL.prepare("SELECT plan_status, plan_source, current_period_end, trial_ends_at, past_due_since, closed_at, stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<Parameters<typeof usable>[0]>();
+  return Boolean(f && usable(f, now));
+}
+
 // An owner who signed in once and did nothing: alone in the account, no clients, requests or templates, no billing, no passkeys, nothing pending.
 export function untouchedSql(firmId: string, now: number) {
   return {
     sql: `(SELECT COUNT(*) FROM users WHERE firm_id = ?) = 1
       AND NOT EXISTS (SELECT 1 FROM invites WHERE firm_id = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?)
-      AND EXISTS (SELECT 1 FROM firms WHERE id = ? AND closed_at IS NULL AND stripe_customer_id IS NULL AND stripe_subscription_id IS NULL AND require_passkeys = 0)
+      AND EXISTS (SELECT 1 FROM firms WHERE id = ? AND closed_at IS NULL AND stripe_customer_id IS NULL AND NOT ${PAYING} AND require_passkeys = 0)
       AND NOT EXISTS (SELECT 1 FROM passkeys WHERE user_id IN (SELECT id FROM users WHERE firm_id = ?))`,
     binds: [firmId, firmId, now, firmId, firmId],
   };
@@ -57,7 +64,7 @@ function load(allowClosed: boolean): MiddlewareHandler<AppEnv> {
     if (!session) return c.json({ error: "unauthorized" }, 401);
     const row = await c.env.CONTROL.prepare(
       `SELECT id, name, legal_name, address, phone, province, tz, region, plan_status, trial_ends_at, current_period_end, past_due_since,
-         cancel_at_period_end, stripe_customer_id, stripe_subscription_id, closed_at, require_passkeys FROM firms WHERE id = ?`,
+         cancel_at_period_end, stripe_customer_id, stripe_subscription_id, plan_source, apple_original_transaction_id, closed_at, require_passkeys FROM firms WHERE id = ?`,
     )
       .bind(session.firmId)
       .first<Firm>();
@@ -74,7 +81,7 @@ export const loadFirm = load(false);
 export const loadClosedFirm = load(true);
 
 firm.get("/firm", (c) => {
-  const { region: _region, stripe_customer_id: _customer, stripe_subscription_id: _subscription, ...profile } = c.get("firm");
+  const { region: _region, stripe_customer_id: _customer, stripe_subscription_id: _subscription, apple_original_transaction_id: _apple, ...profile } = c.get("firm");
   return c.json(profile);
 });
 

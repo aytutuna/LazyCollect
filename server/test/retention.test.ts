@@ -189,7 +189,7 @@ describe("what a hold protects", () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "legal_hold" });
     expect((await env.DB_NA.prepare("SELECT deleted_at FROM files").first<any>())!.deleted_at).toBeNull();
-    expect((await env.FILES_NA.list()).objects).toHaveLength(1);
+    expect((await env.FILES_NA.list({ prefix: "f/" })).objects).toHaveLength(1);
   });
 
   it("refuses staff removing a checklist item", async () => {
@@ -202,10 +202,10 @@ describe("what a hold protects", () => {
     const { req, file } = await held();
     await env.DB_NA.prepare("UPDATE files SET deleted_at = 1 WHERE id = ?").bind(file.id).run();
     await sweepFiles(env);
-    expect([await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM files").first<any>(), (await env.FILES_NA.list()).objects.length]).toEqual([{ n: 1 }, 1]);
+    expect([await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM files").first<any>(), (await env.FILES_NA.list({ prefix: "f/" })).objects.length]).toEqual([{ n: 1 }, 1]);
     await env.DB_NA.prepare("UPDATE requests SET hold_at = NULL WHERE id = ?").bind(req.id).run();
     await sweepFiles(env);
-    expect((await env.FILES_NA.list()).objects).toHaveLength(0);
+    expect((await env.FILES_NA.list({ prefix: "f/" })).objects).toHaveLength(0);
   });
 
   it("lets staff set a hold but only the owner release it", async () => {

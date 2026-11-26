@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { exports } from "cloudflare:workers";
 import { vi } from "vitest";
 import { DAY, randomId, sha256 } from "../src/util";
+import { appleFake } from "./apple-fake";
 import { playFake } from "./play-fake";
 import { stripeFake } from "./stripe-fake";
 
@@ -15,6 +16,7 @@ export function mockOutbound(turnstileOk = true, resendOk: boolean | number = tr
     const url = input instanceof Request ? input.url : String(input);
     if (url.startsWith("https://turnstile.test/")) return Response.json({ success: turnstileOk });
     if (url.startsWith("https://stripe.test/")) return stripeFake.handle(new URL(url), init);
+    if (url.startsWith("https://apple.test/")) return appleFake.handle(url, init);
     if (url.startsWith("https://oauth.test/") || url.startsWith("https://play.test/")) return playFake.handle(url, init);
     if (url.startsWith("https://resend.test/")) {
       if (resendOk !== true) return new Response("nope", { status: resendOk === false ? 500 : resendOk });
@@ -138,6 +140,7 @@ export async function restoreItemColumns(from0015 = true) {
     ...all.find((m) => m.name.startsWith("0020"))!.queries.filter((q) => /ALTER TABLE items ADD COLUMN|CREATE INDEX idx_items_example/.test(q)),
     ...all.find((m) => m.name.startsWith("0021"))!.queries.filter((q) => /ALTER TABLE items ADD COLUMN|CREATE INDEX idx_items_(person|expiry)/.test(q)),
     ...all.find((m) => m.name.startsWith("0022"))!.queries.filter((q) => /ALTER TABLE items ADD COLUMN/.test(q)),
+    ...all.find((m) => m.name.startsWith("0028"))!.queries.filter((q) => /ALTER TABLE items ADD COLUMN/.test(q)),
   ];
   await env.DB_NA.batch(queries.map((q) => env.DB_NA.prepare(q)));
 }

@@ -14,7 +14,7 @@ export default template("t2-year-end", "T2 corporate year-end", [
   doc("Trial balance or bookkeeping file", "An export from your accounting software, or the spreadsheet you keep."),
   doc("Bank statements for every month of the year", "All business accounts, January to the last month of the year end.", undefined, true, "bank-statement"),
   doc("Credit card statements for every month of the year", "All business cards."),
-  doc("Last year's T2 return and notice of assessment", "The filed return and the CRA's notice, if we did not prepare them."),
+  doc("T2 return and notice of assessment for {year-1}", "The filed return and the CRA's notice, if we did not prepare them."),
   doc("Loan and mortgage statements", "Year-end balance and interest paid.", undefined, false),
 
   ask(assets),

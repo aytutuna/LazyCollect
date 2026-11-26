@@ -5,7 +5,7 @@ import { api, jpeg, openRequest, pdf, randomBytes, review, sha, upload } from ".
 const png = (n: number) => Object.assign(randomBytes(n), [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const counts = async () => ({
   rows: (await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM files").first<{ n: number }>())!.n,
-  objects: (await env.FILES_NA.list()).objects.length,
+  objects: (await env.FILES_NA.list({ prefix: "f/" })).objects.length,
 });
 
 describe("client upload", () => {
@@ -75,7 +75,7 @@ describe("client upload", () => {
     const { req, path } = await openRequest();
     const body = pdf(25 * 1024 * 1024);
     expect((await upload(path, req.items[0].id, body)).status).toBe(201);
-    expect((await env.FILES_NA.list()).objects[0].size).toBeGreaterThan(body.length);
+    expect((await env.FILES_NA.list({ prefix: "f/" })).objects[0].size).toBeGreaterThan(body.length);
   });
 
   it("rejects a bad Upload-Id or file name", async () => {
@@ -194,7 +194,7 @@ describe("client upload", () => {
     const res = await upload(path, req.items[0].id, pdf(100));
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "limit" });
-    expect((await env.FILES_NA.list()).objects).toHaveLength(0);
+    expect((await env.FILES_NA.list({ prefix: "f/" })).objects).toHaveLength(0);
   });
 
   it("answers 429 past 30 uploads a minute on one link", async () => {

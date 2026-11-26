@@ -77,6 +77,8 @@ export type Row = {
   expiry_rule: string | null;
   valid_months: number | null;
   blueprint: string | null;
+  // the wording before a tax year was filled in, so Repeat can fill in the next one
+  tpl_json: string | null;
 };
 
 // the wording of the companions; relabel() builds the same text in SQL when the document is renamed
@@ -100,7 +102,7 @@ const TEXT = {
 } as const;
 
 // one item for one person (or for the whole request), with its translation question and companions when it asks for them
-export function rowsFor(item: Item, person: Person | null, position: number, showPos: number | null, blueprint: string | null = null, lang: Lang = "en"): Row[] {
+export function rowsFor(item: Item & { tpl?: string }, person: Person | null, position: number, showPos: number | null, blueprint: string | null = null, lang: Lang = "en"): Row[] {
   const words = TEXT[lang];
   const main: Row = {
     position,
@@ -120,6 +122,7 @@ export function rowsFor(item: Item, person: Person | null, position: number, sho
     expiry_rule: item.expiry ?? null,
     valid_months: item.valid_months ?? null,
     blueprint: person ? blueprint : null,
+    tpl_json: person ? null : (item.tpl ?? null),
   };
   if (!item.translation) return [main];
   const part = (offset: number, companion: NonNullable<Row["companion"]>, label: string, help: string, over: Partial<Row>): Row => ({
@@ -139,6 +142,7 @@ export function rowsFor(item: Item, person: Person | null, position: number, sho
     expiry_rule: null,
     valid_months: null,
     blueprint: null,
+    tpl_json: null,
     ...over,
   });
   const ask = position + 1;
@@ -152,7 +156,7 @@ export function rowsFor(item: Item, person: Person | null, position: number, sho
 
 // The rows a template makes for these people, in order, and the template items that wait for people. A condition names an
 // item by its place in the template, so it is moved to where the item landed.
-export function expandItems(items: Item[], people: Person[], today: string, lang: Lang = "en"): { rows: Row[]; perPerson: Blueprint[] } {
+export function expandItems(items: (Item & { tpl?: string })[], people: Person[], today: string, lang: Lang = "en"): { rows: Row[]; perPerson: Blueprint[] } {
   const rows: Row[] = [];
   const perPerson: Blueprint[] = [];
   const at = new Map<number, number>();

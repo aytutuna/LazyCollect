@@ -5,6 +5,10 @@
 # in the app endpoints is unusable (503) until it is set
 # APP_ATTEST_ENV (production, development or any): turns on the iPhone check; ANDROID_CERT_SHA256 (the app's signing
 # certificate SHA-256 fingerprints, comma separated): for the Android passkey origin and /.well-known/assetlinks.json
+# APPLE_IAP_KEY (the In-App Purchase .p8, PEM text), APPLE_IAP_KEY_ID, APPLE_ISSUER_ID: the plan bought in the iPhone app is
+# checked against the App Store Server API; POST /api/billing/apple and /api/apple/notifications answer 503 until all three
+# are set. APPLE_IAP_SANDBOX=1 also looks at Apple's sandbox (TestFlight, App Review): sandbox purchases are free, so it
+# stays off otherwise. Server notifications V2 go to https://collect.alazy.app/api/apple/notifications (App Store Connect).
 # APP_ATTEST_OFF (android, ios or both, comma separated) skips the checks above: local only, in .dev.vars, never here,
 # and ignored unless APP_URL is localhost or 127.0.0.1
 # For wrangler dev, .dev.vars (gitignored) holds whatever of these names you want to try, plus
@@ -97,4 +101,4 @@ namespace_id = "2009"
 simple = { limit = 30, period = 60 }
 
 [triggers]
-crons = ["*/10 * * * *"]
+crons = ["* * * * *"]

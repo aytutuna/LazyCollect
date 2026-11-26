@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { purgeClosed } from "../src/account";
 import { runBatches } from "../src/batches";
 import { purgeExpired } from "../src/purge";
@@ -33,6 +33,7 @@ async function addClients(cookie: string, n: number, from = 0): Promise<string[]
 
 const body = (ids: string[], extra: Record<string, unknown> = {}) => ({
   template_id: "t1-personal",
+  tax_year: 2026,
   client_ids: ids,
   title: "{year} taxes for {client}",
   deadline: inDays(400),
@@ -60,7 +61,7 @@ describe("creating a batch", () => {
     expect(requests).toHaveLength(3);
     expect(requests.map((r) => r.status)).toEqual(["draft", "draft", "draft"]);
     expect(requests.every((r) => r.items > 3 && r.deadline === requests[0].deadline && r.reminders_on === 1)).toBe(true);
-    expect(requests[0].title).toBe(`${new Date(requests[0].deadline).getUTCFullYear()} taxes for Client 0`);
+    expect(requests[0].title).toBe("2026 taxes for Client 0");
     expect(await q("SELECT 1 FROM links")).toHaveLength(0);
     expect(sent.filter((m) => m.subject.startsWith("Documents requested"))).toHaveLength(0);
     const audit = await q("SELECT action, meta FROM audit WHERE action = 'batch.create'");
@@ -230,8 +231,8 @@ describe("sending a batch", () => {
     await env.CONTROL.prepare("UPDATE firms SET stripe_subscription_id = 'sub_1'").run();
     const batch = await (await create(cookie, body(ids))).json<any>();
     await runBatches(env, NOW);
-    expect(invites(sent)).toHaveLength(25);
-    expect(await one(batch.id, cookie)).toMatchObject({ status: "sending", sent: 25, pending: 35 });
+    expect(invites(sent)).toHaveLength(20);
+    expect(await one(batch.id, cookie)).toMatchObject({ status: "sending", sent: 20, pending: 40 });
     await runBatches(env, NOW + 10 * MINUTE);
     await runBatches(env, NOW + 20 * MINUTE);
     expect(invites(sent)).toHaveLength(60);
@@ -306,9 +307,40 @@ describe("sending a batch", () => {
     const { cookie, ids } = await ready(1);
     mockOutbound(true, 400);
     const batch = await (await create(cookie, body(ids))).json<any>();
-    for (let i = 0; i < 3; i++) await runBatches(env, NOW + i * 10 * MINUTE);
+    // a run every minute does not use the tries up either: the item waits a quarter of an hour between them
+    for (const min of [0, 1, 5, 14]) await runBatches(env, NOW + min * MINUTE);
+    expect((await q("SELECT tries FROM batch_items"))[0].tries).toBe(1);
+    for (const min of [20, 40]) await runBatches(env, NOW + min * MINUTE);
     expect(await one(batch.id, cookie)).toMatchObject({ status: "done", failed: 1, sent: 0 });
     expect((await q("SELECT reason, tries FROM batch_items"))[0]).toEqual({ reason: "send_failed", tries: 3 });
+  });
+});
+
+describe("a batch while the provider is out of reach", () => {
+  const invites = (sent: ReturnType<typeof mockOutbound>) => sent.filter((m) => m.subject.startsWith("Documents requested"));
+  it("uses no try for a timeout or a dropped connection, and waits 15 minutes between runs", async () => {
+    const { cookie, ids } = await ready(1);
+    const batch = await (await create(cookie, body(ids))).json<any>();
+    const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(Object.assign(new Error("timed out"), { name: "TimeoutError" }));
+    const at: number[] = [];
+    for (let min = 0; min < 60; min++) {
+      const before = spy.mock.calls.length;
+      await runBatches(env, NOW + min * MINUTE);
+      if (spy.mock.calls.length > before) at.push(min);
+    }
+    expect(at).toEqual([0, 15, 30, 45]);
+    const sent = mockOutbound();
+    await runBatches(env, NOW + 80 * MINUTE);
+    expect(invites(sent)).toHaveLength(1);
+    expect(await one(batch.id, cookie)).toMatchObject({ status: "done", sent: 1 });
+  });
+
+  it("answers a provider that is busy the same way", async () => {
+    const { cookie, ids } = await ready(1);
+    await create(cookie, body(ids));
+    mockOutbound(true, 503);
+    for (let min = 0; min < 40; min++) await runBatches(env, NOW + min * MINUTE);
+    expect((await q("SELECT tries, state FROM batch_items"))[0]).toEqual({ tries: 0, state: "pending" });
   });
 });
 
@@ -333,10 +365,10 @@ describe("cancelling a batch", () => {
     const batch = await (await create(cookie, body(ids))).json<any>();
     await runBatches(env, NOW);
     const res = await (await api(`/api/batches/${batch.id}/cancel`, { method: "POST", cookie })).json<any>();
-    expect(res.unsent).toBe(15);
+    expect(res.unsent).toBe(20);
     await runBatches(env, NOW + 10 * MINUTE);
-    expect(sent.filter((m) => m.subject.startsWith("Documents requested"))).toHaveLength(25);
-    expect(await one(batch.id, cookie)).toMatchObject({ status: "cancelled", sent: 25, cancelled: 15 });
+    expect(sent.filter((m) => m.subject.startsWith("Documents requested"))).toHaveLength(20);
+    expect(await one(batch.id, cookie)).toMatchObject({ status: "cancelled", sent: 20, cancelled: 20 });
   });
 
   it("is not available across accounts", async () => {

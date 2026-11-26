@@ -6,6 +6,7 @@ interface Secrets {
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
   RESEND_BASE?: string;
+  RESEND_WEBHOOK_SECRET?: string;
   TURNSTILE_BASE?: string;
   STRIPE_API_BASE?: string;
   PLAY_INTEGRITY_SA?: string;
@@ -14,6 +15,13 @@ interface Secrets {
   APP_ATTEST_ROOT?: string;
   APP_ATTEST_OFF?: string;
   ANDROID_CERT_SHA256?: string;
+  APPLE_IAP_KEY?: string;
+  APPLE_IAP_KEY_ID?: string;
+  APPLE_ISSUER_ID?: string;
+  APPLE_IAP_SANDBOX?: string;
+  APPLE_IAP_ROOT?: string;
+  APPLE_API_BASE?: string;
+  COMMIT?: string;
 }
 interface Env extends Secrets {}
 declare namespace Cloudflare {

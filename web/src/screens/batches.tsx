@@ -86,6 +86,7 @@ const STATE_TONES = { pending: "grey", sent: "green", no_email: "amber", skipped
 
 export function BatchPage({ id }: { id: string }) {
   const { params, set } = useUrlParams();
+  const stale = params.get("stale");
   const filter = (FILTERS as readonly string[]).includes(params.get("show") ?? "") ? params.get("show")! : "all";
   const batch = useLoad(() => get<Batch>(`/batches/${id}`), [id]);
   const rows = usePaged<BatchRow>(`/batches/${id}/rows`, `filter=${filter}`);
@@ -133,6 +134,7 @@ export function BatchPage({ id }: { id: string }) {
       </p>
       <div class="head">
         <h1>{b.title}</h1>
+        {stale && <p class="warn">{t("detail.stale_years", { items: stale })}</p>}
         <Badge tone={BATCH_TONES[b.status]}>{t(`batch.status.${b.status}`)}</Badge>
       </div>
       <p class="muted">{source(b)}</p>

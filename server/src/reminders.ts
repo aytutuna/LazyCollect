@@ -1,5 +1,6 @@
 import { asLang } from "./lang";
-import { sendMail } from "./email";
+import { classOf, itemFailed } from "./pulse";
+import { Transient, sendMail } from "./email";
 import { asked } from "./expand";
 import { usable } from "./firm";
 import { linkUrl } from "./links";
@@ -11,7 +12,12 @@ import { DAY, HOUR, MINUTE } from "./util";
 
 const MAX_NOTICE_TRIES = 3;
 
-const BATCH = 100;
+// notices to the account's own people one run may send; they go first, so they are kept few
+const NOTICES = 30;
+// reminders and sent-back emails one run may send; the run starts every minute, and the rest wait for the next one
+export const PER_RUN = 50;
+// a request whose email failed waits this long before its next try, so the three tries of one email span half an hour or more
+export const RETRY_WAIT = 15 * MINUTE;
 const REJECT_QUIET = 10 * MINUTE;
 
 export type Sender = {
@@ -22,15 +28,18 @@ export type Sender = {
   phone: string | null;
   tz: string;
   plan_status: string;
+  plan_source: string | null;
+  current_period_end: number | null;
   trial_ends_at: number | null;
   past_due_since: number | null;
   closed_at: number | null;
+  stripe_subscription_id: string | null;
   owner_email: string | null;
 };
 
 export async function sendersOf(env: Env, region: Region, ids: string[]): Promise<Map<string, Sender>> {
   const { results } = await env.CONTROL.prepare(
-    `SELECT f.id, f.name, f.legal_name, f.address, f.phone, f.tz, f.plan_status, f.trial_ends_at, f.past_due_since, f.closed_at,
+    `SELECT f.id, f.name, f.legal_name, f.address, f.phone, f.tz, f.plan_status, f.plan_source, f.current_period_end, f.trial_ends_at, f.past_due_since, f.closed_at, f.stripe_subscription_id,
        (SELECT email FROM users WHERE firm_id = f.id AND role = 'owner' AND disabled_at IS NULL ORDER BY created_at LIMIT 1) AS owner_email
      FROM firms f WHERE f.region = ? AND f.id IN (SELECT value FROM json_each(?))`,
   )
@@ -72,14 +81,15 @@ type Row = {
   email: string | null;
   email_ok_at: number | null;
   email_stop_at: number | null;
+  email_bounced_at: number | null;
   client_deleted: number | null;
   stopped?: boolean;
 };
 
-const ROW = `r.id, r.firm_id, r.locale, r.client_id, r.title, r.deadline, c.name AS client_name, c.email, c.email_ok_at, c.email_stop_at, c.deleted_at AS client_deleted`;
+const ROW = `r.id, r.firm_id, r.locale, r.client_id, r.title, r.deadline, c.name AS client_name, c.email, c.email_ok_at, c.email_stop_at, c.email_bounced_at, c.deleted_at AS client_deleted`;
 const JOIN = `FROM requests r JOIN clients c ON c.firm_id = r.firm_id AND c.id = r.client_id`;
 
-const reachable = (r: Row) => Boolean(r.email && r.email_ok_at && !r.email_stop_at && !r.stopped && !r.client_deleted);
+const reachable = (r: Row) => Boolean(r.email && r.email_ok_at && !r.email_stop_at && !r.email_bounced_at && !r.stopped && !r.client_deleted);
 
 // an address that asked to stop stays stopped for the account, whatever client row holds it now
 async function markStops(env: Env, db: D1Database, rows: Row[]) {
@@ -109,12 +119,16 @@ async function markStops(env: Env, db: D1Database, rows: Row[]) {
   });
 }
 
+type Room = { left: number };
+
+// notices first, then the emails to clients, which share the run's room
 export async function runReminders(env: Env, now = Date.now()) {
+  const room: Room = { left: PER_RUN };
   for (const region of regionIds) {
     const { db } = regionOf(env, region);
-    await remindPass(env, region, db, now);
-    await rejectedPass(env, region, db, now);
     await noticePass(env, db, now);
+    await rejectedPass(env, region, db, now, room);
+    await remindPass(env, region, db, now, room);
   }
 }
 
@@ -125,24 +139,26 @@ async function each<T>(rows: T[], fn: (row: T) => Promise<unknown>) {
       await fn(row);
     } catch (e) {
       console.error(e instanceof Error ? e.message : "error");
+      itemFailed(classOf(e));
     }
   }
 }
 
 // the sender list was read before the loop; a close or a lapse in between must still stop the email
 async function stillUsable(env: Env, firmId: string, now: number) {
-  const f = await env.CONTROL.prepare("SELECT plan_status, trial_ends_at, past_due_since, closed_at FROM firms WHERE id = ?").bind(firmId).first<Parameters<typeof usable>[0]>();
+  const f = await env.CONTROL.prepare("SELECT plan_status, plan_source, current_period_end, trial_ends_at, past_due_since, closed_at, stripe_subscription_id FROM firms WHERE id = ?").bind(firmId).first<Parameters<typeof usable>[0]>();
   return Boolean(f && usable(f, now));
 }
 
-async function remindPass(env: Env, region: Region, db: D1Database, now: number) {
+async function remindPass(env: Env, region: Region, db: D1Database, now: number, room: Room) {
+  if (room.left <= 0) return;
   const { results } = await db
     .prepare(
       `SELECT ${ROW}, r.reminder_seq AS seq ${JOIN}
        WHERE r.next_reminder_at <= ? AND r.status = 'open' AND r.reminders_on = 1 AND r.deleted_at IS NULL
-       ORDER BY r.next_reminder_at LIMIT ${BATCH}`,
+       ORDER BY r.next_reminder_at LIMIT ?`,
     )
-    .bind(now)
+    .bind(now, room.left)
     .all<Row>();
   await markStops(env, db, results);
   const senders = await sendersOf(env, region, results.map((r) => r.firm_id));
@@ -168,12 +184,17 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
         .first();
       if (manual) return move(null);
     }
+    // An email that failed on a dropped connection or a busy provider may have gone out all the same, so it holds off the next one
+    // as a sent one does, for the whole 36 hours, though the provider's own key for repeats lasts a day. Its own slot is left out,
+    // or it could never be tried again.
     const recent = await db
       .prepare(
-        `SELECT request_id, sent_at, seq FROM messages WHERE firm_id = ? AND client_id = ? AND kind IN ('reminder', 'deadline') AND status IN ('sent', 'sending') AND sent_at > ?${kind === "deadline" ? " AND seq >= ?" : ""}
+        `SELECT request_id, sent_at, seq FROM messages WHERE firm_id = ? AND client_id = ? AND kind IN ('reminder', 'deadline')
+         AND (status IN ('sent', 'sending') OR (status = 'failed' AND (error LIKE 'email request failed%' OR error LIKE 'email deferred%') AND NOT (request_id = ? AND kind = ? AND seq = ?)))
+         AND sent_at > ?${kind === "deadline" ? " AND (seq >= ? OR status = 'failed')" : ""}
          ORDER BY sent_at DESC LIMIT 1`,
       )
-      .bind(r.firm_id, r.client_id, now - SPACING, ...(kind === "deadline" ? [MANUAL_SEQ] : []))
+      .bind(r.firm_id, r.client_id, r.id, kind, r.seq + 1, now - SPACING, ...(kind === "deadline" ? [MANUAL_SEQ] : []))
       .first<{ request_id: string; sent_at: number; seq: number }>();
     if (recent) {
       const morning = kind === "reminder" && recent.seq < MANUAL_SEQ && recent.request_id === r.id && sameDay(dayOf(now, tz), dayOf(r.deadline, tz));
@@ -208,7 +229,9 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
     // over the daily cap: not sent, so it stays due and is looked at again later
     if (outcome === "capped") return move(now + HOUR);
     if (outcome === "later") busy = true;
-    if (outcome === "failed" || outcome === "busy" || outcome === "later") return;
+    if (outcome === "failed" || outcome === "later") return move(now + RETRY_WAIT);
+    if (outcome === "busy") return;
+    if (outcome === "sent") room.left--;
     await db
       .prepare("UPDATE requests SET reminder_seq = ?, next_reminder_at = ? WHERE firm_id = ? AND id = ? AND reminder_seq = ?")
       .bind(r.seq + 1, kind === "deadline" ? null : nextReminder(now, r.deadline, tz, false), r.firm_id, r.id, r.seq)
@@ -217,13 +240,14 @@ async function remindPass(env: Env, region: Region, db: D1Database, now: number)
 }
 
 // Rejections are held for a quiet spell so several in a row go out as one email.
-async function rejectedPass(env: Env, region: Region, db: D1Database, now: number) {
+async function rejectedPass(env: Env, region: Region, db: D1Database, now: number, room: Room) {
+  if (room.left <= 0) return;
   const { results } = await db
     .prepare(
       `SELECT ${ROW}, r.rejected_seq AS seq, r.reject_mark_at AS mark, r.status ${JOIN}
-       WHERE r.reject_mark_at <= ? AND r.deleted_at IS NULL ORDER BY r.reject_mark_at LIMIT ${BATCH}`,
+       WHERE r.reject_mark_at <= ? AND r.deleted_at IS NULL ORDER BY r.reject_mark_at LIMIT ?`,
     )
-    .bind(now - REJECT_QUIET)
+    .bind(now - REJECT_QUIET, room.left)
     .all<Row & { status: string }>();
   await markStops(env, db, results);
   const senders = await sendersOf(env, region, results.map((r) => r.firm_id));
@@ -265,7 +289,9 @@ async function rejectedPass(env: Env, region: Region, db: D1Database, now: numbe
     );
     if (outcome === "capped") return hold(now + HOUR);
     if (outcome === "later") busy = true;
-    if (outcome === "failed" || outcome === "busy" || outcome === "later") return;
+    if (outcome === "failed" || outcome === "later") return hold(now + RETRY_WAIT);
+    if (outcome === "busy") return;
+    if (outcome === "sent") room.left--;
     await db
       .prepare(
         `UPDATE requests SET rejected_seq = ?, reject_mark_at = CASE WHEN reject_mark_at = ? THEN NULL ELSE reject_mark_at END
@@ -286,10 +312,10 @@ async function noticePass(env: Env, db: D1Database, now: number) {
          (SELECT COUNT(*) FROM notes q WHERE q.firm_id = r.firm_id AND q.request_id = r.id AND q.author = 'client' AND q.created_at > COALESCE(r.notified_at, 0)) AS q,
          (SELECT COUNT(*) FROM items i WHERE i.firm_id = r.firm_id AND i.request_id = r.id AND i.status = 'unavailable' AND i.unavailable_at > COALESCE(r.notified_at, 0)) AS u,
          (SELECT COUNT(*) FROM items i WHERE i.firm_id = r.firm_id AND i.request_id = r.id AND i.kind != 'file' AND i.answer IS NOT NULL AND ${visible("i")} AND i.answer_at > COALESCE(r.notified_at, 0)) AS a
-       ${JOIN} WHERE r.notice_due_at IS NOT NULL AND (r.notified_at IS NULL OR r.notified_at <= ?) AND r.deleted_at IS NULL
-       ORDER BY r.notice_due_at LIMIT ${BATCH}`,
+       ${JOIN} WHERE r.notice_due_at IS NOT NULL AND r.notice_due_at <= ? AND (r.notified_at IS NULL OR r.notified_at <= ?) AND r.deleted_at IS NULL
+       ORDER BY r.notice_due_at LIMIT ${NOTICES}`,
     )
-    .bind(now - HOUR)
+    .bind(now, now - HOUR)
     .all<{ id: string; firm_id: string; title: string; notified_at: number | null; due: number; tries: number; client_name: string; n: number; q: number; u: number; a: number }>();
   const owners = await ownersOf(env, results.map((r) => r.firm_id));
 
@@ -315,13 +341,16 @@ async function noticePass(env: Env, db: D1Database, now: number) {
         text: `${what}.\n\nOpen it here:\n${env.APP_URL}/requests/${r.id}\n`,
       });
     } catch (e) {
-      const tries = r.tries + 1;
+      // a provider out of reach uses no try; a refusal uses one, and either way the note waits before the next
+      const out = e instanceof Transient;
+      const tries = out ? r.tries : r.tries + 1;
       const spent = tries >= MAX_NOTICE_TRIES;
       console.error(`owner notice ${tries}/${MAX_NOTICE_TRIES} failed: ${e instanceof Error ? e.message : "error"}`);
-      // put the note back so the next run tries again, until the tries are used up
+      itemFailed(out ? "EmailDeferred" : classOf(e));
+      // put the note back, due again after the wait, until the tries are used up
       await db
         .prepare("UPDATE requests SET notified_at = ?, notice_due_at = ?, notice_tries = ? WHERE firm_id = ? AND id = ?")
-        .bind(spent ? now : r.notified_at, spent ? null : r.due, spent ? 0 : tries, r.firm_id, r.id)
+        .bind(spent ? now : r.notified_at, spent ? null : now + RETRY_WAIT, spent ? 0 : tries, r.firm_id, r.id)
         .run();
     }
   });

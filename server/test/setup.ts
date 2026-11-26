@@ -1,6 +1,7 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, vi } from "vitest";
+import { appleFake } from "./apple-fake";
 import { playFake } from "./play-fake";
 import { stripeFake } from "./stripe-fake";
 
@@ -11,12 +12,13 @@ beforeEach(async () => {
   vi.restoreAllMocks();
   stripeFake.reset();
   playFake.reset();
+  appleFake.reset();
   await env.CONTROL.batch(
-    ["sessions", "client_sessions", "passkeys", "passkey_challenges", "pending_logins", "login_codes", "app_challenges", "app_keys", "invites", "users", "firms", "stripe_events"].map((t) => env.CONTROL.prepare(`DELETE FROM ${t}`)),
+    ["sessions", "client_sessions", "passkeys", "passkey_challenges", "pending_logins", "login_codes", "app_challenges", "app_keys", "invites", "users", "firms", "stripe_events", "timed_status", "trial_notices"].map((t) => env.CONTROL.prepare(`DELETE FROM ${t}`)),
   );
   const { objects } = await env.FILES_NA.list();
   await env.FILES_NA.delete(objects.map((o) => o.key));
   await env.DB_NA.batch(
-    ["audit", "deletion_log", "firm_settings", "email_stops", "staff_mail", "messages", "notes", "files", "links", "items", "people", "batch_items", "batches", "requests", "templates", "examples", "clients"].map((t) => env.DB_NA.prepare(`DELETE FROM ${t}`)),
+    ["audit", "deletion_log", "firm_settings", "email_stops", "staff_mail", "messages", "notes", "files", "links", "items", "people", "batch_items", "batches", "requests", "templates", "examples", "clients", "held_files"].map((t) => env.DB_NA.prepare(`DELETE FROM ${t}`)),
   );
 });

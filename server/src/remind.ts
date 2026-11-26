@@ -37,10 +37,11 @@ remind.post("/requests/:id/remind", async (c) => {
   if (req.status !== "open") return c.json({ error: "not_open" }, 409);
 
   const client = await db
-    .prepare("SELECT name, email, email_ok_at, email_stop_at FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
+    .prepare("SELECT name, email, email_ok_at, email_stop_at, email_bounced_at FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
     .bind(firm.id, req.client_id)
-    .first<{ name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null }>();
+    .first<{ name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null; email_bounced_at: number | null }>();
   if (!client?.email || !client.email_ok_at) return c.json({ error: "client_email_needed" }, 400);
+  if (client.email_bounced_at) return c.json({ error: "client_bounced" }, 400);
   if (client.email_stop_at || (await addressStopped(c.env, db, firm.id, client.email))) return c.json({ error: "client_unsubscribed" }, 400);
 
   const live = await liveToken(c.env, db, firm.id, req.id, now);

@@ -75,7 +75,8 @@ export async function sendMail(env: Env, m: Outgoing): Promise<string | null> {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
   } catch (e) {
-    throw new Error(`email request failed: ${e instanceof Error ? e.name : "error"}`);
+    // a timeout or a dropped connection is the provider being out of reach, not a refusal of this message
+    throw new Transient(`email request failed: ${e instanceof Error ? e.name : "error"}`);
   }
   // a reused key means an earlier attempt of this slot was accepted
   if (res.status === 409 && m.idempotencyKey) return null;

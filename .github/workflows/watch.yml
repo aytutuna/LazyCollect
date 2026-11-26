@@ -1,0 +1,21 @@
+name: Watch
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Live answers
+        run: curl -fsS --retry 2 --max-time 20 https://collect.alazy.app/api/health
+      - name: Timed run is recent
+        run: |
+          age=$(curl -fsS --retry 2 --max-time 20 https://collect.alazy.app/api/health/timed | jq -r '.age_minutes')
+          echo "minutes since the last good timed run: $age"
+          # the run starts every minute
+          test "$age" != null && test "$age" -le 30

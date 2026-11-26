@@ -5,6 +5,7 @@ import { MAX_ITEMS, expandItems, matches, relabel, rowsFor, parsePeople, type Bl
 import { deadlineDay, flagOf, today } from "./expiry";
 import { ownsExamples, parseExample } from "./examples";
 import { usable } from "./firm";
+import { FILE_COLUMNS, holdFiles, type FileRow } from "./held";
 import { LINK_GRACE, sealToken } from "./links";
 import { MANUAL_SEQ, addressStopped, deliver, hasRoom, unsubUrl } from "./mail";
 import { ITEM_COLS, conditionOk, isQuestion, parseDay, presentItem } from "./questions";
@@ -16,7 +17,8 @@ import { endNow, syncStatus } from "./status";
 import { nextReminder } from "./tz";
 import type { AppEnv } from "./session";
 import { asLang, isLang } from "./lang";
-import { builtinsFor, parseItem, parseItems, type Item } from "./templates";
+import { UnknownYear, fillYear, hasMarkers, hasYear, resolveItems, taxYears, validYear } from "./taxyear";
+import { builtinsFor, factsOf, parseItem, parseItems, type Item } from "./templates";
 import { DAY, hmac, randomId, randomToken } from "./util";
 import { exampleGone, invalid, maybe, notFound, readBody, setClause, text } from "./validate";
 
@@ -51,7 +53,10 @@ requests.post("/requests", async (c) => {
   if (body.template_id !== undefined && body.items !== undefined) return invalid(c);
   const people = body.people === undefined ? [] : parsePeople(body.people);
   const validUntil = "valid_until" in body ? parseDay(body.valid_until) : null;
+  const taxYear = body.tax_year === undefined ? null : body.tax_year;
+  const templateRef = body.template_ref === undefined ? (typeof body.template_id === "string" ? body.template_id : null) : body.template_ref;
   if (!people || validUntil === undefined) return invalid(c);
+  if ((taxYear !== null && !validYear(taxYear)) || (templateRef !== null && (typeof templateRef !== "string" || templateRef.length > 64))) return invalid(c);
   const db = c.get("db");
   const firmId = c.get("firm").id;
 
@@ -64,7 +69,7 @@ requests.post("/requests", async (c) => {
   if (body.locale !== undefined && !isLang(body.locale)) return invalid(c);
   const lang = isLang(body.locale) ? body.locale : asLang(client.locale);
 
-  let items: Item[] = [];
+  let items: (Item & { tpl?: string })[] = [];
   if (body.template_id !== undefined) {
     if (typeof body.template_id !== "string") return invalid(c);
     const built = builtinsFor(lang).find((t) => t.id === body.template_id);
@@ -84,6 +89,18 @@ requests.post("/requests", async (c) => {
     if (!(await ownsExamples(db, firmId, parsed.map((i) => i.example)))) return exampleGone(c);
     items = parsed;
   }
+  // the markers of a checklist are filled in for the tax year the account picked
+  const facts = await factsOf(db, firmId, templateRef);
+  if (hasMarkers(items, facts)) {
+    if (taxYear === null) return c.json({ error: "tax_year_needed" }, 400);
+    if (!taxYears(items, facts).includes(taxYear)) return c.json({ error: "tax_year_unknown" }, 400);
+    try {
+      items = resolveItems(items, taxYear, facts);
+    } catch (e) {
+      if (e instanceof UnknownYear) return c.json({ error: "tax_year_unknown" }, 400);
+      throw e;
+    }
+  }
 
   const id = randomId();
   const now = Date.now();
@@ -93,10 +110,10 @@ requests.post("/requests", async (c) => {
   const [res] = await db.batch([
     db
       .prepare(
-        `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, created_by, created_at, per_person_json, valid_until, locale) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        `INSERT INTO requests (id, firm_id, client_id, title, note, deadline, created_by, created_at, per_person_json, valid_until, tax_year, template_ref, locale) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
          WHERE ${SINGLE_TODAY}`,
       )
-      .bind(id, firmId, body.client_id, title, note, due, c.get("session")!.userId, now, perPerson.length ? JSON.stringify(perPerson) : null, validUntil, lang, firmId, now - DAY, firmId),
+      .bind(id, firmId, body.client_id, title, note, due, c.get("session")!.userId, now, perPerson.length ? JSON.stringify(perPerson) : null, validUntil, taxYear, templateRef, lang, firmId, now - DAY, firmId),
     db
       .prepare(
         `INSERT INTO people (id, firm_id, request_id, position, role, name, dob, created_at)
@@ -264,13 +281,25 @@ async function addTagged(c: Context<AppEnv>, req: Req, item: Item) {
   return c.json(await loadRequest(c, req.id), 201);
 }
 
+// a year marker typed into an item of a request is filled in with the request's tax year, so it never reaches a client as typed
+async function withYear<T extends { label?: unknown; help?: unknown }>(c: Context<AppEnv>, reqId: string, fields: T): Promise<T | null> {
+  const strings = [fields.label, fields.help].filter((v): v is string => typeof v === "string");
+  if (!strings.some(hasYear)) return fields;
+  const row = await c.get("db").prepare("SELECT tax_year FROM requests WHERE firm_id = ? AND id = ?").bind(c.get("firm").id, reqId).first<{ tax_year: number | null }>();
+  if (!row?.tax_year) return null;
+  const year = row.tax_year;
+  return { ...fields, ...(typeof fields.label === "string" ? { label: fillYear(fields.label, year) } : {}), ...(typeof fields.help === "string" ? { help: fillYear(fields.help, year) } : {}) };
+}
+
 requests.post("/requests/:id/items", async (c) => {
   const body = await readBody(c);
-  const item = body ? parseItem(body) : undefined;
-  if (!item) return invalid(c);
+  const parsed = body ? parseItem(body) : undefined;
+  if (!parsed) return invalid(c);
   const req = await findRequest(c);
   if (!req) return notFound(c);
   if (!editable(req)) return c.json({ error: "locked" }, 409);
+  const item = await withYear(c, req.id, parsed);
+  if (!item) return c.json({ error: "tax_year_missing" }, 400);
   const id = randomId();
   const firmId = c.get("firm").id;
   const db = c.get("db");
@@ -351,18 +380,26 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
   if (!(await ownsExamples(db, firmId, [fields.example as string | null]))) return exampleGone(c);
   const itemId = c.req.param("itemId");
   const cur = await db
-    .prepare("SELECT label, label_base, expiry_rule, blueprint FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
+    .prepare("SELECT label, help, label_base, expiry_rule, blueprint FROM items WHERE firm_id = ? AND request_id = ? AND id = ?")
     .bind(firmId, req.id, itemId)
-    .first<{ label: string; label_base: string | null; expiry_rule: string | null; blueprint: string | null }>();
+    .first<{ label: string; help: string | null; label_base: string | null; expiry_rule: string | null; blueprint: string | null }>();
   if (!cur) return notFound(c);
-  // a label sent back as it was is not a rename
+  // a label or help sent back as it was is not a change, and keeps the item's wording for Repeat
   if (fields.label === (cur.label_base ?? cur.label)) delete fields.label;
+  const sameHelp = "help" in fields && (fields.help ?? null) === cur.help;
+  if (sameHelp) delete fields.help;
+  // only wording that changed is looked at for markers
+  const typed = await withYear(c, req.id, { ...("label" in fields ? { label: fields.label } : {}), ...("help" in fields ? { help: fields.help } : {}) });
+  if (!typed) return c.json({ error: "tax_year_missing" }, 400);
+  Object.assign(fields, typed);
   // the dates belong to documents that ask for them, and the months only to one counted from its issue date
   if (["expires_on", "issued_on", "valid_months"].some((k) => k in fields)) {
     if (!cur.expiry_rule || ("valid_months" in fields && cur.expiry_rule !== "issue")) return invalid(c);
   }
   if (!Object.keys(fields).length) return c.json(presentItem((await db.prepare(`SELECT ${ITEM_COLS} FROM items WHERE id = ?`).bind(itemId).first<any>())!));
-  const set = setClause(fields);
+  // wording the account changed is no longer a template's, so Repeat leaves it alone
+  const changed = Object.keys(fields);
+  const set = setClause("label" in fields || "help" in fields ? { ...fields, tpl_json: null } : fields);
   // the items still to be made for people added later follow what was changed
   let kept: string | null = null;
   if (cur.blueprint && ("label" in fields || "help" in fields || "required" in fields)) {
@@ -381,7 +418,7 @@ requests.patch("/requests/:id/items/:itemId", async (c) => {
     db
       .prepare(`UPDATE items SET ${set.sql} WHERE firm_id = ? AND request_id = ? AND id = ? AND ${LIVE}`)
       .bind(...set.values, firmId, req.id, itemId, firmId, req.id),
-    audit(c, "item.edit", "item", itemId, { request: req.id, fields: Object.keys(fields) }, {
+    audit(c, "item.edit", "item", itemId, { request: req.id, fields: changed }, {
       sql: `EXISTS (SELECT 1 FROM items WHERE firm_id = ? AND request_id = ? AND id = ?) AND ${LIVE}`,
       binds: [firmId, req.id, itemId, firmId, req.id],
     }),
@@ -436,6 +473,8 @@ requests.delete("/requests/:id/items/:itemId", async (c) => {
   const free = "NOT EXISTS (SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND hold_at IS NOT NULL)";
   const binds = [firmId, req.id, itemId, firmId, req.id, firmId, req.id];
   // rows of files the client removed still wait for the sweep; they go here, and only then their objects, so the item can leave
+  const removed = await db.prepare(`SELECT ${FILE_COLUMNS} FROM files WHERE firm_id = ? AND item_id = ? AND deleted_at IS NOT NULL`).bind(firmId, itemId).all<FileRow>();
+  await holdFiles(c.env, firm.region as Region, removed.results, "removed");
   // the audit row goes first: its condition reads the item the delete removes
   const [, gone, res] = await db.batch([
     audit(c, "item.delete", "item", itemId, { request: req.id }, {
@@ -594,10 +633,11 @@ requests.post("/requests/:id/link", async (c) => {
     if (!firm.address) return c.json({ error: "address_needed" }, 400);
     if (![...(await sendersOf(c.env, firm.region as Region, [firm.id])).values()][0]?.owner_email) return c.json({ error: "sender_needed" }, 400);
     const client = await db
-      .prepare("SELECT name, email, email_ok_at, email_stop_at FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
+      .prepare("SELECT name, email, email_ok_at, email_stop_at, email_bounced_at FROM clients WHERE firm_id = ? AND id = ? AND deleted_at IS NULL")
       .bind(firm.id, req.client_id)
-      .first<{ name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null }>();
+      .first<{ name: string; email: string | null; email_ok_at: number | null; email_stop_at: number | null; email_bounced_at: number | null }>();
     if (!client?.email || !client.email_ok_at) return c.json({ error: "client_email_needed" }, 400);
+    if (client.email_bounced_at) return c.json({ error: "client_bounced" }, 400);
     if (client.email_stop_at) return c.json({ error: "client_unsubscribed" }, 400);
     if (await addressStopped(c.env, db, firm.id, client.email)) return c.json({ error: "client_unsubscribed" }, 400);
     // before the link is rotated, so a refusal leaves the client's working link alone
@@ -670,7 +710,7 @@ requests.get("/requests/:id/messages", async (c) => {
   const req = await findRequest(c);
   if (!req) return notFound(c);
   const { results } = await c.get("db")
-    .prepare("SELECT id, kind, seq, status, sent_at, seq >= ? AS manual FROM messages WHERE firm_id = ? AND request_id = ? ORDER BY sent_at DESC, rowid DESC LIMIT 100")
+    .prepare("SELECT id, kind, seq, status, sent_at, bounced_at, seq >= ? AS manual FROM messages WHERE firm_id = ? AND request_id = ? ORDER BY sent_at DESC, rowid DESC LIMIT 100")
     .bind(MANUAL_SEQ, c.get("firm").id, req.id)
     .all();
   return c.json(results);

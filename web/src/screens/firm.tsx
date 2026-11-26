@@ -172,6 +172,59 @@ function Retention({ canEdit }: { canEdit: boolean }) {
   );
 }
 
+type Kinds = { kinds: { id: string; on: boolean; suggested: boolean; extensions: string[] }[] };
+
+function FileKinds({ canEdit }: { canEdit: boolean }) {
+  const { data, error, reload } = useLoad(() => get<Kinds>("/file-kinds"));
+  const [picked, setPicked] = useState<string[] | null>(null);
+  const [saved, setSaved] = useState(false);
+  const { busy, error: failed, run } = useAction();
+  const on = picked ?? data?.kinds.filter((k) => k.on).map((k) => k.id) ?? [];
+  const toggle = (id: string) => {
+    setSaved(false);
+    setPicked(on.includes(id) ? on.filter((k) => k !== id) : [...on, id]);
+  };
+
+  async function submit(e: Event) {
+    e.preventDefault();
+    if (await run(() => put("/file-kinds", { kinds: on }))) {
+      setPicked(null);
+      setSaved(true);
+      reload();
+    }
+  }
+
+  return (
+    <section class="narrow-form">
+      <h2>{t("settings.kinds")}</h2>
+      <p class="muted">{t("settings.kinds_hint")}</p>
+      {!data ? (
+        error ? <ErrorNote error={error} /> : <Loading />
+      ) : (
+        <form onSubmit={submit}>
+          {!canEdit && <p class="muted">{t("settings.retention_owner")}</p>}
+          {data.kinds.map((k) => (
+            <label class="check">
+              <input type="checkbox" disabled={!canEdit} checked={on.includes(k.id)} onChange={() => toggle(k.id)} />
+              <span>
+                {t(`filekind.${k.id}`)} <span class="muted">({k.extensions.map((e) => `.${e}`).join(" ")})</span>
+              </span>
+            </label>
+          ))}
+          <p class="muted">{t("settings.kinds_never")}</p>
+          <ErrorNote error={failed} />
+          {saved && <p class="ok">{t("saved")}</p>}
+          {canEdit && (
+            <button class="primary" disabled={busy || !on.length || picked === null}>
+              {t("settings.retention_save")}
+            </button>
+          )}
+        </form>
+      )}
+    </section>
+  );
+}
+
 export function Settings({ me, onSaved, onRefresh, onSignOut, onClosed }: { me: Me; onSaved: () => void; onRefresh: () => Promise<Me | undefined>; onSignOut: () => void; onClosed: () => void }) {
   const { data, error } = useLoad(() => get<Firm>("/firm"));
   return (
@@ -191,6 +244,7 @@ export function Settings({ me, onSaved, onRefresh, onSignOut, onClosed }: { me: 
       </section>
       <Security me={me} />
       <Retention canEdit={me.user.role === "owner"} />
+      <FileKinds canEdit={me.user.role === "owner"} />
       {me.user.role === "owner" && <Staff me={me} />}
       <section>
         <h2>{t("settings.more")}</h2>

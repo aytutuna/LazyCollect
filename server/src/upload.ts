@@ -3,6 +3,9 @@ import { rateLimited } from "./auth";
 import { auditClient } from "./audit";
 import { linkOf } from "./client";
 import { ByteSource, CHUNK, cipherLength, encryptStream, fileKey } from "./crypt";
+import { planUsable } from "./firm";
+import { holdFiles, type FileRow as HeldFile } from "./held";
+import { TYPES, familyOf, inspect, kindOf, parseKinds, passwordProtected } from "./kinds";
 import { firmDek } from "./keys";
 import { regionOf } from "./regions";
 import type { AppEnv } from "./session";
@@ -18,15 +21,6 @@ const MAX_PER_REQUEST = 300;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HEIC_BRANDS = ["heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs"];
 
-const EXT: Record<string, string> = {
-  "application/pdf": "pdf",
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/heic": "heic",
-  "image/heif": "heif",
-};
-
 export function sniff(b: Uint8Array): string | null {
   const at = (from: number, to: number) => String.fromCharCode(...b.subarray(from, to));
   if (at(0, 5) === "%PDF-") return "application/pdf";
@@ -41,15 +35,6 @@ export function sniff(b: Uint8Array): string | null {
   return null;
 }
 
-const NAME_EXT: Record<string, string[]> = {
-  "application/pdf": ["pdf"],
-  "image/jpeg": ["jpg", "jpeg"],
-  "image/png": ["png"],
-  "image/webp": ["webp"],
-  "image/heic": ["heic", "heif"],
-  "image/heif": ["heif", "heic"],
-};
-
 // a display name only: it never becomes a path, and its extension always matches the sniffed type
 function cleanName(raw: string, mime: string): string {
   let name = raw
@@ -59,15 +44,15 @@ function cleanName(raw: string, mime: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^\.+/, "");
-  const fitting = (n: string) => n.lastIndexOf(".") > 0 && NAME_EXT[mime].includes(n.slice(n.lastIndexOf(".") + 1).toLowerCase());
+  const fitting = (n: string) => n.lastIndexOf(".") > 0 && TYPES[mime].includes(n.slice(n.lastIndexOf(".") + 1).toLowerCase());
   // "T4.pdf.html" sniffed as a pdf loses ".html"; a name still without a fitting extension gets one
   if (!fitting(name)) name = name.replace(/\.[A-Za-z0-9]{1,5}$/, "");
   const fits = fitting(name);
   const dot = name.lastIndexOf(".");
-  const ext = fits ? name.slice(dot) : `.${EXT[mime]}`;
+  const ext = fits ? name.slice(dot) : `.${TYPES[mime][0]}`;
   const stem = fits ? name.slice(0, dot) : name;
   const base = Array.from(stem).slice(0, 200 - ext.length).join("").trim();
-  return base ? `${base}${ext}` : `file.${EXT[mime]}`;
+  return base ? `${base}${ext}` : `file.${TYPES[mime][0]}`;
 }
 
 type FileRow = { id: string; name: string; size: number; uploaded_at: number };
@@ -115,6 +100,7 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
   const earlier = await replay();
   if (earlier) return earlier;
   if (item.status === "approved") return c.json({ error: "approved" }, 409);
+  if (!(await planUsable(c.env, req.firm_id, Date.now()))) return c.json({ error: "paused" }, 402);
   const counts = await db
     .prepare(
       `SELECT (SELECT COUNT(*) FROM files WHERE firm_id = ?1 AND item_id = ?2 AND deleted_at IS NULL) AS item,
@@ -127,10 +113,33 @@ uploads.put("/c/:token/items/:itemId/files", async (c) => {
   // nothing is written until the first bytes have been looked at
   const body = c.req.raw.body;
   if (!body) return c.json({ error: "unsupported_type" }, 415);
-  const source = new ByteSource(body);
-  const first = await source.read(Math.min(CHUNK, length));
-  const mime = sniff(first);
-  if (!mime) return c.json({ error: "unsupported_type" }, 415);
+  const settings = await db.prepare("SELECT file_kinds FROM firm_settings WHERE firm_id = ?").bind(req.firm_id).first<{ file_kinds: string | null }>();
+  let source = new ByteSource(body);
+  let first = await source.read(Math.min(CHUNK, length));
+  let mime = sniff(first);
+  if (!mime) {
+    const family = familyOf(first, rawName);
+    if (!family) return c.json({ error: "unsupported_type" }, 415);
+    // office, open document and text files are read whole: a zip lists its parts at the end, and macros hide inside
+    const whole = new Uint8Array(length);
+    whole.set(first);
+    for (let at = first.length; at < length; ) {
+      const piece = await source.read(Math.min(CHUNK, length - at));
+      if (!piece.length) return invalid(c);
+      whole.set(piece, at);
+      at += piece.length;
+    }
+    if (family === "old") return c.json({ error: passwordProtected(whole) ? "encrypted_office" : "old_office" }, 415);
+    const found = await inspect(family, whole, rawName);
+    if (found === "macros") return c.json({ error: "macros" }, 415);
+    if (found === "chunk") return c.json({ error: "foreign_content" }, 415);
+    if (!found) return c.json({ error: "unsupported_type" }, 415);
+    mime = found;
+    first = whole.subarray(0, Math.min(CHUNK, length));
+    const tail = whole.subarray(first.length);
+    source = new ByteSource(new ReadableStream({ start: (s) => (s.enqueue(tail), s.close()) }));
+  }
+  if (!parseKinds(settings?.file_kinds).includes(kindOf(mime)!)) return c.json({ error: "type_off" }, 415);
 
   const fileId = randomId();
   const key = await fileKey(await firmDek(c.env, region, req.firm_id, true), fileId);
@@ -243,11 +252,11 @@ uploads.delete("/c/:token/files/:fileId", async (c) => {
   const fileId = c.req.param("fileId");
   const file = await db
     .prepare(
-      `SELECT f.r2_key, f.item_id, i.status FROM files f JOIN items i ON i.firm_id = f.firm_id AND i.request_id = f.request_id AND i.id = f.item_id
+      `SELECT f.id, f.firm_id, f.request_id, f.item_id, f.r2_key, f.name, f.mime, f.size, f.uploaded_by, f.uploaded_at, i.status FROM files f JOIN items i ON i.firm_id = f.firm_id AND i.request_id = f.request_id AND i.id = f.item_id
        WHERE f.firm_id = ? AND f.request_id = ? AND f.id = ? AND f.uploaded_by = 'client' AND f.state = 'live' AND f.deleted_at IS NULL`,
     )
     .bind(req.firm_id, req.id, fileId)
-    .first<{ r2_key: string; item_id: string; status: string }>();
+    .first<HeldFile & { status: string }>();
   if (!file) return notFound(c);
   if (file.status === "approved") return c.json({ error: "approved" }, 409);
   const held = "EXISTS (SELECT 1 FROM requests WHERE firm_id = files.firm_id AND id = files.request_id AND hold_at IS NOT NULL)";
@@ -278,7 +287,9 @@ uploads.delete("/c/:token/files/:fileId", async (c) => {
     const onHold = await db.prepare("SELECT 1 FROM requests WHERE firm_id = ? AND id = ? AND hold_at IS NOT NULL").bind(req.firm_id, req.id).first();
     return c.json({ error: onHold ? "legal_hold" : "approved" }, 409);
   }
-  // a failed object delete leaves ciphertext behind; the retention sweep removes objects of deleted rows
-  await regionOf(c.env, region).bucket.delete(file.r2_key).catch((e) => console.error(e instanceof Error ? e.message : "error"));
+  // a failed copy or delete leaves the object where it is; the sweep copies and removes the objects of deleted rows
+  await holdFiles(c.env, region, [file], "removed")
+    .then(() => regionOf(c.env, region).bucket.delete(file.r2_key))
+    .catch((e) => console.error(e instanceof Error ? e.message : "error"));
   return c.json({ ok: true });
 });

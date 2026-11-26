@@ -120,6 +120,7 @@ export function NewBatch() {
   const [source, setSource] = useState<"template" | "request">("template");
   const [templateId, setTemplateId] = useState("");
   const [requestId, setRequestId] = useState("");
+  const [taxYear, setTaxYear] = useState<number | null>(null);
   const [title, setTitle] = useState(repeat ? t("batch.repeat_default") : "");
   const [deadline, setDeadline] = useState(toInput(inDays(30)));
   const [reminders, setReminders] = useState(true);
@@ -139,6 +140,7 @@ export function NewBatch() {
   const ready = count > 0 && Boolean(title.trim()) && (repeat || (source === "template" ? templateId : requestId)) && (!later || sendAt);
   const own = templates.data.filter((x) => !x.builtin);
   const builtin = templates.data.filter((x) => x.builtin);
+  const chosen = templates.data.find((x) => x.id === templateId);
 
   async function create() {
     const body: Record<string, unknown> = { title, reminders_on: reminders, send_at: later ? sendAt : null };
@@ -149,14 +151,15 @@ export function NewBatch() {
       if (source === "template") {
         body.template_id = templateId;
         body.locale = lang;
+        if (chosen?.tax) body.tax_year = taxYear ?? chosen.tax.suggested;
       }
       else body.request_id = requestId;
     }
     const made = await run(async () => {
-      const batch = await post<Batch>("/batches", body);
+      const batch = await post<Batch & { stale_years?: string[] }>("/batches", body);
       carried.clients = new Map();
       carried.requests = new Map();
-      go(`/batches/${batch.id}`);
+      go(`/batches/${batch.id}${batch.stale_years?.length ? `?stale=${encodeURIComponent(batch.stale_years.join(" | "))}` : ""}`);
     });
     if (made) setAsking(false);
   }
@@ -215,7 +218,13 @@ export function NewBatch() {
                 </select>
               </Field>
               <Field label={t("batch.pick_template")}>
-                <select value={templateId} onChange={(e) => setTemplateId(e.currentTarget.value)}>
+                <select
+                  value={templateId}
+                  onChange={(e) => {
+                    setTemplateId(e.currentTarget.value);
+                    setTaxYear(templates.data?.find((x) => x.id === e.currentTarget.value)?.tax?.suggested ?? null);
+                  }}
+                >
                   <option value="">{t("batch.choose")}</option>
                   {own.length > 0 && (
                     <optgroup label={t("templates.mine")}>
@@ -235,6 +244,15 @@ export function NewBatch() {
               </>
             ) : (
               <RequestPicker value={requestId} onChange={setRequestId} />
+            )}
+            {source === "template" && chosen?.tax && (
+              <Field label={t("new.tax_year")} hint={t("batch.tax_year_hint")}>
+                <select value={taxYear ?? chosen.tax.suggested} onChange={(e) => setTaxYear(Number(e.currentTarget.value))}>
+                  {chosen.tax.years.map((y) => (
+                    <option value={y}>{y}</option>
+                  ))}
+                </select>
+              </Field>
             )}
           </section>
         )}

@@ -8,7 +8,7 @@ import { api, openRequest, pdf, review, upload } from "./helpers";
 const state = async () => (await env.DB_NA.prepare("SELECT status FROM requests").first<any>())!.status as string;
 const counts = async () => ({
   rows: (await env.DB_NA.prepare("SELECT COUNT(*) AS n FROM files").first<{ n: number }>())!.n,
-  objects: (await env.FILES_NA.list()).objects.length,
+  objects: (await env.FILES_NA.list({ prefix: "f/" })).objects.length,
 });
 
 async function completeRequest() {
@@ -109,7 +109,7 @@ describe("sweep", () => {
     expect(await env.FILES_NA.head(removed.key)).toBeNull();
     expect(await env.FILES_NA.head(noObject.key)).toBeNull();
     expect(await env.FILES_NA.head(fresh.key)).not.toBeNull();
-    expect((await env.FILES_NA.list()).objects).toHaveLength(2);
+    expect((await env.FILES_NA.list({ prefix: "f/" })).objects).toHaveLength(2);
   });
 
   it("leaves objects of soft-deleted requests alone", async () => {
@@ -129,9 +129,13 @@ describe("upload edge cases", () => {
     expect(await state()).toBe("open");
   });
 
-  it("keeps taking uploads after the firm's plan lapses", async () => {
+  it("stops taking uploads once the firm's plan has lapsed, and takes them again after a payment", async () => {
     const { req, path } = await openRequest();
     await env.CONTROL.prepare("UPDATE firms SET plan_status = 'canceled', trial_ends_at = 1").run();
+    const refused = await upload(path, req.items[0].id, pdf(300));
+    expect(refused.status).toBe(402);
+    expect(await refused.json()).toEqual({ error: "paused" });
+    await env.CONTROL.prepare("UPDATE firms SET plan_status = 'active'").run();
     expect((await upload(path, req.items[0].id, pdf(300))).status).toBe(201);
   });
 
