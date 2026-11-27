@@ -24,11 +24,6 @@ export class Scanner {
 export function clean_up(rgba: Uint8Array | number[], width: number, height: number, mode: string): Uint8Array;
 
 /**
- * The page inside `outline` cut out and flattened to `out_width` x `out_height`; empty when the outline cannot be warped.
- */
-export function flatten(rgba: Uint8Array | number[], width: number, height: number, outline: Float64Array | number[], out_width: number, out_height: number): Uint8Array;
-
-/**
  * What is wrong with where the page sits in a frame: cut, small. `confidence` is the model's, when there is one.
  */
 export function frame_problems(outline: Float64Array | number[], confidence: number | null | undefined, width: number, height: number): string[];
@@ -50,7 +45,6 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_scanner_free: (a: number, b: number) => void;
     readonly clean_up: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly flatten: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly frame_problems: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly page_problems: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly refine_edges: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
