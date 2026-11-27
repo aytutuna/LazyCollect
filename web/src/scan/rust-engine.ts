@@ -13,23 +13,22 @@ const MODEL = `/models/${model.tractSha256.slice(0, 12)}/docaligner-tract.onnx`;
 type Asked<T extends Reply["type"]> = Extract<Reply, { type: T }>;
 type Question<R = Request> = R extends { id: number } ? Omit<R, "id"> : never;
 
-// The WebAssembly scanner in a worker. Cutting out, clean-up and the checks need only the module and use the TypeScript ones
-// when it is not there; `ready` is the corner model, which loads after the module and only detection waits for.
+// The WebAssembly scanner in a worker. Clean-up and the checks need only the module and use the TypeScript ones until it has
+// answered or when it is not there; `ready` is the corner model, which loads after the module and only detection waits for.
+// Cutting out stays the TypeScript warp: the page checks' thresholds were tuned on its resampling, and Lazy Scan's warp differs.
 export class RustEngine implements Engine {
   private worker = new Worker(new URL("./rust.worker.ts", import.meta.url), { type: "module" });
   private waiting = new Map<number, (reply: Reply | null) => void>();
   private next = 0;
   private gone = false;
-  private module: Promise<boolean>;
+  private moduleOk = false;
   ready: Promise<boolean>;
 
   constructor() {
-    let moduleLoaded: (ok: boolean) => void;
     let modelLoaded: (ok: boolean) => void;
-    this.module = new Promise((resolve) => (moduleLoaded = resolve));
     this.ready = new Promise((resolve) => (modelLoaded = resolve));
     this.worker.onmessage = (e: MessageEvent<Reply>) => {
-      if (e.data.type === "module") moduleLoaded(e.data.ok);
+      if (e.data.type === "module") this.moduleOk = e.data.ok;
       else if (e.data.type === "ready") modelLoaded(e.data.ok);
       else {
         this.waiting.get(e.data.id)?.(e.data);
@@ -38,7 +37,7 @@ export class RustEngine implements Engine {
     };
     this.worker.onerror = () => {
       this.gone = true;
-      moduleLoaded(false);
+      this.moduleOk = false;
       modelLoaded(false);
       this.settle();
     };
@@ -50,9 +49,9 @@ export class RustEngine implements Engine {
     this.waiting.clear();
   }
 
-  // null when the module did not load or the worker is gone; nothing is posted then, so the caller's pixels stay its own
+  // null when the module is not there (yet) or the worker is gone; nothing is posted then, so the caller's pixels stay its own
   private async ask<T extends Reply["type"]>(type: T, request: Question, transfer: Transferable[] = []): Promise<Asked<T> | null> {
-    if (!(await this.module) || this.gone) return null;
+    if (!this.moduleOk || this.gone) return null;
     const id = this.next++;
     return new Promise((resolve) => {
       this.waiting.set(id, resolve as (reply: Reply | null) => void);
@@ -71,11 +70,8 @@ export class RustEngine implements Engine {
     return reply && { refinement: reply.refinement, image: reply.image };
   }
 
-  // a buffer that was posted is gone with a worker that died, and then there is nothing to cut
   async warp(image: Pixels, quad: Quad, width: number, height: number): Promise<Pixels | null> {
-    const reply = await this.ask("pixels", { type: "warp", image, quad, width, height }, [image.data.buffer]);
-    if (reply) return reply.image;
-    return image.data.byteLength ? warp(image, quad, width, height) : null;
+    return warp(image, quad, width, height);
   }
 
   async filter(image: Pixels, filter: Filter): Promise<Pixels> {

@@ -30,19 +30,30 @@ beforeEach(() => vi.stubGlobal("Worker", FakeWorker));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("the Rust engine", () => {
-  it("cuts out and cleans up without waiting for the corner model", async () => {
+  it("cuts out in TypeScript and checks without waiting for the corner model", async () => {
     const engine = new RustEngine();
     const w = FakeWorker.last;
     w.say({ type: "module", ok: true });
-    const cut = engine.warp(photo(), quad, 100, 100);
-    await vi.waitFor(() => expect(w.posted.map((m) => m.type)).toContain("warp"));
-    const asked = w.posted.find((m) => m.type === "warp") as Extract<Request, { type: "warp" }>;
-    w.say({ type: "pixels", id: asked.id, image: { width: 100, height: 100, data: new Uint8ClampedArray(40000) } });
-    expect((await cut)?.width).toBe(100);
+    expect(await engine.warp(photo(), quad, 120, 90)).toEqual(warp(photo(), quad, 120, 90));
+    expect(w.posted.map((m) => m.type)).toEqual(["init"]);
+    const sheet = textPage(300, 400);
+    const checked = engine.pageIssues(sheet);
+    await vi.waitFor(() => expect(w.posted.map((m) => m.type)).toContain("pageIssues"));
+    const asked = w.posted[1] as Extract<Request, { type: "pageIssues" }>;
+    w.say({ type: "issues", id: asked.id, issues: ["dark"] });
+    expect(await checked).toEqual(["dark"]);
     let settled = false;
     void engine.ready.then(() => (settled = true));
     await Promise.resolve();
     expect(settled).toBe(false);
+  });
+
+  it("does not wait for a module that has not answered", async () => {
+    const engine = new RustEngine();
+    const sheet = textPage(300, 400);
+    expect(await engine.pageIssues(sheet)).toEqual(pageIssues(sheet));
+    expect(await engine.filter(photo(), "gray")).toEqual(applyFilter(photo(), "gray"));
+    expect(FakeWorker.last.posted.map((m) => m.type)).toEqual(["init"]);
   });
 
   it("keeps detection off but everything else on when the model does not load", async () => {

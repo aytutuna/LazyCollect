@@ -2,7 +2,6 @@
 //! Required Notice: Copyright (c) 2026 Alazy Inc. (https://alazy.app)
 
 use lazy_image::Rgba;
-use lazy_scan::warp::{self, Options};
 use lazy_scan::{
     CornerModel, DEFAULT_THRESHOLD, EnhanceMode, Issue, Quad, decode_heatmap, enhance,
     frame_issues, model_input, page_issues, refine,
@@ -89,26 +88,6 @@ pub fn refine_edges(
     Ok(corners(&r.quad)
         .chain([f64::from(r.refined), r.support])
         .collect())
-}
-
-/// The page inside `outline` cut out and flattened to `out_width` x `out_height`; empty when the outline cannot be warped.
-#[wasm_bindgen]
-pub fn flatten(
-    rgba: Vec<u8>,
-    width: u32,
-    height: u32,
-    outline: &[f64],
-    out_width: u32,
-    out_height: u32,
-) -> Result<Vec<u8>, JsError> {
-    let flat = warp::warp(
-        &image(rgba, width, height)?,
-        &quad(outline)?,
-        out_width as usize,
-        out_height as usize,
-        &Options::default(),
-    );
-    Ok(flat.map(|f| f.data).unwrap_or_default())
 }
 
 /// The page cleaned up as `mode` says: enhanced, whiteboard, gray or bw.

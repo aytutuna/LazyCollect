@@ -5,8 +5,8 @@ import jpeg from "jpeg-js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { acceptable, decodeHeatmap, modelInput, SIDE, type Found } from "./corners";
 import { applyFilter, FILTERS } from "./filters";
-import { boxBlur, checksum, darkGround, mapPixels, photoOf, shadowedPage, textPage } from "./fixtures";
-import { aspect, fromCorners, warp, type Pixels, type Quad } from "./geometry";
+import { boxBlur, checksum, darkGround, mapPixels, shadowedPage, textPage } from "./fixtures";
+import { fromCorners, type Pixels, type Quad } from "./geometry";
 import model from "./model.json";
 import { frameIssues, pageIssues } from "./quality";
 import { placement, refine } from "./refine";
@@ -104,37 +104,12 @@ describe.skipIf(!present)("the Rust scanner", () => {
     });
   });
 
-  describe("cutting a page out", () => {
+  describe("refining an outline", () => {
     const quad: Quad = [[300, 200], [900, 260], [960, 800], [240, 760]];
-
-    it("flattens a photographed page back to the page", () => {
-      const page = textPage(1000, 1400);
-      const photo = photoOf(page, quad, 1200, 900);
-      const flat = rust.warp(photo, quad, 1000, 1400)!;
-      expect([flat.width, flat.height]).toEqual([1000, 1400]);
-      let diff = 0;
-      for (let i = 0; i < page.data.length; i += 4) diff += Math.abs(page.data[i] - flat.data[i]);
-      expect(diff / (page.data.length / 4)).toBeLessThan(12);
-    });
-
-    it("cuts the same page as the TypeScript warp, give or take the resampling", () => {
-      const photo = photoOf(mapPixels(textPage(1000, 1400), (v) => (v === 255 ? 215 : v)), quad, 1200, 900);
-      const [w, h] = [800, Math.round(800 / aspect(quad, 1200, 900))];
-      const mine = rust.warp(photo, quad, w, h)!;
-      const theirs = warp(photo, quad, w, h)!;
-      let diff = 0;
-      for (let i = 0; i < mine.data.length; i += 4) diff += Math.abs(mine.data[i] - theirs.data[i]);
-      expect(diff / (mine.data.length / 4)).toBeLessThan(12);
-    });
 
     it("refuses pixels that do not match the size, even when the size wraps around", () => {
       expect(() => rust.refine({ width: 65536, height: 16384, data: new Uint8ClampedArray(0) }, quad)).toThrow();
-      expect(() => rust.warp({ width: 10, height: 10, data: new Uint8ClampedArray(12) }, quad, 10, 10)).toThrow();
-    });
-
-    it("gives nothing for an outline that is not convex", () => {
-      const photo = photoOf(textPage(1000, 1400), quad, 1200, 900);
-      expect(rust.warp(photo, [quad[0], quad[2], quad[1], quad[3]], 100, 100)).toBeNull();
+      expect(() => rust.filter({ width: 10, height: 10, data: new Uint8ClampedArray(12) }, "gray")).toThrow();
     });
   });
 
